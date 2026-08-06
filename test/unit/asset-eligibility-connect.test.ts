@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   CheckActiveRequestSchema,
   ResolveSessionAttachmentsRequestSchema,
-} from "../../src/interfaces/connect/generated-asset-eligibility/kokoro/platform/asset/v1/asset_eligibility_pb.js";
+} from "../../src/generated/proto/kokoro/platform/asset/v1/asset_eligibility_pb.js";
 import { AssetEligibilityError } from
   "../../src/modules/asset/application/services/asset-eligibility.js";
 import { createAssetEligibilityConnectService } from

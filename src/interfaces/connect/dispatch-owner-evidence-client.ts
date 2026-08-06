@@ -4,7 +4,7 @@ import {
   DispatchOwnerEvidenceKind,
   DispatchOwnerEvidenceService,
   type DispatchOwnerEvidence as WireDispatchOwnerEvidence,
-} from "./generated-session-evidence/kokoro/session/dispatch/v1/dispatch_owner_evidence_pb.js";
+} from "../../generated/proto/kokoro/session/dispatch/v1/dispatch_owner_evidence_pb.js";
 import type {
   DispatchOwnerEvidence,
   DispatchOwnerEvidenceLookup,

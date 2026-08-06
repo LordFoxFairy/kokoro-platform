@@ -124,7 +124,14 @@ describe("Identity outbox production authority", () => {
       {
         relation: "identity_verification_delivery",
         privilege: "SELECT",
-        columns: ["event_id", "site_ref", "transaction_ref", "credential_revision", "state"],
+        columns: [
+          "event_id",
+          "site_ref",
+          "transaction_ref",
+          "credential_revision",
+          "state",
+          "attempt_count",
+        ],
       },
       {
         relation: "identity_verification_delivery",
@@ -172,6 +179,7 @@ describe("Identity outbox production authority", () => {
           "execution_space_ref",
           "execution_namespace",
           "state",
+          "attempt_count",
         ],
       },
       {

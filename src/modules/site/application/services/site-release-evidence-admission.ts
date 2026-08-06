@@ -4,7 +4,7 @@ import { canonicalDigest, canonicalJson, verifyCanonicalDocument } from
 import {
   validateCompiledWebManifestShape,
   validateWebArtifactProvenanceShape,
-} from "../../../../interfaces/json-schema/generated-site-publication/site-publication-schema-validator.js";
+} from "../../../../generated/schema/site-publication/validator.js";
 import type { SiteReleaseEvidenceAdmissionPort } from
   "../contracts/site-publication-authority-ports.js";
 import type { SiteReleaseEvidenceTrustPort } from

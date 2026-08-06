@@ -1,5 +1,5 @@
 import type { ImageAspectRatio, ImageOutputFormat } from
-  "../../../../interfaces/http/generated/platform-public/types.gen.js";
+  "../../../../generated/contracts/openapi/platform-public/types.gen.js";
 import type { PlatformTransaction } from
   "../../../../shared/unit-of-work/index.js";
 import type { VerifiedRequestSecurityContext } from

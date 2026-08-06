@@ -10,7 +10,7 @@ import {
   CommandReceiptState,
   type CommandIdentity,
   type CommandReceipt,
-} from "../../../interfaces/connect/generated/kokoro/common/v1/receipt_pb.js";
+} from "../../../generated/proto/kokoro/common/v1/receipt_pb.js";
 import {
   AdmissionDenialSchema,
   AdmissionOperation,
@@ -48,7 +48,7 @@ import {
   type ReconcileRunAuthorizationResponse,
   type ReleaseRunAuthorizationRequest,
   type ReleaseRunAuthorizationResponse,
-} from "../../../interfaces/connect/generated/kokoro/platform/admission/v1/admission_pb.js";
+} from "../../../generated/proto/kokoro/platform/admission/v1/admission_pb.js";
 import {
   MAX_GA_RUN_REQUEST_DRAFT_TTL_MS,
   type GaRunRequestDraftFactory,

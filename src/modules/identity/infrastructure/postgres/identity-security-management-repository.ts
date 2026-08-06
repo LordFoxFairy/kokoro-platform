@@ -13,6 +13,7 @@ import type {
 import { IdentitySecurityAtomicRejection } from "../../application/contracts/identity-security-management-repository.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import {
+  acquirePlatformSqlAdvisoryLock,
   resolvePlatformTransaction,
   type PlatformSqlTransaction,
 } from "../../../../shared/unit-of-work/platform-transaction.js";
@@ -1357,9 +1358,7 @@ async function lockAccount(
   siteRef: string,
   accountRef: string,
 ): Promise<void> {
-  await sql.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [
-    `identity-security\0${siteRef}\0${accountRef}`,
-  ]);
+  await acquirePlatformSqlAdvisoryLock(sql, JSON.stringify(["identity-security", siteRef, accountRef]));
 }
 
 async function lockSecurityOwner(

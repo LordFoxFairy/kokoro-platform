@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { issuePlatformTransaction } from "../../src/shared/unit-of-work/platform-transaction.js";
 import { SignedScopedSessionAuthorizationPublisher } from "../../src/modules/authorization/infrastructure/postgres/signed-scoped-session-authorization-publisher.js";
 import type { PostgresScopedAuthorizationFeedRepository } from "../../src/modules/authorization/infrastructure/postgres/scoped-authorization-feed-repository.js";
-import { AuthorizationEventSigningPayloadSchema } from "../../src/interfaces/connect/generated-authorization-v2/kokoro/platform/authorization/v2/scoped_session_authorization_pb.js";
+import { AuthorizationEventSigningPayloadSchema } from "../../src/generated/proto/kokoro/platform/authorization/v2/scoped_session_authorization_pb.js";
 
 describe("v2 scoped authorization publisher", () => {
   it("signs the exact SubjectCurrent protobuf fact", async () => {
@@ -91,6 +91,7 @@ describe("v2 scoped authorization publisher", () => {
 
   it("publishes SiteCurrent, ProjectMembershipCurrent and GrantDelivered on the same stream", async () => {
     const payloads: Uint8Array[] = [];
+    let grantReservations = 0;
     const repository = {
       async reserveSiteMutation() {
         return { siteRef: "site-1", streamSequence: 12n, aggregateSequence: 6n };
@@ -99,6 +100,7 @@ describe("v2 scoped authorization publisher", () => {
         return { siteRef: "site-1", streamSequence: 13n, aggregateSequence: 7n };
       },
       async reserveGrantDelivery() {
+        grantReservations += 1;
         return { siteRef: "site-1", streamSequence: 14n, aggregateSequence: 8n };
       },
       async appendSiteCurrent(_transaction: unknown, event: { signingPayload: Uint8Array }) {
@@ -142,7 +144,9 @@ describe("v2 scoped authorization publisher", () => {
       },
       correlationId: "correlation-1",
     });
+    const grantReservation = await publisher.reserveGrantDelivery(transaction, { siteRef: "site-1" });
     await publisher.publishGrantDelivered(transaction, {
+      reservation: grantReservation,
       claims: {
         grantRef: "grant-1",
         binding: {
@@ -154,7 +158,7 @@ describe("v2 scoped authorization publisher", () => {
           keyRevision: "grant-key-1", notBefore: "2026-07-29T00:00:00.000Z",
           siteSecurityEpoch: "2", identitySessionEpoch: "3", membershipEpoch: "5",
           authorizationEpoch: "6", restrictionEpoch: "7", credentialEpoch: "8",
-          policyEpoch: "3", revocationEpoch: "4", resource: { kind: "project" },
+          policyEpoch: "3", revocationEpoch: "4", authorizationStreamSequence: "14", resource: { kind: "project" },
           issuedAt: "2026-07-29T00:00:01.000Z", expiresAt: "2026-07-29T00:05:01.000Z",
         },
         authorization: { purpose: "read", audience: "session.read" },
@@ -168,5 +172,6 @@ describe("v2 scoped authorization publisher", () => {
       .toEqual(["siteCurrentChanged", "projectMembershipCurrentChanged", "grantDelivered"]);
     expect(payloads.map((bytes) => fromBinary(AuthorizationEventSigningPayloadSchema, bytes).streamSequence))
       .toEqual([12n, 13n, 14n]);
+    expect(grantReservations).toBe(1);
   });
 });

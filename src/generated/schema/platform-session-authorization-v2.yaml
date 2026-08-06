@@ -1,0 +1,90 @@
+lifecycle: contract-only
+activation: inactive
+operations:
+  - PullAuthorizationEvents
+  - GetAuthorizationSnapshotPage
+  - GetAuthorizationVerificationKeys
+invariants:
+  - id: nine-axis-current-fact-equality
+    rule: >-
+      A delivered grant is active only when its exact JWT/fact vector equals SiteCurrent
+      (site_security_epoch, policy_epoch, site_revocation_epoch), SubjectCurrent
+      (subject_generation, restriction_epoch), IdentitySessionCurrent
+      (identity_session_epoch, credential_epoch), and ProjectMembershipCurrent
+      (membership_epoch, authorization_epoch), and all four facts are active and unexpired.
+  - id: missing-current-fact-fail-closed
+    rule: >-
+      Missing, stale, duplicate, ambiguous, or non-active current facts reject the grant; consumers
+      never infer an owner fact from a delivered grant or substitute a broader Site fact.
+  - id: owner-scoped-revocation-only
+    rule: >-
+      Subject, identity-session, credential, restriction, membership, and authorization mutations
+      update only their exact owner current fact. They must not advance SiteCurrent merely to revoke
+      one owner. Site-wide epochs are reserved for Site security, policy, suspension, and lifecycle.
+  - id: global-site-owner-lock-order
+    rule: >-
+      Each owner mutation and signed full-fact append commits in one Platform UoW while acquiring
+      the global stream counter, then Site aggregate counter, then exact owner row; all writers use
+      this order and publish the next contiguous global and per-Site sequences.
+  - id: owner-binding-integrity
+    rule: >-
+      Every nested fact site_ref equals its signed event envelope site_ref. IdentitySessionCurrent
+      belongs to the exact (site_ref, subject_ref, identity_session_ref), ProjectMembershipCurrent
+      belongs to the exact (site_ref, subject_ref, project_ref), and snapshot owner keys are unique.
+  - id: owner-epoch-monotonicity
+    rule: >-
+      A current fact is a full replacement and none of its owner epochs may roll back. Replays require
+      the same global sequence and payload digest; conflicting duplicates, owner skips, and per-Site
+      or global gaps require fail-closed snapshot recovery.
+  - id: delivered-grant-is-not-current-state
+    rule: >-
+      GrantDelivered freezes issuance facts only and must never create, advance, reactivate, or
+      substitute any current fact. Each changed current fact is committed and ordered before a grant
+      that contains its new epoch.
+  - id: issued-grant-projection-watermark
+    rule: >-
+      Every signed SessionAccessGrant binding carries authorizationStreamSequence equal to the
+      canonical positive uint64 global stream_sequence of its committed GrantDelivered event.
+      Platform returns HTTP 201 only after that event commits; a reserved sequence, aggregate sequence,
+      snapshot watermark, or uncommitted high watermark cannot substitute. Session may accept the
+      grant only after its local authorization projection reaches at least that exact sequence.
+  - id: tombstone-retention
+    rule: >-
+      Removed, revoked, expired, suspended, and decommissioned current facts remain snapshot- and
+      feed-visible through retain_until, which is no earlier than every grant issued from the prior
+      fact can expire and never shorter than the five-minute maximum grant TTL.
+  - id: verification-key-purpose-separation
+    rule: >-
+      Consumers index keys by (purpose, revision), verify feed events only with EVENT_SIGNING keys,
+      and verify SessionAccessGrant JWTs only with SESSION_ACCESS_GRANT keys.
+  - id: verification-key-ring-shape
+    rule: >-
+      A key set contains two through eight unique (purpose, revision) entries and exactly one current
+      key for each purpose; previous keys have explicit validity windows and no private JWK material.
+  - id: frozen-snapshot-consistency
+    rule: >-
+      Every page in one snapshot preserves snapshot_ref, high_watermark_stream_sequence, frozen_at,
+      and key_set_revision; all four current fact kinds, unexpired delivered grants, and both key
+      purposes are materialized from the same frozen authority view.
+  - id: promotion-requires-real-evidence
+    rule: >-
+      Lifecycle remains contract-only and activation remains inactive until the Platform provider,
+      Session consumer, owner mutation wiring, and real positive plus negative-control compatibility
+      scenarios all pass. Runtime flags and self-attestation are not evidence.
+compatibilityAssertions:
+  - id: target-subject-invalid-neighbor-valid
+    mutation: disable or remove one Subject
+    positive: every unexpired grant for the target Subject becomes inactive
+    negativeControl: an active neighboring Subject in the same Site remains active
+  - id: target-identity-session-invalid-neighbor-valid
+    mutation: revoke, expire, or remove one IdentitySession
+    positive: grants bound to the target IdentitySession become inactive
+    negativeControl: a sibling active IdentitySession for the same Subject remains active
+  - id: target-membership-invalid-neighbor-valid
+    mutation: revoke or remove one ProjectMembership
+    positive: grants for the target Subject and Project become inactive
+    negativeControl: another active membership in the same Site remains active
+  - id: site-suspend-invalidates-all-site-grants
+    mutation: suspend or decommission one Site
+    positive: all grants in the target Site become inactive
+    negativeControl: grants in a different active Site remain active

@@ -24,4 +24,12 @@ describe("Site publication authority schema", () => {
     expect(sql).not.toContain("candidate_release_ref");
     expect(sql).not.toContain("expected_active_release_ref");
   });
+
+  it("stays runtime-inert instead of granting authority to retired fixed roles", async () => {
+    const sql = await readFile(new URL(
+      "../../prisma/migrations/20260818_site_publication_candidate_authority/migration.sql",
+      import.meta.url,
+    ), "utf8");
+    expect(sql).not.toMatch(/GRANT [^;]+ TO platform_(?:admin|worker);/gu);
+  });
 });

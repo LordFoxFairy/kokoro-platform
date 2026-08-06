@@ -3,33 +3,34 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const generatedEffect = resolve(
-  "src/interfaces/connect/generated-site-provisioning/kokoro/platform/site/v1/site_provisioning_pb.ts",
+  "src/generated/proto/kokoro/platform/site/v1/site_provisioning_pb.ts",
+);
+const generatedPublication = resolve(
+  "src/generated/proto/kokoro/platform/site/v1/site_publication_pb.ts",
 );
 const provider = resolve("src/modules/site/interfaces/connect/site-provisioning-service.ts");
 
 describe("Site release candidate authority boundary", () => {
-  it("accepts only the Root-owned candidate command facts", async () => {
-    const generated = await readFile(generatedEffect, "utf8");
-    const effect = generated.slice(
-      generated.indexOf("export type PublishSiteReleaseEffect"),
-      generated.indexOf("export const PublishSiteReleaseEffectSchema"),
+  it("keeps candidate publication solely on the Root SitePublication boundary", async () => {
+    const [provisioning, publication] = await Promise.all([
+      readFile(generatedEffect, "utf8"),
+      readFile(generatedPublication, "utf8"),
+    ]);
+    expect(provisioning).not.toContain("PublishSiteReleaseEffect");
+    expect(provisioning).not.toContain("publishSiteRelease:");
+    const effect = publication.slice(
+      publication.indexOf("export type PublishSiteReleaseEffect"),
+      publication.indexOf("export const PublishSiteReleaseEffectSchema"),
     );
-
-    expect(effect).toContain("siteReleaseCandidateRef: string");
-    expect(effect).toContain("expectedCandidateVersion: bigint");
+    expect(effect).toContain("candidate?: CandidateAuthorityBinding");
     expect(effect).toContain("reason: string");
-    for (const staleFact of [
-      "releaseRef", "webArtifactDigest", "releaseManifestDigest", "certificationDigest",
-      "launchProfileRef", "siteConfigRevisionRef", "legalRevisionRef", "featurePolicyRevision",
-      "modelOptionCatalogRef", "agentCatalogRef", "identityIssuerLabel",
-      "identityAuthStrengthPolicyRevision", "enabledSurfaceIds", "localePolicy", "certification",
-    ]) expect(effect, staleFact).not.toContain(staleFact);
   });
 
   it("cannot revive direct publication from caller-supplied facts", async () => {
     const source = await readFile(provider, "utf8");
 
     expect(source).not.toMatch(/\.publishRelease\s*\(/u);
+    expect(source).not.toContain("publishSiteRelease");
     for (const staleFact of [
       "effect.releaseRef", "effect.webArtifactDigest", "effect.releaseManifestDigest",
       "effect.certificationDigest", "effect.launchProfileRef", "effect.siteConfigRevisionRef",

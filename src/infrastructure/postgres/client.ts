@@ -20,6 +20,24 @@ import {
   SPLIT_WORKER_ROUTINE_AUTHORITY,
   type ExactWorkerAuthorityRow,
 } from "./split-worker-authority.js";
+import {
+  ADMIN_INSERT_RELATIONS,
+  ADMIN_UPDATE_RELATIONS,
+  ADMISSION_INSERT_RELATIONS,
+  ADMISSION_RELATIONS,
+  ADMISSION_SELECT_RELATIONS,
+  ADMISSION_UPDATE_RELATIONS,
+  ASSET_API_MUTABLE_RELATIONS,
+  ASSET_API_OWNER_READ_RELATIONS,
+  ASSET_API_RELATIONS,
+  ASSET_RELATIONS,
+  ASSET_WORKER_INSERT_RELATIONS,
+  ASSET_WORKER_UPDATE_RELATIONS,
+  CREDIT_USAGE_RELATIONS,
+  MEDIA_CONTROL_ADMIN_RELATIONS,
+  MODEL_GATEWAY_ADMISSION_RELATIONS,
+  PRODUCT_CATALOG_ADMIN_RELATIONS,
+} from "./runtime-relation-authority.js";
 
 export type PlatformProcessRole =
   | "api"
@@ -532,6 +550,7 @@ export function createPlatformDatabaseClient(
       const allowed =
         config.role === "admission"
           ? operation === "admission.command" ||
+            operation === "capability.projection" ||
             operation === "asset.eligibility.check-active" ||
             operation === "asset.eligibility.resolve"
           : workerAuthority !== undefined
@@ -1018,7 +1037,7 @@ function assertAdminQueryPermit(permit: AdminQueryPermit): void {
       "admin.operator.read",
       "admin.operator.list",
       "admin.approval.list",
-      "commerce.credit-program.read",
+      "credit.program.read",
       "commerce.entitlement-template.read",
       "commerce.offer.read",
       "commerce.redemption-program.read",
@@ -1177,7 +1196,10 @@ interface RuntimeIdentity {
   canReadCommerceCatalogEpoch: boolean;
   canUpdateCommerceCatalogEpoch: boolean;
   canExecuteAdminAuthorityChange: boolean;
+  admissionRoleIdentityExact: boolean;
+  hasRequiredAdmissionExecutionRootFunctions: boolean;
   hasRequiredModelOptionFunctions: boolean;
+  hasRequiredProductCatalogPrivileges: boolean;
   canSelectModelCatalogTable: boolean;
   canReadModelSensitiveColumn: boolean;
   unexpectedPlatformRelations: readonly string[];
@@ -1217,41 +1239,6 @@ interface SplitWorkerRuntimeIdentity {
   roleIdentityExact: boolean;
 }
 
-const ASSET_RELATIONS = [
-  "asset_upload_intent",
-  "asset_upload_session",
-  "asset_quota_account",
-  "asset_quota_reservation",
-  "asset_multipart_upload",
-  "asset_multipart_part",
-  "asset_blob_candidate",
-  "asset_cleanup_group",
-  "asset_object_cleanup",
-  "asset_object_cleanup_receipt",
-  "asset_upload_rejection",
-  "asset_scan_evaluation",
-  "asset_promotion_intent",
-  "asset_blob",
-  "asset_resource",
-  "asset_version",
-  "asset_reference",
-  "asset_eligibility_projection",
-  "asset_promotion_receipt",
-] as const;
-const ASSET_API_RELATIONS = [
-  "asset_upload_intent",
-  "asset_upload_session",
-  "asset_quota_account",
-  "asset_quota_reservation",
-  "asset_blob_candidate",
-  "asset_upload_rejection",
-  "asset_promotion_intent",
-  "asset_resource",
-  "asset_version",
-  "asset_eligibility_projection",
-] as const;
-const ASSET_API_MUTABLE_RELATIONS = ASSET_API_RELATIONS.slice(0, 4);
-const ASSET_API_OWNER_READ_RELATIONS = ASSET_API_RELATIONS.slice(4);
 const ASSET_DATA_PLANE_RELATIONS = [
   "asset_upload_intent",
   "asset_upload_session",
@@ -1262,109 +1249,6 @@ const ASSET_DATA_PLANE_MUTABLE_RELATIONS = [
   "asset_upload_session",
   "asset_multipart_upload",
   "asset_multipart_part",
-] as const;
-const ASSET_WORKER_INSERT_RELATIONS = ASSET_RELATIONS.slice(6);
-const ASSET_WORKER_UPDATE_RELATIONS = [
-  "asset_upload_intent",
-  "asset_upload_session",
-  "asset_quota_account",
-  "asset_quota_reservation",
-  "asset_blob_candidate",
-  "asset_cleanup_group",
-  "asset_object_cleanup",
-  "asset_promotion_intent",
-] as const;
-const ADMISSION_RELATIONS = [
-  "admission_command",
-  "capability_projection_command",
-  "admission_session_execution_binding",
-  "admission_execution_manifest",
-  "admission_launch_profile_snapshot",
-  "admission_capability_catalog_snapshot",
-] as const;
-const CREDIT_USAGE_RELATIONS = [
-  "credit_rating_policy_revision",
-  "credit_rating_snapshot",
-  "credit_usage_attempt_intent",
-  "credit_attempt_usage_evidence",
-  "credit_usage_segment_closure",
-  "credit_usage_closure_evidence",
-  "credit_usage_settlement",
-  "credit_rated_usage",
-  "credit_usage_settlement_source",
-  "credit_usage_variance",
-  "credit_usage_reconciliation",
-  "credit_usage_command_receipt",
-] as const;
-const MODEL_GATEWAY_ADMISSION_RELATIONS = ["model_gateway_execution_authorization"] as const;
-const ADMISSION_SELECT_RELATIONS = [
-  ...ADMISSION_RELATIONS,
-  ...CREDIT_USAGE_RELATIONS,
-  ...MODEL_GATEWAY_ADMISSION_RELATIONS,
-  "site",
-  "site_release",
-  "authorization_site",
-  "authorization_site_release",
-  "authorization_product_binding",
-  "authorization_subject",
-  "authorization_identity_session",
-  "authorization_project",
-  "authorization_project_membership",
-  "authorization_session_access_grant",
-  "identity_personal_bootstrap",
-  "identity_execution_space",
-  "identity_namespace_allocation_intent",
-  "commerce_billing_account",
-  "credit_account",
-  "credit_grant",
-  "credit_hold",
-  "credit_hold_allocation",
-  "credit_journal_transaction",
-  "credit_journal_entry",
-  "credit_execution_budget_root",
-  "credit_budget_allocation",
-  "credit_budget_allocation_revision",
-  "credit_authorization_segment",
-  "credit_budget_operation_receipt",
-  "asset_resource",
-  "asset_version",
-  "asset_eligibility_projection",
-] as const;
-const ADMISSION_INSERT_RELATIONS = [
-  "admission_command",
-  "capability_projection_command",
-  "admission_session_execution_binding",
-  "admission_execution_manifest",
-  "admission_capability_catalog_snapshot",
-  "outbox_event",
-  "credit_hold",
-  "credit_hold_allocation",
-  "credit_journal_transaction",
-  "credit_journal_entry",
-  "credit_execution_budget_root",
-  "credit_budget_allocation",
-  "credit_budget_allocation_revision",
-  "credit_authorization_segment",
-  "credit_budget_operation_receipt",
-  "credit_rating_snapshot",
-  "credit_usage_segment_closure",
-  "credit_usage_closure_evidence",
-  "credit_usage_settlement",
-  "credit_rated_usage",
-  "credit_usage_settlement_source",
-  "credit_usage_variance",
-  "credit_usage_reconciliation",
-  "credit_usage_command_receipt",
-  "model_gateway_execution_authorization",
-] as const;
-const ADMISSION_UPDATE_RELATIONS = [
-  "admission_command",
-  "capability_projection_command",
-  "admission_execution_manifest",
-  "credit_hold",
-  "credit_execution_budget_root",
-  "credit_authorization_segment",
-  "model_gateway_execution_authorization",
 ] as const;
 const ASSET_RELATIONS_SQL = sqlLiterals(ASSET_RELATIONS);
 const ASSET_API_RELATIONS_SQL = sqlLiterals(ASSET_API_RELATIONS);
@@ -1401,6 +1285,10 @@ const ADMISSION_INSERT_RELATIONS_SQL = sqlLiterals(ADMISSION_INSERT_RELATIONS);
 const ADMISSION_UPDATE_RELATIONS_SQL = sqlLiterals(ADMISSION_UPDATE_RELATIONS);
 const CREDIT_USAGE_RELATIONS_SQL = sqlLiterals(CREDIT_USAGE_RELATIONS);
 const MODEL_GATEWAY_ADMISSION_RELATIONS_SQL = sqlLiterals(MODEL_GATEWAY_ADMISSION_RELATIONS);
+const MEDIA_CONTROL_ADMIN_RELATIONS_SQL = sqlLiterals(MEDIA_CONTROL_ADMIN_RELATIONS);
+const PRODUCT_CATALOG_ADMIN_RELATIONS_SQL = sqlLiterals(PRODUCT_CATALOG_ADMIN_RELATIONS);
+const ADMIN_INSERT_RELATIONS_SQL = sqlLiterals(ADMIN_INSERT_RELATIONS);
+const ADMIN_UPDATE_RELATIONS_SQL = sqlLiterals(ADMIN_UPDATE_RELATIONS);
 
 const SPLIT_WORKER_RUNTIME_IDENTITY_SQL = `
   SELECT current_user AS "currentUser",
@@ -1760,8 +1648,10 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_table_privilege(current_user, 'platform.authorization_site', 'SELECT')
            AND has_table_privilege(current_user, 'platform.authorization_subject', 'SELECT')
            AND has_table_privilege(current_user, 'platform.authorization_identity_session', 'SELECT')
+           AND has_table_privilege(current_user, 'platform.authorization_project', 'SELECT')
            AND has_table_privilege(current_user, 'platform.authorization_project_membership', 'SELECT')
            AND has_table_privilege(current_user, 'platform.authorization_session_access_grant', 'SELECT')
+           AND has_function_privilege(current_user, 'platform.lock_authorization_snapshot_watermark()', 'EXECUTE')
          ELSE (has_table_privilege(current_user, 'platform.command_receipt', 'SELECT') AND has_table_privilege(current_user, 'platform.command_receipt', 'INSERT') AND has_table_privilege(current_user, 'platform.command_receipt', 'UPDATE'))
            AND (has_table_privilege(current_user, 'platform.outbox_event', 'SELECT') AND has_table_privilege(current_user, 'platform.outbox_event', 'INSERT'))
            AND has_table_privilege(current_user, 'platform.authorization_site', 'SELECT')
@@ -1769,6 +1659,7 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_table_privilege(current_user, 'platform.authorization_product_binding', 'SELECT')
            AND (has_table_privilege(current_user, 'platform.commerce_billing_account', 'SELECT') AND has_table_privilege(current_user, 'platform.commerce_billing_account', 'INSERT') AND has_table_privilege(current_user, 'platform.commerce_billing_account', 'UPDATE'))
            AND (has_table_privilege(current_user, 'platform.commerce_billing_account_membership', 'SELECT') AND has_table_privilege(current_user, 'platform.commerce_billing_account_membership', 'INSERT') AND has_table_privilege(current_user, 'platform.commerce_billing_account_membership', 'UPDATE'))
+           AND (has_table_privilege(current_user, 'platform.credit_rating_policy_revision', 'SELECT') AND has_table_privilege(current_user, 'platform.credit_rating_policy_revision', 'INSERT'))
            AND (has_table_privilege(current_user, 'platform.site', 'SELECT') AND has_table_privilege(current_user, 'platform.site', 'INSERT'))
            AND has_any_column_privilege(current_user, 'platform.site', 'UPDATE')
            AND (has_table_privilege(current_user, 'platform.site_project_binding', 'SELECT') AND has_table_privilege(current_user, 'platform.site_project_binding', 'INSERT'))
@@ -1976,6 +1867,25 @@ const RUNTIME_IDENTITY_SQL = `
            AS "canUpdateCommerceCatalogEpoch",
          has_function_privilege(current_user, 'platform.apply_admin_authority_change(uuid,jsonb)', 'EXECUTE')
            AS "canExecuteAdminAuthorityChange",
+         CASE WHEN $2='admission' THEN
+           CASE WHEN has_function_privilege(
+             current_user,'platform.admission_role_identity_is_current()','EXECUTE'
+           ) THEN platform.admission_role_identity_is_current() ELSE FALSE END
+         ELSE FALSE END AS "admissionRoleIdentityExact",
+         CASE WHEN $2='admission' THEN
+           has_function_privilege(current_user,
+             'platform.admission_role_identity_is_current()','EXECUTE')
+           AND has_function_privilege(current_user,
+             'platform.record_admission_verified_terminal_evidence(text,text,text,text,text,text,text,character)','EXECUTE')
+           AND has_function_privilege(current_user,
+             'platform.find_execution_root_closure(text,jsonb,text,character)','EXECUTE')
+           AND has_function_privilege(current_user,
+             'platform.lock_execution_root_closure(text,jsonb,text,uuid,uuid,uuid,uuid,uuid,text,bigint,bigint,bigint,numeric,text)','EXECUTE')
+           AND has_function_privilege(current_user,
+             'platform.commit_execution_root_closure(jsonb)','EXECUTE')
+           AND has_function_privilege(current_user,
+             'platform.mark_execution_root_reconciliation(jsonb)','EXECUTE')
+         ELSE FALSE END AS "hasRequiredAdmissionExecutionRootFunctions",
          CASE WHEN $2='api' THEN
            has_function_privilege(current_user,'platform.resolve_product_model_option_catalog(text,text)','EXECUTE')
          WHEN $2='admission' THEN
@@ -2024,6 +1934,32 @@ const RUNTIME_IDENTITY_SQL = `
              ])
              AND has_table_privilege(current_user,model_relation.oid,'SELECT')
          ) END AS "canSelectModelCatalogTable",
+         CASE WHEN $2='admin' THEN
+           has_table_privilege(current_user,'platform.product_catalog_publication_head','SELECT')
+           AND has_column_privilege(current_user,'platform.product_catalog_publication_head','head_revision','UPDATE')
+           AND has_column_privilege(current_user,'platform.product_catalog_publication_head','head_ref','UPDATE')
+           AND has_column_privilege(current_user,'platform.product_catalog_publication_head','head_digest','UPDATE')
+           AND has_column_privilege(current_user,'platform.product_catalog_publication_head','updated_at','UPDATE')
+           AND NOT has_table_privilege(current_user,'platform.product_catalog_publication_head','INSERT,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+           AND has_table_privilege(current_user,'platform.product_surface_catalog_revision','SELECT')
+           AND has_table_privilege(current_user,'platform.product_surface_catalog_revision','INSERT')
+           AND NOT has_table_privilege(current_user,'platform.product_surface_catalog_revision','UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+           AND has_table_privilege(current_user,'platform.launch_product_profile_revision','SELECT')
+           AND has_table_privilege(current_user,'platform.launch_product_profile_revision','INSERT')
+           AND NOT has_table_privilege(current_user,'platform.launch_product_profile_revision','UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+           AND has_table_privilege(current_user,'platform.product_catalog_publication_audit','SELECT')
+           AND has_table_privilege(current_user,'platform.product_catalog_publication_audit','INSERT')
+           AND NOT has_table_privilege(current_user,'platform.product_catalog_publication_audit','UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+           AND has_table_privilege(current_user,'platform.product_catalog_publication_receipt','SELECT')
+           AND has_table_privilege(current_user,'platform.product_catalog_publication_receipt','INSERT')
+           AND NOT has_table_privilege(current_user,'platform.product_catalog_publication_receipt','UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+         ELSE
+           NOT has_table_privilege(current_user,'platform.product_catalog_publication_head','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+           AND NOT has_table_privilege(current_user,'platform.product_surface_catalog_revision','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+           AND NOT has_table_privilege(current_user,'platform.launch_product_profile_revision','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+           AND NOT has_table_privilege(current_user,'platform.product_catalog_publication_audit','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+           AND NOT has_table_privilege(current_user,'platform.product_catalog_publication_receipt','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+         END AS "hasRequiredProductCatalogPrivileges",
          (has_column_privilege(current_user,'platform.model_inventory_import','canonical_payload','SELECT')
            OR has_column_privilege(current_user,'platform.model_provider_snapshot','secret_ref','SELECT'))
            AS "canReadModelSensitiveColumn",
@@ -2049,7 +1985,8 @@ const RUNTIME_IDENTITY_SQL = `
                  'authorization_scoped_snapshot','authorization_scoped_snapshot_record','model_option_materialization','model_option_revision',
                  'model_option_materialized_revision','model_option_role_binding',
                'site_release_model_catalog_publication',
-               'site_release_model_catalog_surface','site_release_model_catalog_option'
+               'site_release_model_catalog_surface','site_release_model_catalog_option',
+               ${PRODUCT_CATALOG_ADMIN_RELATIONS_SQL}
                ,'identity_account','identity_password_credential','identity_login_identifier',
                'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
                'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
@@ -2087,7 +2024,8 @@ const RUNTIME_IDENTITY_SQL = `
                ${ADMISSION_RELATIONS_SQL},
                ${ASSET_RELATIONS_SQL},
                ${CREDIT_USAGE_RELATIONS_SQL},
-               ${MODEL_GATEWAY_ADMISSION_RELATIONS_SQL}
+               ${MODEL_GATEWAY_ADMISSION_RELATIONS_SQL},
+               ${MEDIA_CONTROL_ADMIN_RELATIONS_SQL}
                ]) AND (
                  has_table_privilege(runtime_role.rolname, candidate.oid,
                    'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
@@ -2107,7 +2045,8 @@ const RUNTIME_IDENTITY_SQL = `
                  'authorization_scoped_snapshot','authorization_scoped_snapshot_record','model_option_materialization','model_option_revision',
                  'model_option_materialized_revision','model_option_role_binding',
                'site_release_model_catalog_publication',
-               'site_release_model_catalog_surface','site_release_model_catalog_option'
+               'site_release_model_catalog_surface','site_release_model_catalog_option',
+               ${PRODUCT_CATALOG_ADMIN_RELATIONS_SQL}
                ,'identity_account','identity_password_credential','identity_login_identifier',
                'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
                'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
@@ -2145,13 +2084,13 @@ const RUNTIME_IDENTITY_SQL = `
                ${ADMISSION_RELATIONS_SQL},
                ${ASSET_RELATIONS_SQL},
                ${CREDIT_USAGE_RELATIONS_SQL},
-               ${MODEL_GATEWAY_ADMISSION_RELATIONS_SQL}
+               ${MODEL_GATEWAY_ADMISSION_RELATIONS_SQL},
+               ${MEDIA_CONTROL_ADMIN_RELATIONS_SQL}
                ]) AND (
-                 (candidate.relname LIKE 'model\\_%' ESCAPE '\\'
-                   AND candidate.relname<>'model_gateway_execution_authorization' AND (
-                   has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
-                   OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT')
-                 ))
+                 ((has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
+                   OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT'))
+                  AND candidate.relname = ANY(ARRAY[${MEDIA_CONTROL_ADMIN_RELATIONS_SQL}])
+                  AND $2 <> 'admin')
                  OR
                  ($2 = 'authorization' AND (
                    has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
@@ -2159,7 +2098,7 @@ const RUNTIME_IDENTITY_SQL = `
                  ) AND candidate.relname <> ALL(ARRAY[
                    'platform_foundation','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_scoped_event_log',
                    'authorization_scoped_snapshot','authorization_scoped_snapshot_record','authorization_site',
-                   'authorization_subject','authorization_identity_session','authorization_project_membership',
+                   'authorization_subject','authorization_identity_session','authorization_project','authorization_project_membership',
                    'authorization_session_access_grant'
                  ]))
                  OR
@@ -2252,20 +2191,8 @@ const RUNTIME_IDENTITY_SQL = `
                      'site_traffic_stop_observation','authorization_scoped_site_cursor','authorization_scoped_event_log','authorization_site',
                      'authorization_site_release','authorization_product_binding'
                    ]))
-                   OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY[
-                     'command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership',
-                     'commerce_command','commerce_catalog_product','commerce_catalog_plan','commerce_catalog_plan_version',
-                     'commerce_fulfillment_program_revision','commerce_fulfillment_program_output',
-                     'commerce_catalog_product_version','commerce_redemption_program_revision',
-                     'commerce_redemption_program_availability','commerce_code_batch','commerce_redeem_code',
-                     'commerce_code_batch_approval','commerce_code_secret_export','commerce_audit_entry',
-                     'site','site_project_binding','site_release','site_activation_attempt',
-                     'site_traffic_stop_attempt','site_effect_approval','authorization_scoped_site_cursor','authorization_scoped_event_log',
-                     'admin_command_decision','admin_approval','admin_approval_decision',
-                     'admin_post_effect_review','admin_oidc_transaction',
-                     'admin_operator_session','admin_step_up_transaction',
-                     'admission_capability_catalog_snapshot','admission_launch_profile_snapshot'
-                   ]))
+                   OR ($2 = 'admin' AND
+                     candidate.relname = ANY(ARRAY[${ADMIN_INSERT_RELATIONS_SQL}]))
                  ))
                  OR (has_table_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
                    ($2 = 'api' AND candidate.relname = ANY(ARRAY[
@@ -2303,15 +2230,8 @@ const RUNTIME_IDENTITY_SQL = `
                      'command_receipt','outbox_event','inbox_delivery','admin_approval',
                      'admin_post_effect_review'
                    ]))
-                   OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY[
-                     'command_receipt','commerce_catalog_epoch_authority','commerce_billing_account','commerce_billing_account_membership',
-                     'commerce_catalog_product','commerce_catalog_plan','commerce_code_batch',
-                     'commerce_redemption_program_availability',
-                     'site','site_project_binding','site_release','site_deployment_binding',
-                     'site_effect_approval','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_site','authorization_product_binding',
-                     'admin_approval','admin_post_effect_review','admin_oidc_transaction',
-                     'admin_operator_session','admin_step_up_transaction'
-                   ]))
+                   OR ($2 = 'admin' AND
+                     candidate.relname = ANY(ARRAY[${ADMIN_UPDATE_RELATIONS_SQL}]))
                    OR ($2 = 'admin' AND candidate.relname = 'admin_approval')
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'INSERT') AND NOT (
@@ -2354,20 +2274,8 @@ const RUNTIME_IDENTITY_SQL = `
                      'site_traffic_stop_observation','authorization_scoped_site_cursor','authorization_scoped_event_log','authorization_site',
                      'authorization_site_release','authorization_product_binding'
                    ]))
-                   OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY[
-                     'command_receipt','outbox_event','commerce_billing_account','commerce_billing_account_membership',
-                     'commerce_command','commerce_catalog_product','commerce_catalog_plan','commerce_catalog_plan_version',
-                     'commerce_fulfillment_program_revision','commerce_fulfillment_program_output',
-                     'commerce_catalog_product_version','commerce_redemption_program_revision',
-                     'commerce_redemption_program_availability','commerce_code_batch','commerce_redeem_code',
-                     'commerce_code_batch_approval','commerce_code_secret_export','commerce_audit_entry',
-                     'site','site_project_binding','site_release','site_activation_attempt',
-                     'site_traffic_stop_attempt','site_effect_approval','authorization_scoped_site_cursor','authorization_scoped_event_log',
-                     'admin_command_decision','admin_approval','admin_approval_decision',
-                     'admin_post_effect_review','admin_oidc_transaction',
-                     'admin_operator_session','admin_step_up_transaction',
-                     'admission_capability_catalog_snapshot','admission_launch_profile_snapshot'
-                   ]))
+                   OR ($2 = 'admin' AND
+                     candidate.relname = ANY(ARRAY[${ADMIN_INSERT_RELATIONS_SQL}]))
                  ))
                  OR (has_any_column_privilege(runtime_role.rolname, candidate.oid, 'UPDATE') AND NOT (
                    ($2 = 'api' AND candidate.relname = ANY(ARRAY[
@@ -2405,15 +2313,8 @@ const RUNTIME_IDENTITY_SQL = `
                      'command_receipt','outbox_event','inbox_delivery','admin_approval',
                      'admin_post_effect_review'
                    ]))
-                   OR ($2 = 'admin' AND candidate.relname = ANY(ARRAY[
-                     'command_receipt','commerce_catalog_epoch_authority','commerce_billing_account','commerce_billing_account_membership',
-                     'commerce_catalog_product','commerce_catalog_plan','commerce_code_batch',
-                     'commerce_redemption_program_availability',
-                     'site','site_project_binding','site_release','site_deployment_binding',
-                     'site_effect_approval','authorization_scoped_stream_state','authorization_scoped_site_cursor','authorization_site','authorization_product_binding',
-                     'admin_approval','admin_post_effect_review','admin_oidc_transaction',
-                     'admin_operator_session','admin_step_up_transaction'
-                   ]))
+                   OR ($2 = 'admin' AND
+                     candidate.relname = ANY(ARRAY[${ADMIN_UPDATE_RELATIONS_SQL}]))
                    OR ($2 = 'admin' AND candidate.relname = 'admin_approval')
                  ))
                ))
@@ -2459,8 +2360,16 @@ const RUNTIME_IDENTITY_SQL = `
                ]))
                OR ($2 = 'admission' AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.resolve_admission_model_owner(text,text,text)'),
-                 to_regprocedure('platform.valid_credit_scope_policy(jsonb)')
+                 to_regprocedure('platform.valid_credit_scope_policy(jsonb)'),
+                 to_regprocedure('platform.admission_role_identity_is_current()'),
+                 to_regprocedure('platform.record_admission_verified_terminal_evidence(text,text,text,text,text,text,text,character)'),
+                 to_regprocedure('platform.find_execution_root_closure(text,jsonb,text,character)'),
+                 to_regprocedure('platform.lock_execution_root_closure(text,jsonb,text,uuid,uuid,uuid,uuid,uuid,text,bigint,bigint,bigint,numeric,text)'),
+                 to_regprocedure('platform.commit_execution_root_closure(jsonb)'),
+                 to_regprocedure('platform.mark_execution_root_reconciliation(jsonb)')
                ]))
+               OR ($2 = 'authorization' AND candidate_function.oid =
+                 to_regprocedure('platform.lock_authorization_snapshot_watermark()'))
                OR ($2 = '__retired_runtime_role__' AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.report_model_provider_availability(uuid,text,text,text,bigint,text,timestamptz,text)'),
                  to_regprocedure('platform.apply_admin_authority_change(uuid,jsonb)')
@@ -2530,7 +2439,10 @@ function validRuntimeIdentity(
     identity.canReadCommerceCatalogEpoch === (config.role === "admin") &&
     identity.canUpdateCommerceCatalogEpoch === (config.role === "admin") &&
     identity.canExecuteAdminAuthorityChange === (config.role === "admin-worker") &&
+    identity.admissionRoleIdentityExact === (config.role === "admission") &&
+    identity.hasRequiredAdmissionExecutionRootFunctions === (config.role === "admission") &&
     identity.hasRequiredModelOptionFunctions &&
+    identity.hasRequiredProductCatalogPrivileges &&
     identity.canSelectModelCatalogTable === (config.role === "admin") &&
     !identity.canReadModelSensitiveColumn &&
     identity.unexpectedPlatformRelations.length === 0 &&

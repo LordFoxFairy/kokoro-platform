@@ -4,6 +4,7 @@ import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/plat
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import type { AttemptUsageEvidence, RatingPolicyRevision } from "../../domain/usage-rating.js";
 import { PostgresCreditAuthorityRepository } from "./credit-authority-repository.js";
+import { creditJournalEntriesDigest } from "./credit-journal-digest.js";
 import type {
   StoredAttemptUsageEvidence,
   StoredUsageAttemptIntent,
@@ -102,9 +103,11 @@ export class PostgresUsageSettlementRepository implements UsageSettlementReposit
 
   async lockUsageContext(
     transaction: PlatformTransaction,
-    input: Readonly<{ siteId: string; authorizationSegmentRef: string }>,
+    input: Parameters<UsageSettlementRepository["lockUsageContext"]>[1],
   ): Promise<StoredUsageSettlementContext | null> {
-    const segment = await this.#credit.lockSegmentAllocation(transaction, input);
+    const segment = input.authority === "producer"
+      ? await this.#credit.loadSegmentAllocationForUsageProducer(transaction, input)
+      : await this.#credit.lockSegmentAllocation(transaction, input);
     if (segment === null) return null;
     const rows = await resolvePlatformTransaction(transaction).query<PolicyRow>(
       `SELECT policy.policy,policy.policy_digest AS "policyDigest",
@@ -214,7 +217,7 @@ export class PostgresUsageSettlementRepository implements UsageSettlementReposit
         WHERE evidence.site_ref=$1 AND evidence.authorization_segment_ref=$2::uuid
           AND evidence.producer_kind=$3 AND evidence.producer_context=$4
           AND evidence.producer_generation=$5::bigint AND evidence.attempt_ref=$6
-        ORDER BY evidence.revision DESC LIMIT 1 FOR UPDATE`,
+        ORDER BY evidence.revision DESC LIMIT 1`,
       [input.siteId, input.authorizationSegmentRef, input.producerKind, input.producerContext,
         input.producerGeneration.toString(), input.attemptRef],
     );
@@ -616,10 +619,13 @@ async function insertJournal(
         amount: source.amount, creditGrantId: source.creditGrantId });
     }
   }
-  const entriesDigest = digest(postings.map((entry) => [entry.ordinal, record.context.siteId,
-    record.context.creditAccountId.toLowerCase(), record.context.unit, entry.side, entry.accountType,
-    entry.amount.toString(), entry.creditGrantId.toLowerCase(), record.context.creditHoldRef.toLowerCase()]
-    .join("|")).join("\n"));
+  const entriesDigest = creditJournalEntriesDigest(postings.map((entry) => ({
+    ...entry,
+    siteId: record.context.siteId,
+    creditAccountId: record.context.creditAccountId,
+    unit: record.context.unit,
+    creditHoldRef: record.context.creditHoldRef,
+  })));
   await one(sql.execute(
     `INSERT INTO platform.credit_journal_transaction
      (journal_transaction_ref,credit_account_ref,site_ref,unit,business_operation_key,request_digest,

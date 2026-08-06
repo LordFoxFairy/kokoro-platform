@@ -1,4 +1,5 @@
-import { create } from "@bufbuild/protobuf";
+import { createHash } from "node:crypto";
+import { create, toBinary } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import type { HandlerContext, ServiceImpl } from "@connectrpc/connect";
 import {
@@ -6,20 +7,22 @@ import {
   CommandIdentityV2Schema,
   CommandReceiptStateV2,
   CommandReceiptV2Schema,
-} from "../../../../interfaces/connect/generated-site-lifecycle/kokoro/common/v2/command_envelope_pb.js";
+} from "../../../../generated/proto/kokoro/common/v2/command_envelope_pb.js";
 import type { AuthenticatedOperatorCommandContext } from
-  "../../../../interfaces/connect/generated-site-lifecycle/kokoro/platform/admin/v2/admin_shared_pb.js";
+  "../../../../generated/proto/kokoro/platform/admin/v2/admin_shared_pb.js";
 import {
+  type ActivationFacts,
+  ActivationFactsSchema,
   RequestActivationApprovalResponseSchema,
   SiteActivationState,
   SiteEffectApprovalState,
   SiteLifecycleService,
-} from "../../../../interfaces/connect/generated-site-lifecycle/kokoro/platform/site/v1/site_lifecycle_pb.js";
+} from "../../../../generated/proto/kokoro/platform/site/v1/site_lifecycle_pb.js";
 import {
   approveAndActivateRequestDigest,
   requestActivationApprovalRequestDigest,
   type VerifiedAuthenticatedAdminAxes,
-} from "../../../../interfaces/connect/generated-site-lifecycle/command-envelope-digest.js";
+} from "../../../../generated/contracts/platform-site-lifecycle@v1/digest.js";
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
 import type { SiteDangerousAdminHandler } from "../../application/site-dangerous-admin-handler.js";
 
@@ -57,9 +60,10 @@ export function createSiteLifecycleConnectService(input: Readonly<{
       const claimed = required(request.context, "SITE_LIFECYCLE_CONTEXT_REQUIRED");
       const effect = required(request.effect, "SITE_ACTIVATION_EFFECT_REQUIRED");
       const activation = required(effect.activation, "SITE_ACTIVATION_FACTS_REQUIRED");
+      const facts = ownerFacts(activation);
       const verified = await input.resolver.resolveSiteCommand(claimed, transport, {
         operation: "site.approval.request", siteRef: request.siteId,
-        resourceRefs: [effect.approvalRef, activation.candidateReleaseRef],
+        resourceRefs: [effect.approvalRef, ...facts.resourceRefs],
         allowedOperations: ["site.approval.request"],
       });
       const identity = commandIdentity(claimed);
@@ -69,8 +73,9 @@ export function createSiteLifecycleConnectService(input: Readonly<{
         commandId: identity.commandId, idempotencyKey: identity.idempotencyKey,
         requestDigest: identity.requestDigest,
         approvalRef: effect.approvalRef, siteRef: request.siteId,
-        candidateReleaseRef: activation.candidateReleaseRef,
-        expectedActiveReleaseRef: activation.expectedActiveReleaseRef ?? null,
+        candidateReleaseRef: facts.targetReleaseRef,
+        expectedActiveReleaseRef: facts.expectedActiveReleaseRef,
+        activationFactsDigest: facts.digest,
         audience: activation.audience, sessionContractRevision: activation.sessionContractRevision,
         reason: activation.reason,
       }, verified.context);
@@ -89,11 +94,11 @@ export function createSiteLifecycleConnectService(input: Readonly<{
       const claimed = required(request.context, "SITE_LIFECYCLE_CONTEXT_REQUIRED");
       const effect = required(request.effect, "SITE_ACTIVATION_EFFECT_REQUIRED");
       const activation = required(effect.activation, "SITE_ACTIVATION_FACTS_REQUIRED");
+      const facts = ownerFacts(activation);
       const identity = commandIdentity(claimed);
       const verified = await input.resolver.resolveSiteCommand(claimed, transport, {
         operation: "site.activation.begin", siteRef: request.siteId,
-        resourceRefs: [effect.approvalRef, effect.activationAttemptRef,
-          activation.candidateReleaseRef],
+        resourceRefs: [effect.approvalRef, effect.activationAttemptRef, ...facts.resourceRefs],
         allowedOperations: ["site.approval.approve", "site.activation.begin"],
       });
       requireDigest(identity.requestDigest,
@@ -101,8 +106,9 @@ export function createSiteLifecycleConnectService(input: Readonly<{
       const receipt = await input.owner.approveAndActivate({
         commandId: identity.commandId, idempotencyKey: identity.idempotencyKey,
         approvalRef: effect.approvalRef, attemptRef: effect.activationAttemptRef,
-        siteRef: request.siteId, candidateReleaseRef: activation.candidateReleaseRef,
-        expectedActiveReleaseRef: activation.expectedActiveReleaseRef ?? null,
+        siteRef: request.siteId, candidateReleaseRef: facts.targetReleaseRef,
+        expectedActiveReleaseRef: facts.expectedActiveReleaseRef,
+        activationFactsDigest: facts.digest,
         audience: activation.audience, sessionContractRevision: activation.sessionContractRevision,
         reason: activation.reason,
       }, verified.context);
@@ -153,6 +159,47 @@ function wireReceipt(
 function required<Value>(value: Value | undefined, code: string): Value {
   if (value === undefined) throw new Error(code);
   return value;
+}
+
+function ownerFacts(activation: ActivationFacts) {
+  const candidate = required(activation.candidate, "SITE_ACTIVATION_CANDIDATE_REQUIRED");
+  const target = required(activation.targetRelease, "SITE_ACTIVATION_TARGET_RELEASE_REQUIRED");
+  const pointer = required(activation.activePointer, "SITE_ACTIVATION_POINTER_REQUIRED");
+  const fence = required(pointer.fence, "SITE_ACTIVATION_CAS_FENCE_REQUIRED");
+  let pointerRef: string;
+  let expectedActiveReleaseRef: string | null;
+  if (pointer.current.case === "firstActivation") {
+    if (pointer.expectedGeneration !== 0n) {
+      throw new Error("SITE_ACTIVATION_FIRST_POINTER_GENERATION_INVALID");
+    }
+    pointerRef = pointer.current.value.pointerRef;
+    expectedActiveReleaseRef = null;
+  } else if (pointer.current.case === "existing") {
+    const currentRelease = required(pointer.current.value.currentRelease,
+      "SITE_ACTIVATION_CURRENT_RELEASE_REQUIRED");
+    if (pointer.current.value.currentGeneration < 1n ||
+        pointer.expectedGeneration !== pointer.current.value.currentGeneration) {
+      throw new Error("SITE_ACTIVATION_EXISTING_POINTER_GENERATION_INVALID");
+    }
+    pointerRef = pointer.current.value.pointerRef;
+    expectedActiveReleaseRef = currentRelease.ref;
+  } else {
+    throw new Error("SITE_ACTIVATION_POINTER_CURRENT_REQUIRED");
+  }
+  const digest = `sha256:${createHash("sha256")
+    .update(toBinary(ActivationFactsSchema, activation, { writeUnknownFields: false }))
+    .digest("hex")}`;
+  return Object.freeze({
+    targetReleaseRef: target.ref,
+    expectedActiveReleaseRef,
+    digest,
+    resourceRefs: Object.freeze([
+      candidate.candidateRef,
+      target.ref,
+      pointerRef,
+      fence.casCommandRef,
+    ]),
+  });
 }
 
 function approvalState(value: "pending" | "approved" | "consumed"): SiteEffectApprovalState {

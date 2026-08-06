@@ -1,4 +1,4 @@
-import { AdmissionRetryClass } from "../../../../interfaces/connect/generated/kokoro/platform/admission/v1/admission_pb.js";
+import { AdmissionRetryClass } from "../../../../generated/proto/kokoro/platform/admission/v1/admission_pb.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import type { AdmissionModelCatalogRepository } from "../../../model-control/application/contracts/product-model-option-ports.js";
 import { PostgresProductModelOptionRepository } from "../../../model-control/infrastructure/postgres/product-model-option-repository.js";
@@ -59,10 +59,13 @@ export class PostgresAdmissionModelOwner implements AdmissionModelOwnerPort {
     return Object.freeze({
       kind: "resolved",
       value: Object.freeze({
-        provider: selected.adapterKind === "litellm" ? "litellm" : selected.provider,
-        name: selected.adapterKind === "litellm"
-          ? selected.gatewayModelName
-          : selected.upstreamModel,
+        provider: selected.adapterKind,
+        name: selected.gatewayModelName,
+        route: Object.freeze({
+          adapterKind: selected.adapterKind,
+          gatewayModel: selected.gatewayModelName,
+          providerModel: selected.upstreamModel,
+        }),
         ...(input.requestedEffort === undefined ? {} : { effort: input.requestedEffort }),
         modelLabel: option.label,
       }),

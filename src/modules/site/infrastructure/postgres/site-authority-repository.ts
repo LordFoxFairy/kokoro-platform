@@ -26,7 +26,10 @@ import {
   type SiteTrafficStopObservation,
 } from "../../domain/site-traffic-stop.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
-import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
+import {
+  acquirePlatformSqlAdvisoryLock,
+  resolvePlatformTransaction,
+} from "../../../../shared/unit-of-work/platform-transaction.js";
 import type { SiteWorkerProjectBindingLock } from "./site-worker-project-binding-lock.js";
 
 export class PostgresSiteAuthorityRepository implements
@@ -45,8 +48,7 @@ export class PostgresSiteAuthorityRepository implements
          ON catalog.site_ref=release.site_ref
         AND catalog.site_release_ref=release.release_ref
         AND catalog.agent_catalog_ref=release.agent_catalog_ref
-       WHERE release.site_ref=$1 AND release.release_ref=$2 AND release.state='ready'
-       FOR SHARE OF catalog`,
+       WHERE release.site_ref=$1 AND release.release_ref=$2 AND release.state='ready'`,
       [input.siteRef, input.releaseRef],
     );
     if (rows.length !== 1 || typeof rows[0]?.snapshotDigest !== "string" ||
@@ -198,9 +200,26 @@ export class PostgresSiteAuthorityRepository implements
     return row === undefined ? null : verifySiteRelease(releaseRow(row));
   }
 
+  async loadActivationForBegin(
+    transaction: PlatformTransaction,
+    attemptRef: string,
+  ): Promise<ActivationAttempt | null> {
+    const sql = resolvePlatformTransaction(transaction);
+    await acquirePlatformSqlAdvisoryLock(sql, `site_activation_attempt:${attemptRef}`);
+    return this.loadActivation(transaction, attemptRef, false);
+  }
+
   async loadActivationForUpdate(
     transaction: PlatformTransaction,
     attemptRef: string,
+  ): Promise<ActivationAttempt | null> {
+    return this.loadActivation(transaction, attemptRef, true);
+  }
+
+  private async loadActivation(
+    transaction: PlatformTransaction,
+    attemptRef: string,
+    forUpdate: boolean,
   ): Promise<ActivationAttempt | null> {
     const rows = await resolvePlatformTransaction(transaction).query<ActivationRow>(
       `SELECT attempt_ref AS "attemptRef", site_ref AS "siteRef",
@@ -215,7 +234,7 @@ export class PostgresSiteAuthorityRepository implements
               environment,region,audience,session_contract_revision AS "sessionContractRevision",
               state, requested_at AS "requestedAt", provider_operation_key AS "providerOperationKey",
               deployment_ref AS "deploymentRef", observed_at AS "observedAt",failure_code AS "failureCode"
-       FROM platform.site_activation_attempt WHERE attempt_ref=$1 FOR UPDATE`,
+       FROM platform.site_activation_attempt WHERE attempt_ref=$1${forUpdate ? " FOR UPDATE" : ""}`,
       [attemptRef],
     );
     const row = rows[0];

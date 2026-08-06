@@ -26,10 +26,17 @@ The production artifact has one closed runtime set:
 - `platform-hub-connect`
 
 `kokoro-platform-kit` is the only shared runtime library workspace. Hub reuses the same artifact but
-has two independent processes: `@kokoro/hub` is the HTTP management surface and
-`platform-hub-connect` is the private mTLS catalog/runtime service. They share Mongo/S3 ownership but
-never share a process or listener. LiteLLM is an external provider gateway, not a package or process
-shipped in this image.
+has two independent processes: `@kokoro/hub` is the package-owned HTTP management surface and
+`platform-hub-connect` is the Platform-root private mTLS catalog/runtime composition. The latter
+consumes the repository's one canonical Root-generated tree under `src/generated`; Hub keeps the
+business owners but has no generated mirror or second Connect main. The processes share Mongo/S3
+ownership but never a process or listener. LiteLLM is an external provider gateway, not a package or
+process shipped in this image.
+
+Root contracts, protobuf modules and JSON-schema validators are checked in exactly once under
+`src/generated/{contracts,proto,schema}` with `src/generated/provenance.json`. Prisma output alone is
+build-local under `src/generated/platform-prisma`. Package-local vendors and per-service generated
+mirrors are not supported.
 
 The directories `kokoro-site`, `kokoro-user`, `kokoro-model`, `kokoro-credit`, `kokoro-payment`,
 and `kokoro-platform-admin` are retired source archives. They are deliberately absent from the

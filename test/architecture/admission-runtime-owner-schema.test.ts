@@ -23,8 +23,26 @@ describe("Admission immutable runtime owner schema", () => {
     expect(schema).toContain("model CapabilityProjectionCommand");
     expect(migrator).toContain('"platform.admission_launch_profile_snapshot"');
     expect(migrator).toContain('"platform.admission_capability_catalog_snapshot"');
-    expect(migrator).toContain(
-      "platform.admission_capability_catalog_snapshot, platform.capability_projection_command",
+    expect(migrator).toMatch(
+      /GRANT INSERT ON TABLE[^`]*platform\.admission_capability_catalog_snapshot[^`]*platform\.capability_projection_command/u,
     );
+  });
+
+  it("allows the production Admission role to execute its capability projection operation", async () => {
+    const [client, composition, repository] = await Promise.all([
+      readFile(resolve("src/infrastructure/postgres/client.ts"), "utf8"),
+      readFile(resolve("src/process/admission-composition.ts"), "utf8"),
+      readFile(resolve(
+        "src/modules/admission/infrastructure/postgres/capability-catalog-projection-repository.ts",
+      ), "utf8"),
+    ]);
+    expect(composition).toContain(
+      "new PostgresCapabilityCatalogProjectionRepository(input.database",
+    );
+    expect(repository).toContain('internalTransaction("capability.projection"');
+    const admissionOperations = client.match(
+      /config\.role === "admission"[\s\S]*?(?=: workerAuthority !== undefined)/u,
+    )?.[0];
+    expect(admissionOperations).toContain('operation === "capability.projection"');
   });
 });

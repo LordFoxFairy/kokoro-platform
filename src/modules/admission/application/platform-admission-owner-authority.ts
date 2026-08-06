@@ -1,7 +1,12 @@
 import { createHash, createHmac } from "node:crypto";
 import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
-import type { Backend, Permissions, SkillGrant, McpGrant } from "@kokoro/platform-kit";
+import type {
+  Backend,
+  McpGrant,
+  Permissions,
+  SkillGrant,
+} from "../../../generated/contracts/legacy/platform-control.js";
 import {
   AdmissionRetryClass,
   SafeAdmissionSnapshotSchema,
@@ -9,7 +14,7 @@ import {
   type AdmissionDenialSchema,
   type AdmissionPendingSchema,
   type PrepareRunEffect,
-} from "../../../interfaces/connect/generated/kokoro/platform/admission/v1/admission_pb.js";
+} from "../../../generated/proto/kokoro/platform/admission/v1/admission_pb.js";
 import type { PlatformTransaction } from "../../../shared/unit-of-work/index.js";
 import {
   requireDispatchOwnerEvidence,
@@ -178,6 +183,12 @@ export interface AdmissionRuntimePolicyOwnerPort {
   }>>>;
 }
 
+export type AdmissionModelRoute = Readonly<{
+  adapterKind: "direct" | "litellm";
+  gatewayModel: string;
+  providerModel: string;
+}>;
+
 export interface AdmissionModelOwnerPort {
   resolve(
     transaction: PlatformTransaction,
@@ -190,6 +201,7 @@ export interface AdmissionModelOwnerPort {
   ): Promise<AdmissionOwnerResolution<Readonly<{
     provider: string;
     name: string;
+    route: AdmissionModelRoute;
     effort?: string | undefined;
     thinking?: boolean | undefined;
     modelLabel: string;
@@ -356,6 +368,7 @@ export interface AdmissionLifecycleOwnerPort {
       authorizationSegmentRef: string;
       segmentVersion: bigint;
       expiresAt: string;
+      modelRoute: AdmissionModelRoute;
       ownerFacts: VerifiedGaRunRequestOwnerFacts;
       effect: PrepareRunEffect;
     }>,
@@ -600,7 +613,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
           session_id: command.effect.sessionId,
         },
       };
-      const manifestDigest = digestManifest(command.siteId, command.effect, ownerFacts, {
+      const manifestDigest = digestManifest(command.siteId, command.effect, ownerFacts, model.value.route, {
         sessionExecutionBindingRef: executionBinding.value.sessionExecutionBindingRef,
         capabilitySnapshotRef: capability.value.capabilitySnapshotRef,
         configurationRevisionId: site.value.configurationRevisionId,
@@ -639,6 +652,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         authorizationSegmentRef: budget.value.authorizationSegmentRef,
         segmentVersion: budget.value.segmentVersion,
         expiresAt: budget.value.expiresAt,
+        modelRoute: model.value.route,
         ownerFacts,
         effect: command.effect,
       });
@@ -1054,6 +1068,7 @@ function digestManifest(
   siteId: string,
   effect: PrepareRunEffect,
   ownerFacts: VerifiedGaRunRequestOwnerFacts,
+  modelRoute: AdmissionModelRoute,
   refs: Readonly<Record<string, string>>,
 ): string {
   return createHash("sha256").update(JSON.stringify({
@@ -1066,6 +1081,7 @@ function digestManifest(
       assetGrantRef: item.assetGrantRef,
     })),
     ownerFacts,
+    modelRoute,
     refs,
   })).digest("hex");
 }

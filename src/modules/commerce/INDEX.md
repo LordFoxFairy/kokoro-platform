@@ -76,15 +76,15 @@ performs that verification and writes the signed evidence into `VerifiedRequestS
 
 ## Admin control plane
 
-- `AdminCommerceService` is a closed typed Connect surface mounted only on the Admin mTLS listener. Admin authenticates the
-  operator, verifies exact Site scope/permission/fresh step-up and the canonical protobuf command digest; Commerce remains the
+- The revisioned `AdminCommerceService` descriptor has no production provider or router registration until its approved Commerce
+  application ports exist. An all-`Unimplemented` placeholder is not treated as a mounted control plane; Commerce remains the
   application/repository owner and never accepts a generic route or action proxy.
 - All ten Admin write operations bind retries to the full persisted command identity. Exact retries restore the original durable
   result and database-recorded receipt time after revalidating its SHA-256 digest; identity/digest drift becomes a typed Connect
   conflict and replay never reconstructs a result from mutable business tables.
-- CreditProgram and EntitlementTemplate prerequisites have independent publish/list/get operations. Publication writes an immutable
-  Site-scoped revision, its canonical content digest, command receipt and audit entry in one Platform transaction. Credit scope is a
-  typed policy (surface, capability and Agent sets), and daily/period window facts are complete-or-rejected before persistence.
+- CreditProgram remains Commerce-owned, but the current AdminCommerce Root hard cut no longer exposes the retired
+  publish/list/get RPCs. The catalog composition stays inside Commerce and is not mounted until a new revisioned Commerce
+  application port is approved; AdminCredit never becomes its replacement owner.
 - Display labels have the same fail-closed rule at the protobuf, application, read-projection, and PostgreSQL boundaries: 1–160
   Unicode code points, exact NFC, no boundary Unicode space separator, and no Cc/Cf/Zl/Zp character. All four persisted label columns
   call one database validator whose category table is pinned to Unicode 17.0.

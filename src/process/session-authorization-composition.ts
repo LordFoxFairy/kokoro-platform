@@ -4,7 +4,7 @@ import { TLSSocket } from "node:tls";
 import { connectNodeAdapter } from "@connectrpc/connect-node";
 import type { PlatformTransactionalDatabaseClient } from "../infrastructure/postgres/client.js";
 import { createScopedSessionAuthorizationFeedService } from "../interfaces/connect/scoped-session-authorization.js";
-import { ScopedSessionAuthorizationService } from "../interfaces/connect/generated-authorization-v2/kokoro/platform/authorization/v2/scoped_session_authorization_pb.js";
+import { ScopedSessionAuthorizationService } from "../generated/proto/kokoro/platform/authorization/v2/scoped_session_authorization_pb.js";
 import {
   createSessionAuthorizationVerificationKeySet,
   type AuthorizationPublicVerificationKeyConfig,

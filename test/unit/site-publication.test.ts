@@ -56,5 +56,8 @@ describe("Site publication", () => {
       .toThrow("SITE_RELEASE_SURFACES_INVALID");
     expect(() => publishCertifiedSiteRelease({ ...base, identityIssuerLabel: "bad:issuer" }))
       .toThrow("SITE_IDENTITY_ISSUER_LABEL_INVALID");
+    expect(() => publishCertifiedSiteRelease({ ...base,
+      identityAuthStrengthPolicyRevision: "bad:policy" }))
+      .toThrow("SITE_AUTH_POLICY_REVISION_INVALID");
   });
 });

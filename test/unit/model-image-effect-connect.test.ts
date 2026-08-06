@@ -2,7 +2,7 @@ import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import { CreateImageEffectRequestSchema, ImageEffectReceiptKind, ImageEffectState } from
-  "../../src/interfaces/connect/generated-model-image-effect/kokoro/platform/model/image/v1/image_effect_pb.js";
+  "../../src/generated/proto/kokoro/platform/model/image/v1/image_effect_pb.js";
 import { createGeneratedImageEffectCommandDigestAuthority, createImageEffectConnectService } from
   "../../src/modules/model-gateway/interfaces/connect/image-effect-connect-service.js";
 import type { CreateImageEffectCommand, ImageEffectAccessAuthorization } from

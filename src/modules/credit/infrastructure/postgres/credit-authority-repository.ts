@@ -1,5 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
+import {
+  acquirePlatformSqlAdvisoryLock,
+  resolvePlatformTransaction,
+} from "../../../../shared/unit-of-work/platform-transaction.js";
 import type {
   CreditAuthorityRepository,
   CreditOperationValue,
@@ -36,6 +39,7 @@ import {
   MEDIA_CHILD_ALLOCATION_FRESH_LOAD_SQL,
   PARENT_ALLOCATION_FRESH_LOAD_SQL,
 } from "./media-child-allocation-sql.js";
+import { creditJournalEntriesDigest } from "./credit-journal-digest.js";
 
 type ReceiptRow = Record<string, unknown>;
 
@@ -109,10 +113,8 @@ export class PostgresCreditAuthorityRepository implements CreditAuthorityReposit
     identity: CreditOperationIdentity,
   ): Promise<CreditOperationReceiptLookup> {
     const sql = resolvePlatformTransaction(transaction);
-    await sql.query<Record<string, unknown>>(
-      `SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1,0))`,
-      [`credit-operation|${identity.siteId}|${identity.operationKind}|${identity.businessOperationKey}`],
-    );
+    await acquirePlatformSqlAdvisoryLock(sql,
+      `credit-operation|${identity.siteId}|${identity.operationKind}|${identity.businessOperationKey}`);
     const rows = await sql.query<ReceiptRow>(
       `SELECT request_digest AS "requestDigest",outcome_kind AS "outcomeKind",result,
               result_digest AS "resultDigest",execution_budget_root_ref AS "executionBudgetRootRef",
@@ -124,8 +126,7 @@ export class PostgresCreditAuthorityRepository implements CreditAuthorityReposit
               child_after_revision::text AS "childAfterRevision",credit_amount::text AS "creditAmount",
               owner_closure_evidence_ref AS "ownerClosureEvidenceRef"
        FROM platform.credit_budget_operation_receipt
-       WHERE site_ref=$1 AND operation_kind=$2 AND business_operation_key=$3
-       FOR UPDATE`,
+       WHERE site_ref=$1 AND operation_kind=$2 AND business_operation_key=$3`,
       [identity.siteId, identity.operationKind, identity.businessOperationKey],
     );
     const row = rows[0];
@@ -184,8 +185,7 @@ export class PostgresCreditAuthorityRepository implements CreditAuthorityReposit
          AND balance.available_amount>0
        ORDER BY CASE grant_fact.ux_bucket_class WHEN 'daily' THEN 1 WHEN 'period' THEN 2 ELSE 3 END,
                 grant_fact.expires_at ASC NULLS LAST,grant_fact.burn_priority ASC,
-                grant_fact.acquired_at ASC,grant_fact.credit_grant_id ASC
-       FOR UPDATE OF grant_fact`,
+                grant_fact.acquired_at ASC,grant_fact.credit_grant_id ASC`,
       [input.siteId, input.creditAccountId, input.unit, input.effectiveAt,
         input.consumptionScope.surfaceRef, input.consumptionScope.capabilityKey,
         input.consumptionScope.agentRef],
@@ -316,6 +316,7 @@ export class PostgresCreditAuthorityRepository implements CreditAuthorityReposit
     input: Parameters<CreditAuthorityRepository["lockSegmentAllocation"]>[1],
   ): ReturnType<CreditAuthorityRepository["lockSegmentAllocation"]> {
     const sql = resolvePlatformTransaction(transaction);
+    await acquirePlatformSqlAdvisoryLock(sql, creditSegmentAdvisoryKey(input));
     const lineage = await sql.query<Record<string, unknown>>(SEGMENT_LINEAGE_SQL, [
       input.siteId, input.authorizationSegmentRef,
     ]);
@@ -332,7 +333,24 @@ export class PostgresCreditAuthorityRepository implements CreditAuthorityReposit
       allocationRefs: [budgetAllocationRef],
       expectedCreditHoldRef: creditHoldRef,
     }) === null) return null;
-    const rows = await sql.query<SegmentRow>(SEGMENT_FRESH_LOAD_SQL, [input.siteId, input.authorizationSegmentRef]);
+    const rows = await sql.query<SegmentRow>(SEGMENT_EXCLUSIVE_FRESH_LOAD_SQL, [
+      input.siteId, input.authorizationSegmentRef,
+    ]);
+    const row = rows[0];
+    if (row === undefined) return null;
+    if (rows.length !== 1) throw new Error("CREDIT_SEGMENT_AMBIGUOUS");
+    return mapSegment(row);
+  }
+
+  async loadSegmentAllocationForUsageProducer(
+    transaction: Parameters<CreditAuthorityRepository["lockSegmentAllocation"]>[0],
+    input: Parameters<CreditAuthorityRepository["lockSegmentAllocation"]>[1],
+  ): ReturnType<CreditAuthorityRepository["lockSegmentAllocation"]> {
+    const sql = resolvePlatformTransaction(transaction);
+    await acquirePlatformSqlAdvisoryLock(sql, creditSegmentAdvisoryKey(input));
+    const rows = await sql.query<SegmentRow>(SEGMENT_FRESH_LOAD_SQL, [
+      input.siteId, input.authorizationSegmentRef,
+    ]);
     const row = rows[0];
     if (row === undefined) return null;
     if (rows.length !== 1) throw new Error("CREDIT_SEGMENT_AMBIGUOUS");
@@ -790,8 +808,17 @@ JOIN platform.credit_execution_budget_root root
   ON root.execution_budget_root_ref=segment.execution_budget_root_ref AND root.site_ref=segment.site_ref
 JOIN platform.credit_hold hold
   ON hold.credit_hold_ref=segment.credit_hold_ref AND hold.site_ref=segment.site_ref
-WHERE segment.site_ref=$1 AND segment.authorization_segment_ref=$2::uuid
+WHERE segment.site_ref=$1 AND segment.authorization_segment_ref=$2::uuid`;
+
+const SEGMENT_EXCLUSIVE_FRESH_LOAD_SQL = `${SEGMENT_FRESH_LOAD_SQL}
 FOR UPDATE OF segment`;
+
+function creditSegmentAdvisoryKey(input: Readonly<{
+  siteId: string;
+  authorizationSegmentRef: string;
+}>): string {
+  return `credit-segment|${input.siteId}|${input.authorizationSegmentRef}`;
+}
 
 type JournalEntry = Readonly<{
   ordinal: number;
@@ -813,9 +840,13 @@ function reserveEntries(record: RootBudgetReservationRecord): readonly JournalEn
 }
 
 function journalEntriesDigest(record: RootBudgetReservationRecord, entries: readonly JournalEntry[]): string {
-  return digest(entries.map((entry) => [entry.ordinal, record.siteId, record.creditAccountId.toLowerCase(), record.unit,
-    entry.side, entry.accountType, entry.amount.toString(), entry.creditGrantId.toLowerCase(),
-    record.creditHoldRef.toLowerCase()].join("|")).join("\n"));
+  return creditJournalEntriesDigest(entries.map((entry) => ({
+    ...entry,
+    siteId: record.siteId,
+    creditAccountId: record.creditAccountId,
+    unit: record.unit,
+    creditHoldRef: record.creditHoldRef,
+  })));
 }
 
 function mapSegment(row: SegmentRow): StoredSegmentAllocation {

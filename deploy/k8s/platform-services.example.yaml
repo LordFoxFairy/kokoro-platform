@@ -641,15 +641,17 @@ items:
                 - { name: KOKORO_HUB_CONNECT_PORT, value: "4252" }
                 - { name: KOKORO_HUB_CONNECT_HEALTH_PORT, value: "4253" }
                 - { name: KOKORO_WORKSPACE_CONFIG, value: /run/config/kokoro/storage.yaml }
-                - { name: KOKORO_HUB_CONNECT_TRUST_ROOT, value: /run/secrets/hub-connect }
-                - { name: KOKORO_HUB_CONNECT_TLS_KEY_FILE, value: /run/secrets/hub-connect/server.key }
-                - { name: KOKORO_HUB_CONNECT_TLS_CERT_FILE, value: /run/secrets/hub-connect/server.crt }
-                - { name: KOKORO_HUB_CONNECT_TLS_CLIENT_CA_FILE, value: /run/secrets/hub-connect/client-ca.crt }
-                - { name: KOKORO_HUB_CONNECT_MTLS_PEERS_FILE, value: /run/secrets/hub-connect/inbound-peers.json }
-                - { name: KOKORO_HUB_CAPABILITY_SIGNING_KEY_FILE, value: /run/secrets/hub-connect/catalog-signing.key }
-                - { name: KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_KEY_FILE, value: /run/secrets/hub-connect/platform-client.key }
-                - { name: KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_CERT_FILE, value: /run/secrets/hub-connect/platform-client.crt }
-                - { name: KOKORO_HUB_PLATFORM_PROJECTION_SERVER_CA_FILE, value: /run/secrets/hub-connect/platform-ca.crt }
+                - { name: KOKORO_HUB_CONNECT_TRUST_ROOT, value: /run/secrets/hub-connect-inbound }
+                - { name: KOKORO_HUB_CONNECT_TLS_KEY_FILE, value: /run/secrets/hub-connect-inbound/server.key }
+                - { name: KOKORO_HUB_CONNECT_TLS_CERT_FILE, value: /run/secrets/hub-connect-inbound/server.crt }
+                - { name: KOKORO_HUB_CONNECT_TLS_CLIENT_CA_FILE, value: /run/secrets/hub-connect-inbound/client-ca.crt }
+                - { name: KOKORO_HUB_CONNECT_MTLS_PEERS_FILE, value: /run/secrets/hub-connect-inbound/inbound-peers.json }
+                - { name: KOKORO_HUB_CAPABILITY_SIGNING_TRUST_ROOT, value: /run/secrets/hub-capability-signing }
+                - { name: KOKORO_HUB_CAPABILITY_SIGNING_KEY_FILE, value: /run/secrets/hub-capability-signing/catalog-signing.key }
+                - { name: KOKORO_HUB_PLATFORM_PROJECTION_TRUST_ROOT, value: /run/secrets/hub-platform-projection }
+                - { name: KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_KEY_FILE, value: /run/secrets/hub-platform-projection/platform-client.key }
+                - { name: KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_CERT_FILE, value: /run/secrets/hub-platform-projection/platform-client.crt }
+                - { name: KOKORO_HUB_PLATFORM_PROJECTION_SERVER_CA_FILE, value: /run/secrets/hub-platform-projection/platform-ca.crt }
               ports:
                 - { name: connect, containerPort: 4252 }
                 - { name: health, containerPort: 4253 }
@@ -671,12 +673,22 @@ items:
                 requests: { cpu: 100m, memory: 256Mi }
                 limits: { cpu: "2", memory: 1Gi }
               volumeMounts:
-                - { name: hub-connect-mtls, mountPath: /run/secrets/hub-connect, readOnly: true }
+                - { name: hub-connect-inbound, mountPath: /run/secrets/hub-connect-inbound, readOnly: true }
+                - { name: hub-capability-signing, mountPath: /run/secrets/hub-capability-signing, readOnly: true }
+                - { name: hub-platform-projection, mountPath: /run/secrets/hub-platform-projection, readOnly: true }
                 - { name: hub-storage-config, mountPath: /run/config/kokoro, readOnly: true }
           volumes:
-            - name: hub-connect-mtls
+            - name: hub-connect-inbound
               secret:
-                secretName: platform-hub-connect-files
+                secretName: platform-hub-connect-inbound-files
+                defaultMode: 256
+            - name: hub-capability-signing
+              secret:
+                secretName: platform-hub-capability-signing-files
+                defaultMode: 256
+            - name: hub-platform-projection
+              secret:
+                secretName: platform-hub-platform-projection-files
                 defaultMode: 256
             - name: hub-storage-config
               configMap:

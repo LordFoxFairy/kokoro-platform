@@ -107,16 +107,20 @@ describe("IdentityOutboxConsumer", () => {
   it("leaves an acknowledged effect leased when atomic outcome persistence is ambiguous", async () => {
     const calls: string[] = [];
     const queue = recordingQueue([verificationEvent()], calls);
+    const ambiguity = new Error("database connection lost after commit");
     queue.completeVerification = vi.fn(async () => {
       calls.push("complete-ambiguous");
-      throw new Error("database connection lost after commit");
+      throw ambiguity;
     });
     const consumer = new IdentityOutboxConsumer(queue, {
       publish: async () => acknowledgement(),
     }, { auditDigest });
 
-    await expect(consumer.runOneCycle({ signal: new AbortController().signal }))
-      .rejects.toThrow("IDENTITY_OUTBOX_BATCH_FAILED");
+    const failure = await consumer.runOneCycle({ signal: new AbortController().signal })
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).message).toBe("IDENTITY_OUTBOX_BATCH_FAILED");
+    expect((failure as AggregateError).errors).toEqual([ambiguity]);
 
     expect(calls).toContain("complete-ambiguous");
     expect(calls.some((call) => call.startsWith("fail:"))).toBe(false);

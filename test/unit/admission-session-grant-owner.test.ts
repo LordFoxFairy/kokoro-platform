@@ -54,9 +54,13 @@ describe("Platform-local Admission SessionAccessGrant owner", () => {
         signedCredentialDigest("signed-grant-a"), "site-a", "write", "session.write",
         "production", "us-east-1",
       ]);
-      expect(sql.calls[0]?.statement).toContain("site.security_epoch=grant.site_security_epoch");
-      expect(sql.calls[0]?.statement).toContain("membership.authorization_epoch=grant.authorization_epoch");
-      expect(sql.calls[0]?.statement).toContain("grant.delivery_state='delivered'");
+      expect(sql.calls[0]?.statement).toContain(
+        "site.security_epoch=access_grant.site_security_epoch",
+      );
+      expect(sql.calls[0]?.statement).toContain(
+        "membership.authorization_epoch=access_grant.authorization_epoch",
+      );
+      expect(sql.calls[0]?.statement).toContain("access_grant.delivery_state='delivered'");
       expect(sql.calls).toHaveLength(1);
     } finally {
       revokePlatformTransaction(lease);

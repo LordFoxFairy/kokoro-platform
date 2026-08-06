@@ -3,11 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 import { create } from "@bufbuild/protobuf";
 import {
   AgentImageIntentV1Schema,
-} from "../../src/interfaces/connect/generated-media-runtime/kokoro/platform/media/v1/media_runtime_pb.js";
+} from "../../src/generated/proto/kokoro/platform/media/v1/media_runtime_pb.js";
 import {
   CanonicalImageAspectRatio,
   CanonicalImageOutputFormat,
-} from "../../src/interfaces/connect/generated-media-runtime/kokoro/platform/media/v1/media_canonical_pb.js";
+} from "../../src/generated/proto/kokoro/platform/media/v1/media_canonical_pb.js";
 import { PostgresAgentImageAccessOwner } from
   "../../src/modules/media/infrastructure/postgres/agent-image-access-owner.js";
 

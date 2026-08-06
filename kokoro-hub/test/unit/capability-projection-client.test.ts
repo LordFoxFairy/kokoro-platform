@@ -10,17 +10,17 @@ import type { CapabilityProjectionDelivery } from
 import {
   CapabilityProjectionDeliveryError,
   createPlatformCapabilityProjectionClientForTransport,
-} from "../../src/infrastructure/connect/platform-capability-projection-client.js";
+} from "../../../src/modules/hub/infrastructure/connect/platform-capability-projection-client.js";
 import {
   CapabilityCatalogProjectionService,
   CatalogProjectionState,
   GetProjectionReceiptResponseSchema,
   ProjectCatalogResponseSchema,
-} from "../../src/interfaces/connect/generated-capability-catalog/kokoro/platform/capability/v1/capability_catalog_pb.js";
+} from "../../../src/generated/proto/kokoro/platform/capability/v1/capability_catalog_pb.js";
 import {
   CommandReceiptSchema,
   CommandReceiptState,
-} from "../../src/interfaces/connect/generated-capability-catalog/kokoro/common/v1/receipt_pb.js";
+} from "../../../src/generated/proto/kokoro/common/v1/receipt_pb.js";
 
 describe("Platform capability projection client", () => {
   it("recovers an ambiguous dispatch through the exact receipt without redispatch", async () => {

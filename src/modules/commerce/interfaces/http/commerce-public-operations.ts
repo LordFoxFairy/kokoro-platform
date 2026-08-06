@@ -3,7 +3,7 @@ import type {
   GetRedemptionReceiptResponse,
   PreviewRedemptionResponse,
   RecoverRedemptionCommandResponse,
-} from "../../../../interfaces/http/generated/platform-public/types.gen.js";
+} from "../../../../generated/contracts/openapi/platform-public/types.gen.js";
 import { definePlatformPublicOperation } from "../../../../interfaces/http/platform-public-operation-registry.js";
 import type { PreviewRedemptionService } from "../../application/services/preview-redemption.js";
 import type { ConfirmRedemptionService } from "../../application/services/confirm-redemption.js";

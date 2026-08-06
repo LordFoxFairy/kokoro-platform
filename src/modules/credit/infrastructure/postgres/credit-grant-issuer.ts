@@ -14,6 +14,7 @@ import {
   lockCreditAccountAuthority,
   type LockedCreditAccount,
 } from "./credit-account-lock.js";
+import { creditJournalEntriesDigest } from "./credit-journal-digest.js";
 
 type PreparedState = {
   transaction: PlatformTransaction;
@@ -272,17 +273,17 @@ async function recordGrantIssueJournal(
     { entryOrdinal: 0, entrySide: "debit", accountType: "grant_issuance_source" },
     { entryOrdinal: 1, entrySide: "credit", accountType: "customer_available" },
   ] as const;
-  const entriesDigest = createHash("sha256").update(entries.map((entry) => [
-    entry.entryOrdinal,
-    input.siteId,
-    input.creditAccountId,
-    input.unit,
-    entry.entrySide,
-    entry.accountType,
-    input.amount,
-    input.creditGrantRef,
-    "",
-  ].map((field) => lengthDelimited(String(field))).join("")).join(""), "utf8").digest("hex");
+  const entriesDigest = creditJournalEntriesDigest(entries.map((entry) => ({
+    ordinal: entry.entryOrdinal,
+    siteId: input.siteId,
+    creditAccountId: input.creditAccountId,
+    unit: input.unit,
+    side: entry.entrySide,
+    accountType: entry.accountType,
+    amount: input.amount,
+    creditGrantId: input.creditGrantRef,
+    creditHoldRef: null,
+  })));
   const requestDigest = sha256(canonicalJson({
     version: 1,
     operationKind: "grant_issue",
@@ -334,10 +335,6 @@ function canonicalJson(value: unknown): string {
     return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(",")}}`;
   }
   throw new Error("CREDIT_GRANT_CANONICAL_JSON_INVALID");
-}
-
-function lengthDelimited(value: string): string {
-  return `${Buffer.byteLength(value, "utf8")}:${value}`;
 }
 
 function issuanceIntentDigest(commandId: string | null, grants: readonly CreditGrantIssue[]): string {

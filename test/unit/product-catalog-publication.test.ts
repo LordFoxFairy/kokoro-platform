@@ -263,7 +263,11 @@ function profileDocument(catalogBinding: Readonly<{ ref: string; revision: bigin
     contract: "kokoro.launch-product-profile.v1", schemaRevision: "1",
     profileRevisionRef: "profile.main", revision: "1", state: "published",
     targetSiteKindRef: "site.kind",
-    productSurfaceCatalog: { ref: catalogBinding.ref, digest: catalogBinding.digest },
+    productSurfaceCatalog: {
+      ref: catalogBinding.ref,
+      revision: catalogBinding.revision.toString(),
+      digest: catalogBinding.digest,
+    },
     enabledSurfaceRefs: ["surface.chat"],
     journeyClosure: { journeys, digest: canonicalDigest(journeys) },
     shellRequirementRefs: ["shell.main"],

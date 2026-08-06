@@ -15,6 +15,11 @@ is revalidated and snapshotted at this owner boundary, and malformed, duplicate,
 fail before any Credit mutation. Fulfillment replay is fenced by the caller's durable fulfillment receipt before this port is entered;
 the adapter never treats a unique-constraint violation as idempotent replay.
 
+The Platform Web Chat setup fixture has been verified against a freshly migrated PostgreSQL database. It publishes the minimum
+Site-scoped compatibility Program revision through the Admin transaction, then issues the direct initial Grant through the API
+transaction with `commandId=null` because no Commerce command owns that fixture operation. This setup evidence does not certify a
+global paid CreditProgram catalog or recurring Credit behavior.
+
 Recurring Commerce enrollments use the same port with `source_type=program_window` and a non-empty immutable
 `source_window_key`. Permanent acquisition grants require the empty window key. Credit persists that key in the Grant uniqueness
 fence; Commerce owns enrollment and absolute window acquisition facts, while Credit still owns Grant and Journal materialization.
@@ -76,6 +81,11 @@ metering producer identity for the Media product domain, not a new runtime servi
 evidence, rating snapshots, settlements, journals and command receipts are already authoritative local facts, so they are not
 duplicated into an unconsumed usage-rating outbox. The separate owner=`credit` budget-operation outbox remains intact because it is
 consumed by Commerce.
+
+Usage producers and the settlement owner share one transaction-scoped advisory fence per Site/Segment. Producer prepare/finalize
+loads Segment, allocation, Root, Hold and latest evidence through plain `SELECT` under that fence, so producer roles need no UPDATE
+privilege on Credit financial or evidence tables. Settlement keeps the existing Root/Hold/Segment row locks and CAS mutations after
+acquiring the same fence; Credit segment mutation commands use that fence as well.
 
 `interfaces/connect/admin-credit-service.ts` is the dedicated typed operator provider. Every request resolves an exact Site
 through the shared Admin control plane and every database read uses `adminSiteQueryTransaction`, which sets the same exact Site

@@ -1,23 +1,23 @@
 import { create } from "@bufbuild/protobuf";
-import { Code, ConnectError, type HandlerContext, type ServiceImpl } from "@connectrpc/connect";
+import type { HandlerContext, ServiceImpl } from "@connectrpc/connect";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import {
   CommandDigestAlgorithmV2,
   CommandIdentityV2Schema,
   CommandReceiptStateV2,
   CommandReceiptV2Schema,
-} from "../../../../interfaces/connect/generated-site-provisioning/kokoro/common/v2/command_envelope_pb.js";
+} from "../../../../generated/proto/kokoro/common/v2/command_envelope_pb.js";
 import type { AuthenticatedOperatorCommandContext } from
-  "../../../../interfaces/connect/generated-site-provisioning/kokoro/platform/admin/v2/admin_shared_pb.js";
+  "../../../../generated/proto/kokoro/platform/admin/v2/admin_shared_pb.js";
 import {
   ProvisionedSiteState,
   SiteProvisioningService,
 } from
-  "../../../../interfaces/connect/generated-site-provisioning/kokoro/platform/site/v1/site_provisioning_pb.js";
+  "../../../../generated/proto/kokoro/platform/site/v1/site_provisioning_pb.js";
 import {
   registerSiteRequestDigest,
   type VerifiedAuthenticatedAdminAxes,
-} from "../../../../interfaces/connect/generated-site-provisioning/command-envelope-digest.js";
+} from "../../../../generated/contracts/platform-site-provisioning@v1/digest.js";
 import type { VerifiedRequestSecurityContext } from
   "../../../../shared/security-context/index.js";
 import type { ControlCommandReceiptTimestampReader } from
@@ -34,7 +34,7 @@ export interface SiteProvisioningAdminResolver {
     claimed: AuthenticatedOperatorCommandContext,
     transport: HandlerContext,
     request: Readonly<{
-      operation: "site.register" | "site.release.publish";
+      operation: "site.register";
       siteRef: string;
       resourceRefs: readonly string[];
       scope: "global" | "site";
@@ -86,13 +86,6 @@ export function createSiteProvisioningConnectService(input: Readonly<{
         replayed: result.replayed,
         receipt: wireReceipt(identity, "site.register", recordedAt),
       };
-    },
-
-    async publishSiteRelease() {
-      throw new ConnectError(
-        "site release candidate authority not activated",
-        Code.Unimplemented,
-      );
     },
   };
 }

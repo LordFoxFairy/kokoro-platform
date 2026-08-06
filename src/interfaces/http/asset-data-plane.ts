@@ -16,7 +16,7 @@ import type {
   MultipartPartResponse,
   MultipartUploadState,
   MultipartUploadStateResponse,
-} from "./generated/asset-data-plane/types.gen.js";
+} from "../../generated/contracts/openapi/asset-data-plane/types.gen.js";
 import {
   zAbortAssetMultipartUploadBody,
   zAbortAssetMultipartUploadHeaders,
@@ -29,7 +29,7 @@ import {
   zMultipartPartResponse,
   zMultipartUploadStateResponse,
   zPutAssetMultipartPartHeaders,
-} from "./generated/asset-data-plane/zod.gen.js";
+} from "../../generated/contracts/openapi/asset-data-plane/zod.gen.js";
 import { exactHttpsOrigin } from
   "../../modules/asset/infrastructure/config/asset-upload-policy-registry.js";
 

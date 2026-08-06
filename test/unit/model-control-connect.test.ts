@@ -4,9 +4,9 @@ import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError, type HandlerContext } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import { KokoroErrorDetailSchema, RetryClass } from
-  "../../src/interfaces/connect/generated-model-control/kokoro/common/v1/error_pb.js";
+  "../../src/generated/proto/kokoro/common/v1/error_pb.js";
 import { MODEL_CONTROL_ADMIN_ERRORS } from
-  "../../src/interfaces/connect/generated-model-control/model-control-errors.js";
+  "../../src/generated/contracts/platform-model-control@v1/errors.js";
 import {
   ADMIN_PERMISSION_DENIED_ERROR_CODES,
   ADMIN_REQUEST_INVALID_ERROR_CODES,
@@ -23,7 +23,7 @@ import {
   CommandReceiptStateV2,
   OperatorAssuranceLevel,
 } from
-  "../../src/interfaces/connect/generated-model-control/kokoro/common/v2/command_envelope_pb.js";
+  "../../src/generated/proto/kokoro/common/v2/command_envelope_pb.js";
 import {
   AuthenticatedOperatorCommandContextSchema,
   AuthenticatedOperatorQueryContextSchema,
@@ -32,7 +32,7 @@ import {
   SecurityEpochsSchema,
   SiteScopeSchema,
 } from
-  "../../src/interfaces/connect/generated-model-control/kokoro/platform/admin/v2/admin_shared_pb.js";
+  "../../src/generated/proto/kokoro/platform/admin/v2/admin_shared_pb.js";
 import {
   ActivateInventoryEffectSchema,
   ActivateInventoryRequestSchema,
@@ -58,7 +58,7 @@ import {
   SiteModelAssignmentMode,
   SiteModelCatalogMode,
 } from
-  "../../src/interfaces/connect/generated-model-control/kokoro/platform/model/v1/model_control_pb.js";
+  "../../src/generated/proto/kokoro/platform/model/v1/model_control_pb.js";
 import {
   activateInventoryRequestDigest,
   changeSitePolicyRequestDigest,
@@ -66,7 +66,7 @@ import {
   materializeModelOptionsRequestDigest,
   publishSiteReleaseCatalogRequestDigest,
   type VerifiedAuthenticatedAdminAxes,
-} from "../../src/interfaces/connect/generated-model-control/command-envelope-digest.js";
+} from "../../src/generated/contracts/platform-model-control@v1/digest.js";
 import { createModelControlConnectService } from
   "../../src/modules/model-control/interfaces/connect/model-control-service.js";
 import type { VerifiedRequestSecurityContext } from

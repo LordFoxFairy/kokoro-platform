@@ -29,6 +29,8 @@ test("Platform CI gates both PostgreSQL authority and Hub integration", async ()
   assert.match(source, /node-version:\s*"24"/u);
   assert.match(source, /pnpm install --frozen-lockfile/u);
   assert.match(commands(gates).join("\n"), /pnpm db:generate/u);
+  assert.match(commands(gates).join("\n"), /pnpm contract:verify-generated/u);
+  assert.doesNotMatch(commands(gates).join("\n"), /contract:check-product-publication/u);
   assert.match(commands(gates).join("\n"), /pnpm audit --prod/u);
   assert.match(commands(gates).join("\n"), /pnpm lint/u);
   assert.match(commands(gates).join("\n"), /pnpm typecheck/u);
@@ -44,11 +46,16 @@ test("Platform CI gates both PostgreSQL authority and Hub integration", async ()
   assert.match(source, /mongo:7/u);
   assert.match(source, /minio\/minio/u);
   const packageManifest = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
-  assert.match(packageManifest.scripts.test, /test:identity/u);
-  assert.match(packageManifest.scripts.test, /test:security/u);
+  assert.equal(packageManifest.scripts["contract:verify-generated"],
+    "node scripts/contract/verify-generated-contracts.mjs .");
+  assert.equal(packageManifest.scripts.test,
+    "pnpm run test:repository && pnpm run test:platform && pnpm run test:unit && " +
+    "pnpm run test:security && pnpm -r test");
+  assert.equal(packageManifest.scripts["test:unit"], "vitest run test/unit/*.test.ts");
   assert.match(packageManifest.scripts["test:identity"], /test\/unit\/identity-\*\.test\.ts/u);
   assert.match(packageManifest.scripts["test:identity"], /test\/unit\/secret-files\.test\.ts/u);
   assert.match(packageManifest.scripts["test:security"], /test\/security\/\*\.test\.ts/u);
+  assert.match(packageManifest.scripts["test:site"], /test\/unit\/site-\*\.test\.ts/u);
 });
 
 test("PostgreSQL CI provisions isolated non-superuser roles", async () => {
@@ -111,8 +118,12 @@ test("legacy source directories are excluded from Docker build context", async (
   ]) assert.match(dockerignore, new RegExp(`^${directory}$`, "mu"));
 });
 
-test("runtime contract mirrors remain in the clean Docker build context", async () => {
+test("canonical contract trees remain in the clean Docker build context", async () => {
   const dockerignore = await readFile(resolve(root, ".dockerignore"), "utf8");
   assert.doesNotMatch(dockerignore, /^(?:\*\*\/)?generated$/mu);
-  assert.match(dockerignore, /^src\/generated$/mu);
+  assert.match(dockerignore, /^src\/generated\/\*$/mu);
+  for (const root of ["contracts", "proto", "schema"]) {
+    assert.match(dockerignore, new RegExp(`^!src/generated/${root}(?:/\\*\\*)?$`, "mu"));
+  }
+  assert.match(dockerignore, /^!src\/generated\/provenance\.json$/mu);
 });

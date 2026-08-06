@@ -2,6 +2,7 @@ import type { ResolvedCanonicalDocument } from
   "../../../product-catalog/domain/canonical-product-document.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import type {
+  CandidateAuthorityBinding,
   ImmutableRevisionBinding,
   SitePublicationNode,
   SitePublicationNodeKind,
@@ -119,6 +120,15 @@ export interface SitePublicationAuthorityRepository {
     transaction: PlatformTransaction,
     candidate: SiteReleaseCandidateAuthority,
     commandId: string,
+  ): Promise<void>;
+  revokeCandidate(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      candidate: CandidateAuthorityBinding;
+      expectedAuthorizationEpoch: bigint;
+      authorizationEpoch: bigint;
+      commandId: string;
+    }>,
   ): Promise<void>;
   loadNodeForUpdate(
     transaction: PlatformTransaction,

@@ -10,12 +10,17 @@ Model Gateway is an independently deployable Platform producer. It accepts one o
 `modelAuthorizationHandle`; callers cannot supply Site, account, Hold, authorization-segment, provider account, secret, or
 financial amount. The dedicated PostgreSQL transaction resolves the handle through a narrow security-definer projection, sets the
 resolved `app.site_id`, and uses the canonical Credit `UsageSettlementService` before any provider I/O.
+Chat usage dimensions use Credit's canonical source unit `token` for both conservative maximum authorization and
+provider-reported `input_tokens`/`output_tokens`; adapters must not pluralize or normalize this value independently.
 
 The certified surface is resumable streaming chat with typed system/user/assistant/tool messages, function definitions,
-tool choice and tool-call identity/arguments. One authorized Gateway model maps to one LiteLLM alias. LiteLLM is only the outbound
-HTTP adapter: it does not own pricing, customer spend, business fallback, retry, model authorization, or settlement. Transport
-ambiguity becomes `outcome_unknown`; missing usage on a complete terminal response becomes unavailable evidence and never an
-invented zero.
+tool choice and tool-call identity/arguments. Admission freezes one exact route containing `adapter_kind`, `gateway_model`, and
+`provider_model`; all three fields are bound into the execution-manifest digest and resolved from the opaque authorization handle.
+The provider router rejects a request whose model differs from the frozen Gateway alias, then selects exactly `direct` or
+`litellm`. It never falls back to the other adapter. Direct sends the frozen provider model, while LiteLLM sends the frozen Gateway
+alias. Neither outbound OpenAI-compatible adapter owns pricing, customer spend, business retry, model authorization, or settlement.
+Transport ambiguity becomes `outcome_unknown`; missing usage on a complete terminal response becomes unavailable evidence and
+never an invented zero.
 
 Each logical call has one durable invocation and one Credit attempt authorization. A changed request digest conflicts; an exact
 retry attaches to the same invocation and resumes after a caller-supplied frame sequence without a second provider effect. Prepare
@@ -29,18 +34,27 @@ outbox rows, and fails startup unless FORCE RLS and the complete canonical polic
 currently producer-only: no deployed worker claims or completes it until the rating-consumer business owner and effect contract
 are explicitly decided; the aggregate worker allowlist intentionally excludes it.
 
+The Platform Web Chat fixture's setup-to-observe stage has been verified against a freshly migrated PostgreSQL database. Its
+fixture-observer identity receives bounded read access to the exact Gateway and Credit evidence relations; before a Model call, all
+invocation, attempt, evidence and settlement counts are expected to remain zero. This stage verifies setup and observer authority,
+not the later Gateway-to-selected-provider runtime hop. The fixture defaults
+`PLATFORM_FIXTURE_MODEL_PROVIDER` to `direct`; `litellm` must be selected explicitly, and any other value fails before model
+inventory preparation without falling back to another adapter.
+
 Dispatch is a durable queued-to-owner-fenced state machine with leases, heartbeats, bounded active/queued capacity and a recovery
 scanner. Stream readers tail committed frames through one process-level PostgreSQL `LISTEN` connection; transactional `NOTIFY`
 wakes matching readers, while a bounded rescan preserves correctness across disconnects or lost notifications. There is no
 transaction-per-client busy poll. The unary `InvokeModel` API aggregates this same streaming engine rather than maintaining a second
-provider path.
+provider path. The Gateway role receives only INSERT, fenced mutation columns, and SELECT on the five queue identity/fence columns
+that PostgreSQL must evaluate for those mutations; it has no table-level queue SELECT or access to queued authorization payloads.
 
 The production listener is private HTTP/2 ConnectRPC over TLS 1.3 mutual authentication and an exact certificate
 fingerprint/SPIFFE allowlist. Only the configured GA SPIFFE identity may invoke the RPC. Trusted provider reconciliation remains an
 internal application/worker path; it is deliberately not caller-accessible. It can finalize only an existing `outcome_unknown`
 invocation at the same Credit fence and never redispatches the provider effect. Startup requires a dedicated database identity,
-bounded owner-only response key ring, owner-only LiteLLM key file, TLS files and peer registry. Health, readiness and drain are
-process-owned; shutdown stops admission, waits to a deadline, then aborts in-flight work.
+bounded owner-only response key ring, TLS files, peer registry, and endpoint plus owner-only key file for every configured provider
+adapter. At least one adapter must be configured completely. Health, readiness and drain are process-owned; shutdown stops
+admission, waits to a deadline, then aborts in-flight work.
 
 Admission mints the opaque authorization handle, places it inside the sealed RunRequest and binds it into the execution-manifest
 digest. GA supplies that handle plus stable logical-call, attempt and producer-generation identities. Image, music and video
@@ -48,8 +62,9 @@ generation use their own product routes and generation adapters; they must not b
 checkpoint, handoff or terminal semantics belong
 here.
 
-Image effects are a separate private Media-to-Gateway owner surface across the module's existing DDD layers; they do not reuse the chat invocation or
-LiteLLM adapter. The application freezes the exact model option/deployment/input/output-slot authorization, atomically consumes a
+Image effects are a separate private Media-to-Gateway owner surface across the module's existing DDD layers; they do not reuse the
+chat invocation or OpenAI-compatible chat adapters. The application freezes the exact model
+option/deployment/input/output-slot authorization, atomically consumes a
 signed local budget commit and journals a planned attempt before any Provider I/O. Public recovery and cancellation read only
 stable references, digests and encrypted-envelope metadata. Only the separately authenticated cross-Site image worker may claim a
 lease and briefly unseal source grants; the owned plaintext buffer is zeroized after the certified provider adapter has consumed

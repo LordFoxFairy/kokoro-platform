@@ -79,6 +79,8 @@ describe("PostgresCapabilityCatalogProjectionRepository", () => {
     });
     expect(statements.some((statement) => statement.includes("FROM platform.site_release") &&
       statement.includes("state='ready'"))).toBe(true);
+    expect(statements.find((statement) => statement.includes("FROM platform.site_release")))
+      .not.toContain("FOR UPDATE");
   });
 
   it("fails loud when an idempotency key is reused for different command evidence", async () => {

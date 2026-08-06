@@ -3,7 +3,7 @@ import type {
   CreditGrantResponse,
   CreditSummaryResponse,
   UsageDetailResponse,
-} from "../../../../interfaces/http/generated/platform-public/types.gen.js";
+} from "../../../../generated/contracts/openapi/platform-public/types.gen.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 
 export type AccountReadIdentity = Readonly<{

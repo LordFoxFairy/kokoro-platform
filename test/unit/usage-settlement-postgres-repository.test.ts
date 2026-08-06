@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { PostgresUsageSettlementRepository } from
   "../../src/modules/credit/infrastructure/postgres/usage-settlement-repository.js";
@@ -36,6 +37,28 @@ describe("PostgresUsageSettlementRepository", () => {
     } finally { revokePlatformTransaction(lease); }
   });
 
+  it("loads the latest producer evidence under the Segment advisory fence without a row lock", async () => {
+    const sql = new RecordingSql();
+    const lease = issuePlatformTransaction(sql);
+    try {
+      await repository().lockLatestAttemptEvidence(lease.transaction, {
+        siteId: "site-1",
+        authorizationSegmentRef: "00000000-0000-7000-8000-000000000205",
+        producerKind: "model_gateway",
+        producerContext: "gateway:one",
+        producerGeneration: 1n,
+        attemptRef: "attempt-1",
+      });
+      expect(sql.reads).toHaveLength(1);
+      expect(sql.reads[0]?.statement).toContain("credit_attempt_usage_evidence");
+      expect(sql.reads[0]?.statement).not.toMatch(
+        /FOR\s+(?:NO\s+KEY\s+)?UPDATE|FOR\s+(?:KEY\s+)?SHARE/iu,
+      );
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
   it("settles a first closure through rating_pending, exact allocation capture and balanced source journal", async () => {
     const sql = new RecordingSql();
     const lease = issuePlatformTransaction(sql);
@@ -50,6 +73,12 @@ describe("PostgresUsageSettlementRepository", () => {
       expect(statements).toContain("credit_usage_settlement_source");
       expect(statements).toContain("credit_rated_usage");
       expect(sql.writes.filter((write) => write.statement.includes("credit_journal_entry"))).toHaveLength(2);
+      const journal = sql.writes.find((write) =>
+        write.statement.includes("INSERT INTO platform.credit_journal_transaction"));
+      expect(journal?.values?.[7]).toBe(databaseJournalDigest([
+        [0, "site-1", "00000000-0000-7000-8000-000000000001", "credit_micros", "debit", "customer_reserved", 14, "00000000-0000-7000-8000-000000000101", "00000000-0000-7000-8000-000000000201"],
+        [1, "site-1", "00000000-0000-7000-8000-000000000001", "credit_micros", "credit", "customer_consumed", 14, "00000000-0000-7000-8000-000000000101", "00000000-0000-7000-8000-000000000201"],
+      ]));
     } finally { revokePlatformTransaction(lease); }
   });
 
@@ -113,13 +142,28 @@ describe("PostgresUsageSettlementRepository", () => {
 });
 
 class RecordingSql {
+  reads: { statement: string; values?: readonly unknown[] }[] = [];
   writes: { statement: string; values?: readonly unknown[] }[] = [];
-  async query<Row extends Record<string, unknown>>(): Promise<readonly Row[]> { return []; }
+  async query<Row extends Record<string, unknown>>(
+    statement: string,
+    values?: readonly unknown[],
+  ): Promise<readonly Row[]> {
+    this.reads.push(values === undefined ? { statement } : { statement, values });
+    return [];
+  }
   async execute(statement: string, values?: readonly unknown[]): Promise<number> {
     this.writes.push(values === undefined ? { statement } : { statement, values });
     return 1;
   }
   writeSql() { return this.writes.map((write) => write.statement).join("\n"); }
+}
+
+function databaseJournalDigest(entries: readonly (readonly (string | number)[])[]): string {
+  const canonical = entries.flatMap((entry) => entry.map((field) => {
+    const value = String(field);
+    return `${Buffer.byteLength(value, "utf8")}:${value}`;
+  })).join("");
+  return createHash("sha256").update(canonical, "utf8").digest("hex");
 }
 
 function repository() {

@@ -11,7 +11,7 @@ import {
   validateSurfaceInventoryShape,
   validateWebBuildIntentShape,
   validateWebBuildMaterialBundleShape,
-} from "../../../interfaces/json-schema/generated-site-publication/site-publication-schema-validator.js";
+} from "../../../generated/schema/site-publication/validator.js";
 
 export interface ImmutableRevisionBinding {
   readonly ref: string;
@@ -109,6 +109,36 @@ export function authorizeSiteReleaseCandidate(input: Readonly<{
     state: "authorized",
     document: verified.parsedDocument,
     canonicalBytes: verified.canonicalBytes,
+  });
+}
+
+export function revokeSiteReleaseCandidateAuthorization(
+  current: SiteReleaseCandidateAuthority,
+  expected: CandidateAuthorityBinding,
+  expectedAuthorizationEpoch: bigint,
+): Readonly<{
+  candidate: SiteReleaseCandidateAuthority;
+  previousAuthorizationEpoch: bigint;
+  authorizationEpoch: bigint;
+}> {
+  if (current.state !== "authorized") throw new Error("SITE_PUBLICATION_CANDIDATE_ALREADY_REVOKED");
+  if (!sameCandidate(current.binding, expected) ||
+      current.binding.authorizationEpoch !== expectedAuthorizationEpoch) {
+    throw new Error("SITE_PUBLICATION_CANDIDATE_REVOKE_BINDING_MISMATCH");
+  }
+  if (expectedAuthorizationEpoch >= 18_446_744_073_709_551_614n) {
+    throw new Error("SITE_PUBLICATION_CANDIDATE_EPOCH_EXHAUSTED");
+  }
+  const authorizationEpoch = expectedAuthorizationEpoch + 1n;
+  const candidate = deepFreeze({
+    ...current,
+    binding: { ...current.binding, authorizationEpoch },
+    state: "revoked" as const,
+  });
+  return deepFreeze({
+    candidate,
+    previousAuthorizationEpoch: expectedAuthorizationEpoch,
+    authorizationEpoch,
   });
 }
 

@@ -14,7 +14,7 @@ Own Skill/MCP catalog administration, revisions, enablement, package metadata, u
 Hub does not execute Agent tools or own GA graph nodes. Admission serves the frozen non-secret catalog; Hub resolves the exact frozen execution assembly and streams skill artifacts to Agent over its private mTLS ConnectRPC boundary.
 
 ## Public boundary
-`src/interfaces/http`, `src/interfaces/connect`, and `src/interfaces/admin` expose the module; package/storage contracts live under `src/contract` and application ports.
+`src/interfaces/http` and `src/interfaces/admin` expose Hub-owned product surfaces; package/storage contracts live under `src/contract` and application ports. `src/interfaces/connect` exports only owner-neutral process lifecycle, health and secure-file helpers. Root-generated Connect providers, projection client adapters and the production main live once under Platform `src/modules/hub` and `src/process/hub-connect.ts`; the Hub package has no generated-contract mirror or second runtime entrypoint.
 
 Admin MCP registration is an admission boundary, not a raw repository proxy: `env:VAR` references are accepted only when `VAR` is in `KOKORO_HUB_ENV_REF_ALLOWLIST`, and URL transports are resolved before persistence. The default policy requires HTTPS and admits only public-unicast IP literals/DNS answers; all special or non-unicast ranges, including IPv4-mapped forms, are rejected. `KOKORO_HUB_ALLOW_INSECURE_URL=1` is honored only outside production and only relaxes the HTTP scheme—the same address classifier remains mandatory.
 

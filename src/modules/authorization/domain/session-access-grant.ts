@@ -229,6 +229,8 @@ export interface SessionAccessGrantBinding {
   readonly credentialEpoch: string;
   readonly policyEpoch: string;
   readonly revocationEpoch: string;
+  /** Signed acknowledgement target for the v2 local authorization projection. */
+  readonly authorizationStreamSequence: string;
   readonly resource: SessionGrantResource;
   readonly issuedAt: string;
   readonly expiresAt: string;

@@ -1,5 +1,8 @@
-import { executionContextIntentSchema, type ExecutionContextIntent } from "@kokoro/platform-kit";
-import type { OpaqueExecutionContextIntent } from "../../../../interfaces/connect/generated/kokoro/platform/admission/v1/admission_pb.js";
+import {
+  executionContextIntentSchema,
+  type ExecutionContextIntent,
+} from "../../../../generated/contracts/legacy/platform-control.js";
+import type { OpaqueExecutionContextIntent } from "../../../../generated/proto/kokoro/platform/admission/v1/admission_pb.js";
 
 /**
  * Maps Admission's transport oneof into the GA-owned opaque intent.

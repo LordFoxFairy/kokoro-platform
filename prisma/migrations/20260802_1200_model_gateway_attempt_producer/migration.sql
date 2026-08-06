@@ -5,7 +5,8 @@ CREATE TABLE platform.model_gateway_execution_authorization (
   execution_manifest_ref TEXT NOT NULL CHECK (length(execution_manifest_ref) BETWEEN 1 AND 256),
   authorization_segment_ref UUID NOT NULL,
   gateway_model TEXT NOT NULL CHECK (length(gateway_model) BETWEEN 1 AND 256),
-  adapter_kind TEXT NOT NULL CHECK (adapter_kind = 'litellm'),
+  provider_model TEXT NOT NULL CHECK (length(provider_model) BETWEEN 1 AND 256),
+  adapter_kind TEXT NOT NULL CHECK (adapter_kind IN ('direct','litellm')),
   expires_at TIMESTAMPTZ NOT NULL,
   state TEXT NOT NULL CHECK (state IN ('active','revoked','expired')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -200,6 +201,7 @@ RETURNS TABLE (
   execution_manifest_ref TEXT,
   authorization_segment_ref TEXT,
   gateway_model TEXT,
+  provider_model TEXT,
   adapter_kind TEXT,
   expires_at TIMESTAMPTZ
 )
@@ -210,10 +212,10 @@ SET search_path = pg_catalog, platform
 AS $$
   SELECT gateway_authorization.authorization_handle,gateway_authorization.site_ref,
          gateway_authorization.execution_manifest_ref,gateway_authorization.authorization_segment_ref,
-         gateway_authorization.gateway_model,gateway_authorization.adapter_kind,gateway_authorization.expires_at
+         gateway_authorization.gateway_model,gateway_authorization.provider_model,
+         gateway_authorization.adapter_kind,gateway_authorization.expires_at
   FROM platform.model_gateway_execution_authorization gateway_authorization
   WHERE gateway_authorization.authorization_handle=requested_handle
-    AND gateway_authorization.adapter_kind='litellm'
     AND (
       (requested_operation='prepare' AND gateway_authorization.state='active'
         AND gateway_authorization.expires_at>clock_timestamp())
@@ -282,6 +284,7 @@ BEGIN
      OR OLD.execution_manifest_ref IS DISTINCT FROM NEW.execution_manifest_ref
      OR OLD.authorization_segment_ref IS DISTINCT FROM NEW.authorization_segment_ref
      OR OLD.gateway_model IS DISTINCT FROM NEW.gateway_model
+     OR OLD.provider_model IS DISTINCT FROM NEW.provider_model
      OR OLD.adapter_kind IS DISTINCT FROM NEW.adapter_kind
      OR OLD.expires_at IS DISTINCT FROM NEW.expires_at
      OR OLD.created_at IS DISTINCT FROM NEW.created_at

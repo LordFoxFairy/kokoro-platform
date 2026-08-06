@@ -6,27 +6,34 @@ import {
   CommandDigestAlgorithmV2,
   CommandIdentityV2Schema,
   OperatorAssuranceLevel,
-} from "../../src/interfaces/connect/generated-site-lifecycle/kokoro/common/v2/command_envelope_pb.js";
+} from "../../src/generated/proto/kokoro/common/v2/command_envelope_pb.js";
 import {
   AuthenticatedOperatorCommandContextSchema,
   OperatorScopeSchema,
   SecurityEpochsSchema,
   SiteScopeSchema,
-} from "../../src/interfaces/connect/generated-site-lifecycle/kokoro/platform/admin/v2/admin_shared_pb.js";
+} from "../../src/generated/proto/kokoro/platform/admin/v2/admin_shared_pb.js";
 import {
+  ActivePointerCasPreconditionSchema,
+  ActivationCasFenceSchema,
   ActivationFactsSchema,
   ApproveAndActivateEffectSchema,
   ApproveAndActivateRequestSchema,
+  FirstActivationPointerSchema,
   RequestActivationApprovalEffectSchema,
   RequestActivationApprovalRequestSchema,
   SiteActivationState,
   SiteEffectApprovalState,
-} from "../../src/interfaces/connect/generated-site-lifecycle/kokoro/platform/site/v1/site_lifecycle_pb.js";
+} from "../../src/generated/proto/kokoro/platform/site/v1/site_lifecycle_pb.js";
+import {
+  CandidateAuthorityBindingSchema,
+  ImmutableContractRevisionBindingSchema,
+} from "../../src/generated/proto/kokoro/platform/publication/v1/publication_common_pb.js";
 import {
   approveAndActivateRequestDigest,
   requestActivationApprovalRequestDigest,
   type VerifiedAuthenticatedAdminAxes,
-} from "../../src/interfaces/connect/generated-site-lifecycle/command-envelope-digest.js";
+} from "../../src/generated/contracts/platform-site-lifecycle@v1/digest.js";
 import { createSiteLifecycleConnectService } from
   "../../src/modules/site/interfaces/connect/site-lifecycle-service.js";
 import type { VerifiedRequestSecurityContext } from
@@ -130,7 +137,26 @@ function context() {
 
 function facts() {
   return create(ActivationFactsSchema, {
-    candidateReleaseRef: "release:7", audience: "kokoro-session",
+    candidate: create(CandidateAuthorityBindingSchema, {
+      candidateRef: "candidate:7", candidateVersion: 7n,
+      candidateAuthorizationEpoch: 3n, candidateDigest: `sha256:${"a".repeat(64)}`,
+    }),
+    targetRelease: create(ImmutableContractRevisionBindingSchema, {
+      ref: "release:7", revision: 7n, digest: `sha256:${"b".repeat(64)}`,
+    }),
+    activePointer: create(ActivePointerCasPreconditionSchema, {
+      current: { case: "firstActivation", value: create(FirstActivationPointerSchema, {
+        pointerRef: "active-pointer:site:alpha:production",
+      }) },
+      expectedGeneration: 0n,
+      casPreconditionDigest: `sha256:${"c".repeat(64)}`,
+      fence: create(ActivationCasFenceSchema, {
+        casCommandRef: "cas-command:activation:1", fence: 1n,
+        nonceDigest: `sha256:${"d".repeat(64)}`,
+        tokenDigest: `sha256:${"e".repeat(64)}`,
+      }),
+    }),
+    audience: "kokoro-session",
     sessionContractRevision: "session-v7", reason: "launch approved",
   });
 }

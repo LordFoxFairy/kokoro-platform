@@ -17,7 +17,7 @@ import {
   SiteCurrentSnapshotSchema,
   SubjectCurrentSchema,
   type AuthorizationSnapshotRecord,
-} from "../../../../interfaces/connect/generated-authorization-v2/kokoro/platform/authorization/v2/scoped_session_authorization_pb.js";
+} from "../../../../generated/proto/kokoro/platform/authorization/v2/scoped_session_authorization_pb.js";
 
 export type StoredScopedIdentitySessionEvent = Readonly<{
   reservation: ScopedAuthorizationReservation;
@@ -243,11 +243,11 @@ export class PostgresScopedAuthorizationFeedRepository {
     }>,
   ): Promise<Readonly<{ highWatermark: bigint; recordCount: number }>> {
     const sql = resolvePlatformTransaction(transaction);
-    // The global counter is the first lock of every writer. Holding a share lock here therefore
-    // freezes owner rows, grants and the watermark at one transactional authority view.
+    // The definer function grants only this lock operation; the runtime role has no UPDATE
+    // authority on the global counter. Every writer locks that counter first, so this freezes
+    // owner rows, grants and the watermark at one transactional authority view.
     const states = await sql.query<{ highWatermark: bigint }>(
-      `SELECT high_watermark AS "highWatermark"
-       FROM platform.authorization_scoped_stream_state WHERE singleton=TRUE FOR SHARE`,
+      `SELECT platform.lock_authorization_snapshot_watermark() AS "highWatermark"`,
     );
     const state = states[0];
     if (state === undefined) throw new Error("SCOPED_AUTHORIZATION_STREAM_STATE_MISSING");
@@ -259,14 +259,14 @@ export class PostgresScopedAuthorizationFeedRepository {
       `SELECT site.site_ref AS "siteRef",cursor.aggregate_sequence AS "aggregateSequence",site.state,
               site.security_epoch AS "siteSecurityEpoch",site.policy_epoch AS "policyEpoch",
               site.revocation_epoch AS "revocationEpoch",site.updated_at AS "updatedAt",
-              GREATEST(site.updated_at+interval '5 minutes',COALESCE(grant.max_expires_at,
+              GREATEST(site.updated_at+interval '5 minutes',COALESCE(delivered_grant.max_expires_at,
                 site.updated_at+interval '5 minutes')) AS "retainUntil"
        FROM platform.authorization_site site
        JOIN platform.authorization_scoped_site_cursor cursor ON cursor.site_ref=site.site_ref
        LEFT JOIN LATERAL (
          SELECT MAX(expires_at) AS max_expires_at FROM platform.authorization_session_access_grant
          WHERE site_ref=site.site_ref AND delivery_state='delivered'
-       ) grant ON TRUE
+       ) delivered_grant ON TRUE
        ORDER BY site.site_ref LIMIT $1`,
       [limit()],
     );
@@ -277,12 +277,12 @@ export class PostgresScopedAuthorizationFeedRepository {
       `SELECT subject.site_ref AS "siteRef",subject.subject_ref AS "subjectRef",subject.state,
               subject.subject_generation AS "subjectGeneration",subject.restriction_epoch AS "restrictionEpoch",
               subject.updated_at AS "updatedAt",GREATEST(subject.updated_at+interval '5 minutes',
-                COALESCE(grant.max_expires_at,subject.updated_at+interval '5 minutes')) AS "retainUntil"
+                COALESCE(delivered_grant.max_expires_at,subject.updated_at+interval '5 minutes')) AS "retainUntil"
        FROM platform.authorization_subject subject
        LEFT JOIN LATERAL (
          SELECT MAX(expires_at) AS max_expires_at FROM platform.authorization_session_access_grant
          WHERE site_ref=subject.site_ref AND subject_ref=subject.subject_ref AND delivery_state='delivered'
-       ) grant ON TRUE
+       ) delivered_grant ON TRUE
        ORDER BY subject.site_ref,subject.subject_ref LIMIT $1`,
       [limit()],
     );
@@ -295,13 +295,13 @@ export class PostgresScopedAuthorizationFeedRepository {
               identity.session_epoch AS "identitySessionEpoch",identity.credential_epoch AS "credentialEpoch",
               identity.expires_at AS "expiresAt",identity.updated_at AS "updatedAt",
               GREATEST(identity.updated_at+interval '5 minutes',identity.expires_at,
-                COALESCE(grant.max_expires_at,identity.updated_at+interval '5 minutes')) AS "retainUntil"
+                COALESCE(delivered_grant.max_expires_at,identity.updated_at+interval '5 minutes')) AS "retainUntil"
        FROM platform.authorization_identity_session identity
        LEFT JOIN LATERAL (
          SELECT MAX(expires_at) AS max_expires_at FROM platform.authorization_session_access_grant
          WHERE site_ref=identity.site_ref AND subject_ref=identity.subject_ref
            AND identity_session_ref=identity.session_ref AND delivery_state='delivered'
-       ) grant ON TRUE
+       ) delivered_grant ON TRUE
        ORDER BY identity.site_ref,identity.subject_ref,identity.session_ref LIMIT $1`,
       [limit()],
     );
@@ -313,7 +313,7 @@ export class PostgresScopedAuthorizationFeedRepository {
               membership.project_ref AS "projectRef",membership.state,
               membership.membership_epoch AS "membershipEpoch",
               membership.authorization_epoch AS "authorizationEpoch",membership.updated_at AS "updatedAt",
-              GREATEST(membership.updated_at+interval '5 minutes',COALESCE(grant.max_expires_at,
+              GREATEST(membership.updated_at+interval '5 minutes',COALESCE(delivered_grant.max_expires_at,
                 membership.updated_at+interval '5 minutes')) AS "retainUntil"
        FROM platform.authorization_project_membership membership
        JOIN platform.authorization_project project ON project.project_ref=membership.project_ref
@@ -323,7 +323,7 @@ export class PostgresScopedAuthorizationFeedRepository {
          SELECT MAX(expires_at) AS max_expires_at FROM platform.authorization_session_access_grant
          WHERE site_ref=project.site_ref AND subject_ref=membership.subject_ref
            AND project_ref=membership.project_ref AND delivery_state='delivered'
-       ) grant ON TRUE
+       ) delivered_grant ON TRUE
        ORDER BY project.site_ref,membership.subject_ref,membership.project_ref LIMIT $1`,
       [limit()],
     );

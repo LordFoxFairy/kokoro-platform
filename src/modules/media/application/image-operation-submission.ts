@@ -3,17 +3,17 @@ import { create, toBinary } from "@bufbuild/protobuf";
 import {
   AgentImageSubmissionFingerprintInputV1Schema,
   type AgentImageIntentV1,
-} from "../../../interfaces/connect/generated-media-runtime/kokoro/platform/media/v1/media_runtime_pb.js";
+} from "../../../generated/proto/kokoro/platform/media/v1/media_runtime_pb.js";
 import {
   CanonicalImageAspectRatio,
   CanonicalImageOutputFormat,
-} from "../../../interfaces/connect/generated-media-runtime/kokoro/platform/media/v1/media_canonical_pb.js";
+} from "../../../generated/proto/kokoro/platform/media/v1/media_canonical_pb.js";
 import type { CanonicalMediaOperationInputV1 } from
-  "../../../interfaces/http/generated/platform-public/media-canonical.js";
+  "../../../generated/contracts/openapi/platform-public/media-canonical.js";
 import {
   canonicalMediaOperationInputV1Bytes,
   mediaCallerRequestFingerprintSha256,
-} from "../../../interfaces/http/generated/platform-public/media-canonical.js";
+} from "../../../generated/contracts/openapi/platform-public/media-canonical.js";
 import type { PlatformTransaction } from "../../../shared/unit-of-work/index.js";
 import type { VerifiedRequestSecurityContext } from "../../../shared/security-context/index.js";
 import {

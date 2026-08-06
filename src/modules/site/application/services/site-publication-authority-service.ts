@@ -14,6 +14,7 @@ import { createSiteAuthorityCommand } from "../site-command.js";
 import {
   admitSitePublicationNode,
   authorizeSiteReleaseCandidate,
+  revokeSiteReleaseCandidateAuthorization,
   type CandidateAuthorityBinding,
   type ImmutableRevisionBinding,
   type SitePublicationNode,
@@ -66,6 +67,60 @@ export class SitePublicationAuthorityService {
       const receipt = { siteRef: input.siteRef, state: candidate.state, replayed: false } as const;
       await this.journal.succeed(transaction, command, receipt, context);
       return Object.freeze({ candidate: candidate.binding, ...receipt });
+    });
+  }
+
+  revokeCandidate(input: CommandInput & Readonly<{
+    siteRef: string;
+    candidate: CandidateAuthorityBinding;
+    expectedAuthorizationEpoch: bigint;
+    reason: string;
+  }>, context: VerifiedRequestSecurityContext) {
+    operator(context, input.siteRef);
+    const command = createSiteAuthorityCommand("site.release-candidate.revoke", input.siteRef,
+      input, context, effect(input));
+    return this.unitOfWork.execute({ context, operation: command.operation }, async (transaction) => {
+      const disposition = await this.journal.begin(transaction, command);
+      const current = await this.repository.loadCandidateForUpdate(transaction, input.candidate.ref);
+      if (current === null || current.siteRef !== input.siteRef ||
+          current.binding.ref !== input.candidate.ref ||
+          current.binding.version !== input.candidate.version ||
+          current.binding.digest !== input.candidate.digest) {
+        throw new Error("SITE_PUBLICATION_CANDIDATE_REVOKE_BINDING_MISMATCH");
+      }
+      if (disposition === "replay") {
+        if (current.state !== "revoked" ||
+            current.binding.authorizationEpoch !== input.expectedAuthorizationEpoch + 1n) {
+          throw new Error("SITE_PUBLICATION_CANDIDATE_REVOKE_REPLAY_CONFLICT");
+        }
+        return Object.freeze({
+          candidate: current.binding,
+          previousAuthorizationEpoch: input.expectedAuthorizationEpoch,
+          authorizationEpoch: current.binding.authorizationEpoch,
+          state: "revoked" as const,
+          replayed: true,
+        });
+      }
+      const revoked = revokeSiteReleaseCandidateAuthorization(
+        current,
+        input.candidate,
+        input.expectedAuthorizationEpoch,
+      );
+      await this.repository.revokeCandidate(transaction, {
+        candidate: input.candidate,
+        expectedAuthorizationEpoch: revoked.previousAuthorizationEpoch,
+        authorizationEpoch: revoked.authorizationEpoch,
+        commandId: command.commandId,
+      });
+      const receipt = Object.freeze({ siteRef: input.siteRef, state: "revoked", replayed: false });
+      await this.journal.succeed(transaction, command, receipt, context);
+      return Object.freeze({
+        candidate: revoked.candidate.binding,
+        previousAuthorizationEpoch: revoked.previousAuthorizationEpoch,
+        authorizationEpoch: revoked.authorizationEpoch,
+        state: "revoked" as const,
+        replayed: false,
+      });
     });
   }
 

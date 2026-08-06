@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { AdmissionRetryClass } from "../../../../interfaces/connect/generated/kokoro/platform/admission/v1/admission_pb.js";
+import { AdmissionRetryClass } from "../../../../generated/proto/kokoro/platform/admission/v1/admission_pb.js";
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 import { CHAT_ATTACHMENT_PURPOSE } from "../../../asset/domain/asset-purpose.js";
 import { applyAssetOwnerScope } from "../../../asset/infrastructure/postgres/asset-owner-scope.js";
@@ -21,7 +21,8 @@ import type {
   AdmissionBudgetOwnerPort,
   AdmissionOwnerResolution,
 } from "../../application/platform-admission-owner-authority.js";
-import { admissionLaunchProfileSnapshotSchema } from "./admission-runtime-owners.js";
+import { admissionLaunchProfileSnapshotSchema } from
+  "../../domain/admission-launch-profile-publication.js";
 
 interface LaunchProfileRow extends Record<string, unknown> {
   readonly launchProfileRef: unknown;

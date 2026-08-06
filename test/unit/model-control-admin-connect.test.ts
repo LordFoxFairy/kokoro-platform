@@ -3,15 +3,15 @@ import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError, type HandlerContext } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import { KokoroErrorDetailSchema } from
-  "../../src/interfaces/connect/generated-model-control/kokoro/common/v1/error_pb.js";
+  "../../src/generated/proto/kokoro/common/v1/error_pb.js";
 import { MODEL_CONTROL_ADMIN_ERRORS } from
-  "../../src/interfaces/connect/generated-model-control/model-control-errors.js";
+  "../../src/generated/contracts/platform-model-control@v1/errors.js";
 import { AuthenticatedOperatorQueryContextSchema } from
-  "../../src/interfaces/connect/generated-model-control/kokoro/platform/admin/v2/admin_shared_pb.js";
+  "../../src/generated/proto/kokoro/platform/admin/v2/admin_shared_pb.js";
 import { GlobalScopeSchema, OperatorScopeSchema, SecurityEpochsSchema } from
-  "../../src/interfaces/connect/generated-model-control/kokoro/platform/admin/v2/admin_shared_pb.js";
+  "../../src/generated/proto/kokoro/platform/admin/v2/admin_shared_pb.js";
 import { OperatorAssuranceLevel } from
-  "../../src/interfaces/connect/generated-model-control/kokoro/common/v2/command_envelope_pb.js";
+  "../../src/generated/proto/kokoro/common/v2/command_envelope_pb.js";
 import {
   GetInventoryRevisionRequestSchema,
   ListInventoryRevisionsRequestSchema,
@@ -20,7 +20,7 @@ import {
   ModelAdminPageSchema,
   ProviderOperationalStatus,
 } from
-  "../../src/interfaces/connect/generated-model-control/kokoro/platform/model/v1/model_control_pb.js";
+  "../../src/generated/proto/kokoro/platform/model/v1/model_control_pb.js";
 import { HmacAdminPageCursorCodec } from
   "../../src/modules/admin/infrastructure/security/admin-page-cursor.js";
 import type { AdminQueryPermit } from

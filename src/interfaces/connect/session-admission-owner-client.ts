@@ -1,14 +1,14 @@
 import { createValidator } from "@bufbuild/protovalidate";
 import { createClient, type Transport } from "@connectrpc/connect";
 import { createConnectTransport, type ConnectTransportOptions } from "@connectrpc/connect-node";
-import { AdmissionRetryClass } from "./generated/kokoro/platform/admission/v1/admission_pb.js";
+import { AdmissionRetryClass } from "../../generated/proto/kokoro/platform/admission/v1/admission_pb.js";
 import {
   SessionAdmissionOwnerService,
   VerifyFinalizeOwnerResponseSchema,
   VerifyPrepareOwnerResponseSchema,
   type SessionAdmissionOwnerMismatch,
   type SessionAdmissionOwnerNotReady,
-} from "./generated-session-admission-owner/kokoro/session/admission/v1/session_admission_owner_pb.js";
+} from "../../generated/proto/kokoro/session/admission/v1/session_admission_owner_pb.js";
 import type {
   AdmissionOwnerResolution,
   AdmissionSessionOwnerPort,

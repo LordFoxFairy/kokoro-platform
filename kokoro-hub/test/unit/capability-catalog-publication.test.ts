@@ -12,16 +12,16 @@ import {
   createHubCatalogConnectService,
   createHubRuntimeConnectService,
   freezeCatalogRequestDigest,
-} from "../../src/interfaces/connect/capability-catalog-services.js";
+} from "../../../src/modules/hub/interfaces/connect/capability-catalog-services.js";
 import {
   CapabilityCatalogSnapshotSchema,
   CatalogProjectionState,
   FreezeCatalogEffectSchema,
   HubCatalogService,
   HubRuntimeService,
-} from "../../src/interfaces/connect/generated-capability-catalog/kokoro/platform/capability/v1/capability_catalog_pb.js";
+} from "../../../src/generated/proto/kokoro/platform/capability/v1/capability_catalog_pb.js";
 import { CommandDigestAlgorithm } from
-  "../../src/interfaces/connect/generated-capability-catalog/kokoro/common/v1/receipt_pb.js";
+  "../../../src/generated/proto/kokoro/common/v1/receipt_pb.js";
 
 const SNAPSHOT = {
   schemaVersion: 1 as const,

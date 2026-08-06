@@ -3,7 +3,7 @@ import {
   runRequestSchema,
   type ExecutionContextIntent,
   type RunRequest,
-} from "@kokoro/platform-kit";
+} from "../../../generated/contracts/legacy/platform-control.js";
 import { z } from "zod";
 
 export const MAX_GA_RUN_REQUEST_DRAFT_TTL_MS = 5 * 60 * 1_000;

@@ -53,7 +53,7 @@ export interface SiteEffectApprovalAdministration extends SiteEffectApprovalAuth
 
 export function siteActivationEffectDigest(input: Readonly<{
   siteRef: string; candidateReleaseRef: string; expectedActiveReleaseRef: string | null;
-  audience: string; sessionContractRevision: string; reason: string;
+  activationFactsDigest: string; audience: string; sessionContractRevision: string; reason: string;
 }>): string {
   return effectDigest("site.activation.begin", input);
 }

@@ -8,7 +8,7 @@ import {
   DispatchOwnerEvidenceService,
   DispatchOwnerEvidenceNotFoundSchema,
   GetDispatchOwnerEvidenceResponseSchema,
-} from "../src/interfaces/connect/generated-session-evidence/kokoro/session/dispatch/v1/dispatch_owner_evidence_pb.js";
+} from "../src/generated/proto/kokoro/session/dispatch/v1/dispatch_owner_evidence_pb.js";
 import {
   buildSessionDispatchOwnerEvidenceTransportOptions,
   createSessionDispatchOwnerEvidenceClientForTransport,

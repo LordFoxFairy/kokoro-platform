@@ -2,7 +2,7 @@ import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { createRouterTransport } from "@connectrpc/connect";
 import { describe, expect, it } from "vitest";
-import { AdmissionRetryClass } from "../src/interfaces/connect/generated/kokoro/platform/admission/v1/admission_pb.js";
+import { AdmissionRetryClass } from "../src/generated/proto/kokoro/platform/admission/v1/admission_pb.js";
 import {
   SessionAdmissionFinalizeOwnerVerifiedSchema,
   SessionAdmissionOwnerMismatchSchema,
@@ -11,7 +11,7 @@ import {
   SessionAdmissionPrepareOwnerVerifiedSchema,
   VerifyFinalizeOwnerResponseSchema,
   VerifyPrepareOwnerResponseSchema,
-} from "../src/interfaces/connect/generated-session-admission-owner/kokoro/session/admission/v1/session_admission_owner_pb.js";
+} from "../src/generated/proto/kokoro/session/admission/v1/session_admission_owner_pb.js";
 import {
   SessionAdmissionOwnerLookupError,
   buildSessionAdmissionOwnerTransportOptions,

@@ -2,18 +2,18 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createSecureServer, type Http2SecureServer, type SecureServerOptions } from "node:http2";
 import type { Http2ServerRequest, Http2ServerResponse } from "node:http2";
 import { TLSSocket } from "node:tls";
-import { connectNodeAdapter } from "@connectrpc/connect-node";
+import { compressionGzip, connectNodeAdapter } from "@connectrpc/connect-node";
 import { ModelGatewayService as ModelGatewayConnectDefinition } from
-  "../interfaces/connect/generated-model-gateway/kokoro/platform/model/v1/model_gateway_pb.js";
+  "../generated/proto/kokoro/platform/model/v1/model_gateway_pb.js";
 import type { PostgresModelGatewayDatabase } from
   "../modules/model-gateway/infrastructure/postgres/model-gateway-database.js";
 import { PostgresModelGatewayRepository } from
   "../modules/model-gateway/infrastructure/postgres/model-gateway-repository.js";
 import { createModelGatewayResponseProtector } from
   "../modules/model-gateway/infrastructure/crypto/response-protector.js";
-import { LiteLlmChatAdapter } from
-  "../modules/model-gateway/infrastructure/http/litellm-chat-adapter.js";
-import { ModelGatewayService } from
+import { DirectOpenAiChatAdapter, LiteLlmChatAdapter } from
+  "../modules/model-gateway/infrastructure/http/openai-compatible-chat-adapter.js";
+import { ModelGatewayProviderRouter, ModelGatewayService } from
   "../modules/model-gateway/application/model-gateway-service.js";
 import { createModelGatewayConnectService } from
   "../modules/model-gateway/interfaces/connect/model-gateway-connect-service.js";
@@ -47,18 +47,13 @@ export async function createModelGatewayProductionComposition(input: Readonly<{
 }>): Promise<ModelGatewayProductionComposition> {
   const environment = input.environment ?? process.env;
   assertImageEffectProductionReadiness(environment);
-  const [tls, peers, responseKeyRingText, apiKeyText] = await Promise.all([
+  const [tls, peers, responseKeyRingText] = await Promise.all([
     loadTls(environment),
     loadPeers(required(environment, "PLATFORM_MODEL_GATEWAY_MTLS_PEERS_FILE")),
     readBoundedPrivateFile(
       required(environment, "PLATFORM_MODEL_GATEWAY_RESPONSE_KEY_RING_FILE"),
       256 * 1024,
       "PLATFORM_MODEL_GATEWAY_RESPONSE_KEY_RING_FILE_INVALID",
-    ),
-    readBoundedPrivateFile(
-      required(environment, "PLATFORM_MODEL_GATEWAY_LITELLM_API_KEY_FILE"),
-      8 * 1024,
-      "PLATFORM_MODEL_GATEWAY_LITELLM_API_KEY_FILE_INVALID",
     ),
   ]);
   const agentCallerIdentity = required(environment, "PLATFORM_MODEL_GATEWAY_AGENT_CALLER_SAN_URI");
@@ -74,11 +69,7 @@ export async function createModelGatewayProductionComposition(input: Readonly<{
     120_000,
     "PLATFORM_MODEL_GATEWAY_PROVIDER_TIMEOUT_MS_INVALID",
   );
-  const provider = new LiteLlmChatAdapter({
-    endpoint: required(environment, "PLATFORM_MODEL_GATEWAY_LITELLM_ENDPOINT"),
-    apiKey: secretLine(apiKeyText, "PLATFORM_MODEL_GATEWAY_LITELLM_API_KEY_FILE_INVALID"),
-    timeoutMs: providerTimeoutMs,
-  });
+  const provider = await loadModelGatewayProviderRouter(environment, providerTimeoutMs);
   const application = new ModelGatewayService({
     unitOfWork: input.database,
     repository,
@@ -101,6 +92,11 @@ export async function createModelGatewayProductionComposition(input: Readonly<{
   const service = createModelGatewayConnectService({
     application,
     agentCallerIdentity,
+    ...(environment.KOKORO_COMPAT_DEBUG === "1"
+      ? { onError: (error: unknown) => {
+          console.error(`Model Gateway application error:${stableErrorCode(error)}`);
+        } }
+      : {}),
     caller: {
       resolve: () => {
         const caller = callers.getStore();
@@ -114,7 +110,7 @@ export async function createModelGatewayProductionComposition(input: Readonly<{
     connect: true,
     grpc: false,
     grpcWeb: false,
-    acceptCompression: [],
+    acceptCompression: [compressionGzip],
     readMaxBytes: 3 * 1024 * 1024,
     writeMaxBytes: 9 * 1024 * 1024,
     maxTimeoutMs: 120_000,
@@ -152,6 +148,79 @@ export async function createModelGatewayProductionComposition(input: Readonly<{
     activeProviderEffectCount: () => application.activeDispatchCount(),
     inFlightCount: () => inFlight.size,
   });
+}
+
+type PrivateFileReader = (path: string, maximumBytes: number, code: string) => Promise<string>;
+
+export async function loadModelGatewayProviderRouter(
+  environment: Readonly<Record<string, string | undefined>>,
+  timeoutMs: number,
+  readPrivate: PrivateFileReader = readBoundedPrivateFile,
+): Promise<ModelGatewayProviderRouter> {
+  const litellmEndpoint = environment.PLATFORM_MODEL_GATEWAY_LITELLM_ENDPOINT;
+  const litellmKeyFile = environment.PLATFORM_MODEL_GATEWAY_LITELLM_API_KEY_FILE;
+  const directEndpoint = environment.PLATFORM_MODEL_GATEWAY_DIRECT_ENDPOINT;
+  const directKeyFile = environment.PLATFORM_MODEL_GATEWAY_DIRECT_API_KEY_FILE;
+  const litellmConfigured = completeAdapterConfiguration(
+    [litellmEndpoint, litellmKeyFile],
+    "PLATFORM_MODEL_GATEWAY_LITELLM_CONFIG_INVALID",
+  );
+  const directConfigured = completeAdapterConfiguration(
+    [directEndpoint, directKeyFile],
+    "PLATFORM_MODEL_GATEWAY_DIRECT_CONFIG_INVALID",
+  );
+  if (!litellmConfigured && !directConfigured) {
+    throw new Error("PLATFORM_MODEL_GATEWAY_PROVIDER_ADAPTER_REQUIRED");
+  }
+
+  const adapters: {
+    litellm?: LiteLlmChatAdapter;
+    direct?: DirectOpenAiChatAdapter;
+  } = {};
+  if (litellmConfigured) {
+    const key = await readPrivate(litellmKeyFile!, 8 * 1024,
+      "PLATFORM_MODEL_GATEWAY_LITELLM_API_KEY_FILE_INVALID");
+    adapters.litellm = new LiteLlmChatAdapter({
+      endpoint: litellmEndpoint!,
+      apiKey: secretLine(key, "PLATFORM_MODEL_GATEWAY_LITELLM_API_KEY_FILE_INVALID"),
+      timeoutMs,
+    });
+  }
+  if (directConfigured) {
+    const key = await readPrivate(directKeyFile!, 8 * 1024,
+      "PLATFORM_MODEL_GATEWAY_DIRECT_API_KEY_FILE_INVALID");
+    adapters.direct = new DirectOpenAiChatAdapter({
+      endpoint: directEndpoint!,
+      apiKey: secretLine(key, "PLATFORM_MODEL_GATEWAY_DIRECT_API_KEY_FILE_INVALID"),
+      timeoutMs,
+    });
+  }
+  return new ModelGatewayProviderRouter(adapters);
+}
+
+function completeAdapterConfiguration(
+  values: readonly (string | undefined)[],
+  code: string,
+): boolean {
+  if (values.every((value) => value === undefined)) return false;
+  if (values.some((value) => value === undefined || value.length < 1 || value.trim() !== value)) {
+    throw new Error(code);
+  }
+  return true;
+}
+
+function stableErrorCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  const stableCode = message.match(/\b[A-Z][A-Z0-9_]{2,127}\b/u)?.[0];
+  if (stableCode !== undefined) return stableCode;
+  const driverCode = typeof error === "object" && error !== null && "code" in error &&
+    typeof error.code === "string" && /^[A-Za-z0-9_]{1,32}$/u.test(error.code)
+    ? error.code
+    : null;
+  if (driverCode !== null) return driverCode;
+  const bounded = message.replace(/[A-Za-z0-9_-]{24,}/gu, "[redacted]")
+    .replace(/[^A-Za-z0-9_ .:'\-[\]]/gu, "?").slice(0, 256);
+  return bounded.length > 0 ? bounded : "UNKNOWN_ERROR";
 }
 
 export function assertImageEffectProductionReadiness(

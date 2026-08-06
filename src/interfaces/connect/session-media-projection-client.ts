@@ -10,7 +10,7 @@ import {
   ProjectionCommandKind,
   SessionMediaProjectionService,
   type ProjectionCommandResolution,
-} from "./generated-session-media-projection/kokoro/session/media/v1/media_projection_pb.js";
+} from "../../generated/proto/kokoro/session/media/v1/media_projection_pb.js";
 import {
   buildSessionAdmissionOwnerTransportOptions,
   type SessionAdmissionOwnerMtlsConfig,

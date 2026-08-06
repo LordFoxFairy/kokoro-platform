@@ -2,10 +2,10 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { PlatformPublicOperationExecution } from
   "../../../interfaces/http/platform-public-operation-registry.js";
 import { canonicalMediaOperationInputV1Bytes } from
-  "../../../interfaces/http/generated/platform-public/media-canonical.js";
+  "../../../generated/contracts/openapi/platform-public/media-canonical.js";
 import type { MediaOperationQuote, MediaOperationQuoteResponse } from
-  "../../../interfaces/http/generated/platform-public/types.gen.js";
-import { zMediaOperationQuote } from "../../../interfaces/http/generated/platform-public/zod.gen.js";
+  "../../../generated/contracts/openapi/platform-public/types.gen.js";
+import { zMediaOperationQuote } from "../../../generated/contracts/openapi/platform-public/zod.gen.js";
 import type {
   MediaPublicQuoteJournalPort,
   MediaPublicQuoteJournalBegin,

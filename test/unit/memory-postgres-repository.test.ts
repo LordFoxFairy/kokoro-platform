@@ -89,6 +89,7 @@ describe("PostgresMemoryAuthorityRepository", () => {
       resultSpaceRef: "space-user-1",
       resultSpaceVersion: 1n, resultEntryRef: "memory-entry-1", resultEntryVersion: 1n,
       resultRevisionRef: "memory-revision-1", resultRevision: 1n,
+      resultRestoredFromRevisionRef: null, resultPrioritized: null, resultChanged: null,
       resultSpaceGeneration: null, resultLearningGeneration: null, resultRevocationEpoch: null,
       resultMinimumSourceOriginSequence: null, resultLearningState: null, resultUseState: null,
       resultPreviousFeaturePolicyRevisionRef: null, resultFeaturePolicyRevisionRef: null,
@@ -99,7 +100,8 @@ describe("PostgresMemoryAuthorityRepository", () => {
         entryRef: "memory-entry-1", entryVersion: 1n, revisionRef: "memory-revision-1", revision: 1n },
     });
 
-    receiptRows = [{ ...receiptRows[0], resultKind: "forgotten", resultRevisionRef: "leaked-ref" }];
+    receiptRows = [{ ...receiptRows[0], resultKind: "forgotten", resultRevisionRef: "leaked-ref",
+      resultRevision: null, resultRevocationEpoch: 2n }];
     await expect(repository.claimReceipt(lease.transaction, identity())).rejects.toMatchObject({
       code: "MEMORY_RECEIPT_INVALID",
     });
@@ -127,6 +129,7 @@ describe("PostgresMemoryAuthorityRepository", () => {
       resultSpaceRef: "space-user-1", resultSpaceVersion: 1n,
       resultEntryRef: "memory-entry-1", resultEntryVersion: 2n,
       resultRevisionRef: "memory-revision-2", resultRevision: 2n,
+      resultRestoredFromRevisionRef: null, resultPrioritized: null, resultChanged: null,
       resultSpaceGeneration: null, resultLearningGeneration: null, resultRevocationEpoch: null,
       resultMinimumSourceOriginSequence: null, resultLearningState: null, resultUseState: null,
       resultPreviousFeaturePolicyRevisionRef: null, resultFeaturePolicyRevisionRef: null,
@@ -144,6 +147,7 @@ describe("PostgresMemoryAuthorityRepository", () => {
       sourceCommandRef: "command-1", sourceDigest: "c".repeat(64), protectedContent: content([1, 2]),
       category: "fact", featurePolicyRevisionRef: space.featurePolicyRevisionRef,
       actorAuthorization: binding,
+      validFrom: null, validTo: null,
       recordedAt: "2026-07-30T12:00:00.000Z" });
     const corrected = correctMemoryEntry({ space, entry: remembered.entry, expectedVersion: 1n,
       expectedCurrentRevision: 1n, revisionRef: "memory-revision-2",
@@ -151,6 +155,7 @@ describe("PostgresMemoryAuthorityRepository", () => {
       sourceDigest: "d".repeat(64), protectedContent: content([3, 4]),
       featurePolicyRevisionRef: space.featurePolicyRevisionRef,
       actorAuthorization: binding,
+      validFrom: null, validTo: null,
       recordedAt: "2026-07-30T12:01:00.000Z" });
 
     await repository.saveCorrectedMemory(lease.transaction,

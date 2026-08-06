@@ -1,0 +1,160 @@
+{
+  "schemaVersion": 1,
+  "signatureDomainHex": "6b6f6b6f726f2e70726f6a656374696f6e2e7369676e61747572652e763100",
+  "cases": [
+    {
+      "id": "media-binding-record",
+      "messageType": "kokoro.platform.media.v1.MediaProjectionBindingCommittedRecord",
+      "domainSeparatorHex": "6b6f6b6f726f2e70726f6a656374696f6e2e7265636f72642e6d656469612e62696e64696e672e763100",
+      "canonicalRecordHex": "0a0c61637469766174696f6e2d31120962696e64696e672d311a0b6f7065726174696f6e2d312209636f6d6d616e642d312a09726563656970742d3132406161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616138014205696d6167654a08696d6167652d723152005801",
+      "digestSha256": "10b49f9e68a3d2c0e8c738284a956a56a6e3ecde17819089d8673f7ef09ca032",
+      "keyRevision": "projection-ed25519-fixture-v1",
+      "publicKeySpkiBase64": "MCowBQYDK2VwAyEAz1DtrxU7MNheg3oTzRabudmFn3hlQKvP4qq4z5Ud6xA=",
+      "signatureBase64": "kUC7JEs+WhoTSwos+CBvHKCjT5J3bsC9RVD3zRyjQ0E8z7kfdXdOiHjjY70wG3cdIkgIhWiSoqHMnqIQca/eAw=="
+    },
+    {
+      "id": "media-event-record",
+      "messageType": "kokoro.platform.media.v1.MediaProjectionEventRecord",
+      "domainSeparatorHex": "6b6f6b6f726f2e70726f6a656374696f6e2e7265636f72642e6d656469612e6576656e742e763100",
+      "canonicalRecordHex": "0a0d6d656469612d6576656e742d321a0962696e64696e672d31220b6f7065726174696f6e2d31280230014a02220062006802720d6d656469612d6576656e742d317a4062626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262",
+      "digestSha256": "b6370fe37ce5f10cf3aeab81b2017e560645b8ba3ce26e2c8238daf8be218b2f",
+      "keyRevision": "projection-ed25519-fixture-v1",
+      "publicKeySpkiBase64": "MCowBQYDK2VwAyEAz1DtrxU7MNheg3oTzRabudmFn3hlQKvP4qq4z5Ud6xA=",
+      "signatureBase64": "kQwyK23vnmKCyVlxRyFbG9MMUX7qnOR+YTEdtfHxU7eWvRU/1HgWtbicOK1i57/t9BfQ6dUfUc1Ht2ez0Jn0AA=="
+    },
+    {
+      "id": "credit-cost-event-record",
+      "messageType": "kokoro.platform.credit.v1.CreditCostProjectionEventRecord",
+      "domainSeparatorHex": "6b6f6b6f726f2e70726f6a656374696f6e2e7265636f72642e6372656469742e636f73742e763100",
+      "canonicalRecordHex": "0a0e6372656469742d6576656e742d311a0962696e64696e672d31220b6f7065726174696f6e2d312a06636f73742d3130013a00620068017001",
+      "digestSha256": "e2587bae5df119959ffb970f28bd9ace6d4a16f4c3bbba6f09abf61749d54d54",
+      "keyRevision": "projection-ed25519-fixture-v1",
+      "publicKeySpkiBase64": "MCowBQYDK2VwAyEAz1DtrxU7MNheg3oTzRabudmFn3hlQKvP4qq4z5Ud6xA=",
+      "signatureBase64": "QF2Xt4onau7snaQ/Xz7pXrq1nI1k820AMHyZO81BY3LvfMIOoAY5wRIIOuidA3g8xoIf5qqBPjX0OcGEatXTCA=="
+    },
+    {
+      "id": "media-head-record",
+      "messageType": "kokoro.platform.media.v1.MediaProjectionHead",
+      "domainSeparatorHex": "6b6f6b6f726f2e70726f6a656374696f6e2e686561642e6d656469612e763100",
+      "canonicalRecordHex": "0a0962696e64696e672d31120b6f7065726174696f6e2d31180120022a0d6d656469612d6576656e742d323240636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363634a00",
+      "digestSha256": "a370c5b25216de1aa79f0177bcbadc87b98a769594b9fb05fc6c2fd6eb9c6a77",
+      "keyRevision": "projection-ed25519-fixture-v1",
+      "publicKeySpkiBase64": "MCowBQYDK2VwAyEAz1DtrxU7MNheg3oTzRabudmFn3hlQKvP4qq4z5Ud6xA=",
+      "signatureBase64": "ESXsrc7fIoYjwVQ1MovkD3/sKyBVMIF1RCJ0ectfBt/Ad+OgadqQFv7VS2XvpVroSKd0ZR11ce7P37qr//BPDA=="
+    },
+    {
+      "id": "credit-head-record",
+      "messageType": "kokoro.platform.credit.v1.CreditCostProjectionHead",
+      "domainSeparatorHex": "6b6f6b6f726f2e70726f6a656374696f6e2e686561642e6372656469742e636f73742e763100",
+      "canonicalRecordHex": "0a0962696e64696e672d311206636f73742d31180120012a0e6372656469742d6576656e742d313240646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464644a00",
+      "digestSha256": "3f94001d1183286175351cdaa1e82cf4367b0c8f334d821dd05aca73cf56b943",
+      "keyRevision": "projection-ed25519-fixture-v1",
+      "publicKeySpkiBase64": "MCowBQYDK2VwAyEAz1DtrxU7MNheg3oTzRabudmFn3hlQKvP4qq4z5Ud6xA=",
+      "signatureBase64": "qlqNnwXuUO0yLJFAl/vUTSzuJwg7ckkRvcP1ZzJOL1jw8SW69oI5AfvRaCu19VfKQZD0RF50Bhkl5dAUztueDQ=="
+    }
+  ],
+  "negativeCases": [
+    {
+      "id": "nested-unknown-field-rejected",
+      "messageType": "kokoro.platform.media.v1.MediaProjectionEventRecord",
+      "canonicalRecordHex": "4a039a0600",
+      "expectedErrorCode": "PROJECTION_INTEGRITY_UNKNOWN_FIELD"
+    },
+    {
+      "id": "excluded-record-digest-rejected",
+      "messageType": "kokoro.platform.media.v1.MediaProjectionEventRecord",
+      "canonicalRecordHex": "82014061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161",
+      "expectedErrorCode": "PROJECTION_INTEGRITY_EXCLUDED_FIELD"
+    },
+    {
+      "id": "signature-field-rejected",
+      "messageType": "kokoro.platform.media.v1.MediaProjectionEventRecord",
+      "canonicalRecordHex": "8a0100",
+      "expectedErrorCode": "PROJECTION_INTEGRITY_SIGNATURE_FIELD"
+    },
+    {
+      "id": "non-minimal-varint-rejected",
+      "messageType": "kokoro.platform.media.v1.MediaProjectionHead",
+      "canonicalRecordHex": "188100",
+      "expectedErrorCode": "PROJECTION_INTEGRITY_NON_CANONICAL_PROTOBUF"
+    },
+    {
+      "id": "explicit-default-rejected",
+      "messageType": "kokoro.platform.media.v1.MediaProjectionHead",
+      "canonicalRecordHex": "2000",
+      "expectedErrorCode": "PROJECTION_INTEGRITY_NON_CANONICAL_PROTOBUF"
+    },
+    {
+      "id": "invalid-utf8-rejected",
+      "messageType": "kokoro.platform.media.v1.MediaProjectionHead",
+      "canonicalRecordHex": "0a01ff",
+      "expectedErrorCode": "PROJECTION_INTEGRITY_PROTOBUF_INVALID"
+    },
+    {
+      "id": "required-field-missing-rejected",
+      "messageType": "kokoro.platform.media.v1.MediaProjectionHead",
+      "canonicalRecordHex": "0a0178",
+      "expectedErrorCode": "PROJECTION_INTEGRITY_CONSTRAINT_VIOLATION"
+    },
+    {
+      "id": "binding-constraint-rejected",
+      "messageType": "kokoro.platform.media.v1.MediaProjectionBindingCommittedRecord",
+      "domainSeparatorHex": "6b6f6b6f726f2e70726f6a656374696f6e2e7265636f72642e6d656469612e62696e64696e672e763100",
+      "canonicalRecordHex": "0a0c61637469766174696f6e2d31120962696e64696e672d311a0b6f7065726174696f6e2d312209636f6d6d616e642d312a09726563656970742d3132406161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616138014205696d6167654a08696d6167652d723152005802",
+      "digestSha256": "3c71fc2fd9d058b0a2b33e1b5e8264fe5f1d2502768cdb80df401397c426e154",
+      "keyRevision": "projection-ed25519-fixture-v1",
+      "publicKeySpkiBase64": "MCowBQYDK2VwAyEAz1DtrxU7MNheg3oTzRabudmFn3hlQKvP4qq4z5Ud6xA=",
+      "signatureBase64": "lnZ3Gz8eXpT2uPnbrE0UDwPYdC/BGEsHJ77tY/BqC9soHlhOeULDHI+xwP61HPWmCQTFTo6PsmDjtGvHsfleAg==",
+      "authenticated": true,
+      "expectedErrorCode": "PROJECTION_INTEGRITY_CONSTRAINT_VIOLATION"
+    },
+    {
+      "id": "media-event-constraint-rejected",
+      "messageType": "kokoro.platform.media.v1.MediaProjectionEventRecord",
+      "domainSeparatorHex": "6b6f6b6f726f2e70726f6a656374696f6e2e7265636f72642e6d656469612e6576656e742e763100",
+      "canonicalRecordHex": "0a0d6d656469612d6576656e742d321a0962696e64696e672d31220b6f7065726174696f6e2d31280230014a02220062006801720d6d656469612d6576656e742d317a4062626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262",
+      "digestSha256": "35ff79a0811566c2d96d60c50cdbad21a23b99ea63989641c9284ea499e63f89",
+      "keyRevision": "projection-ed25519-fixture-v1",
+      "publicKeySpkiBase64": "MCowBQYDK2VwAyEAz1DtrxU7MNheg3oTzRabudmFn3hlQKvP4qq4z5Ud6xA=",
+      "signatureBase64": "ybmAQmK6mhu6jD2YUSbRzhEJdEAti666kXIP6t/hLZzNkfFhGlU/Yk5tj/ohIi/wjjNPzVDzOFnG1QbiOhs7CA==",
+      "authenticated": true,
+      "expectedErrorCode": "PROJECTION_INTEGRITY_CONSTRAINT_VIOLATION"
+    },
+    {
+      "id": "credit-event-constraint-rejected",
+      "messageType": "kokoro.platform.credit.v1.CreditCostProjectionEventRecord",
+      "domainSeparatorHex": "6b6f6b6f726f2e70726f6a656374696f6e2e7265636f72642e6372656469742e636f73742e763100",
+      "canonicalRecordHex": "0a0e6372656469742d6576656e742d311a0962696e64696e672d31220b6f7065726174696f6e2d312a06636f73742d3130013a00620068017002",
+      "digestSha256": "98bc8f87362a4a63ec4bb4a5bd4ef0f9493d9338ca3c240997823ee7d1334e30",
+      "keyRevision": "projection-ed25519-fixture-v1",
+      "publicKeySpkiBase64": "MCowBQYDK2VwAyEAz1DtrxU7MNheg3oTzRabudmFn3hlQKvP4qq4z5Ud6xA=",
+      "signatureBase64": "RI+47zdCYXs1q22nBDGgeWkBNqwYiw7reT5nsNqphSdLVg8KguO0+V3qu5Mp1S6m9NlztjJqY/mqkDeE9B5gAA==",
+      "authenticated": true,
+      "expectedErrorCode": "PROJECTION_INTEGRITY_CONSTRAINT_VIOLATION"
+    },
+    {
+      "id": "media-head-constraint-rejected",
+      "messageType": "kokoro.platform.media.v1.MediaProjectionHead",
+      "domainSeparatorHex": "6b6f6b6f726f2e70726f6a656374696f6e2e686561642e6d656469612e763100",
+      "canonicalRecordHex": "0a0962696e64696e672d31120b6f7065726174696f6e2d3118012a0d6d656469612d6576656e742d323240636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363634a00",
+      "digestSha256": "9cacaeff6e76b34ded92865b208c3e60a62d1a1c3305e4717eabb1a35d706326",
+      "keyRevision": "projection-ed25519-fixture-v1",
+      "publicKeySpkiBase64": "MCowBQYDK2VwAyEAz1DtrxU7MNheg3oTzRabudmFn3hlQKvP4qq4z5Ud6xA=",
+      "signatureBase64": "5BJ3cBTOzOxlUMQ1wXgg8jepjuoEYjr/xrJ4pd13r4zw0rq+7QFKbmejbkDku5YwB2GHftio1d6hOJVYhyD9BQ==",
+      "authenticated": true,
+      "expectedErrorCode": "PROJECTION_INTEGRITY_CONSTRAINT_VIOLATION"
+    },
+    {
+      "id": "credit-head-constraint-rejected",
+      "messageType": "kokoro.platform.credit.v1.CreditCostProjectionHead",
+      "domainSeparatorHex": "6b6f6b6f726f2e70726f6a656374696f6e2e686561642e6372656469742e636f73742e763100",
+      "canonicalRecordHex": "0a0962696e64696e672d311206636f73742d3118012a0e6372656469742d6576656e742d313240646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464644a00",
+      "digestSha256": "977a9d0cf61d27dca39df5b01304366a6c0377010c63aa7eb4993301fbe6d8b0",
+      "keyRevision": "projection-ed25519-fixture-v1",
+      "publicKeySpkiBase64": "MCowBQYDK2VwAyEAz1DtrxU7MNheg3oTzRabudmFn3hlQKvP4qq4z5Ud6xA=",
+      "signatureBase64": "UB6s3g18/44d/SN56oV0FXfQGZQM4utdmQxNWHL5T5cj5NCtSSwDN5lLl4Cm4AwMX70+qSmZ1vRmGTRyjcoPCQ==",
+      "authenticated": true,
+      "expectedErrorCode": "PROJECTION_INTEGRITY_CONSTRAINT_VIOLATION"
+    }
+  ]
+}

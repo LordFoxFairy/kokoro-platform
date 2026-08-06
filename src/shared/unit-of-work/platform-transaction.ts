@@ -34,6 +34,18 @@ export function resolvePlatformTransaction(transaction: PlatformTransaction): Pl
   return sql;
 }
 
+/** @internal PostgreSQL owner adapters requiring a transaction-scoped logical lock. */
+export async function acquirePlatformSqlAdvisoryLock(
+  sql: PlatformSqlTransaction,
+  key: string,
+): Promise<void> {
+  await sql.query(
+    'SELECT 1 AS "lockAcquired" FROM pg_catalog.pg_advisory_xact_lock(' +
+      "pg_catalog.hashtextextended($1,0))",
+    [key],
+  );
+}
+
 /** @internal Unit-of-work host only. */
 export function revokePlatformTransaction(lease: PlatformTransactionLease): void {
   activeTransactions.delete(lease.transaction);

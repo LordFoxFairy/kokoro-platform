@@ -46,74 +46,69 @@ export class IssueSessionAccessGrantService {
     const notBefore = instant(new Date(nowDate.getTime() - 5_000));
     const expiresAt = instant(new Date(nowDate.getTime() + this.signer.maximumTtlSeconds * 1_000));
     const grantRef = this.grantRef();
-    const prepared = await this.unitOfWork.execute(
-      { context: input.context, operation: "issueSessionAccessGrant" },
-      async (transaction) => {
-        const result = await this.repository.prepareSessionAccessGrant(transaction, {
-          grantRef,
-          workload: input.workload,
-          session: input.session,
-          productContextRef: input.productContextRef,
-          projectRef: input.projectRef,
-          purpose: input.purpose,
-          resource: input.resource,
-          issuer: this.signer.issuer,
-          keyRevision: this.signer.keyRevision,
-          notBefore,
-          issuedAt,
-          expiresAt,
-        });
-        return result;
-      },
-    );
-
-    let credential: string;
     try {
-      credential = await this.signer.sign(prepared.claims);
-    } catch {
-      await this.recordFailure(input.context, grantRef, prepared.claimsDigest, "SIGNING_FAILED");
-      throw new SessionAuthorizationError("AUTHORIZATION_DELIVERY_FAILED");
-    }
-    try {
-      await this.unitOfWork.execute(
+      return await this.unitOfWork.execute(
         { context: input.context, operation: "issueSessionAccessGrant" },
         async (transaction) => {
-          await this.repository.markGrantDelivered(transaction, {
+          let reservation: Awaited<ReturnType<SessionGrantDeliveryPublisher["reserveGrantDelivery"]>>;
+          try {
+            reservation = await this.publisher.reserveGrantDelivery(transaction, {
+              siteRef: input.workload.siteRef,
+            });
+            if (reservation.siteRef !== input.workload.siteRef || reservation.streamSequence < 1n) {
+              throw new GrantDeliveryFailure();
+            }
+          } catch {
+            throw new GrantDeliveryFailure();
+          }
+          const result = await this.repository.prepareSessionAccessGrant(transaction, {
             grantRef,
-            claimsDigest: prepared.claimsDigest,
-            credentialDigest: signedCredentialDigest(credential),
+            workload: input.workload,
+            session: input.session,
+            productContextRef: input.productContextRef,
+            projectRef: input.projectRef,
+            purpose: input.purpose,
+            resource: input.resource,
+            issuer: this.signer.issuer,
+            keyRevision: this.signer.keyRevision,
+            authorizationStreamSequence: reservation.streamSequence.toString(),
+            notBefore,
+            issuedAt,
+            expiresAt,
           });
-          await this.publisher.publishGrantDelivered(transaction, {
-            claims: prepared.claims,
-            claimsDigest: prepared.claimsDigest,
-            changedAt: instant(this.clock()),
-            correlationId: input.context.correlationId,
-          });
+          let credential: string;
+          try {
+            credential = await this.signer.sign(result.claims);
+          } catch {
+            throw new GrantDeliveryFailure();
+          }
+          try {
+            await this.repository.markGrantDelivered(transaction, {
+              grantRef,
+              claimsDigest: result.claimsDigest,
+              credentialDigest: signedCredentialDigest(credential),
+            });
+            await this.publisher.publishGrantDelivered(transaction, {
+              claims: result.claims,
+              claimsDigest: result.claimsDigest,
+              reservation,
+              changedAt: instant(this.clock()),
+              correlationId: input.context.correlationId,
+            });
+          } catch {
+            throw new GrantDeliveryFailure();
+          }
+          return Object.freeze({ ...result.claims, credential });
         },
       );
-    } catch {
-      await this.recordFailure(input.context, grantRef, prepared.claimsDigest, "DELIVERY_COMMIT_FAILED");
+    } catch (error) {
+      if (!(error instanceof GrantDeliveryFailure)) throw error;
       throw new SessionAuthorizationError("AUTHORIZATION_DELIVERY_FAILED");
     }
-    return Object.freeze({ ...prepared.claims, credential });
-  }
-
-  private async recordFailure(
-    context: VerifiedRequestSecurityContext,
-    grantRef: string,
-    claimsDigest: string,
-    errorCode: string,
-  ): Promise<void> {
-    await this.unitOfWork.execute(
-      { context, operation: "issueSessionAccessGrant" },
-      (transaction) => this.repository.markGrantDeliveryFailed(transaction, {
-        grantRef,
-        claimsDigest,
-        errorCode,
-      }),
-    ).catch(() => undefined);
   }
 }
+
+class GrantDeliveryFailure extends Error {}
 
 function instant(value: Date): string {
   return new Date(Math.floor(value.getTime() / 1_000) * 1_000).toISOString();

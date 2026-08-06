@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { AdmissionRetryClass } from "../../../../interfaces/connect/generated/kokoro/platform/admission/v1/admission_pb.js";
+import { AdmissionRetryClass } from "../../../../generated/proto/kokoro/platform/admission/v1/admission_pb.js";
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 import type {
   AdmissionExecutionBindingOwnerPort,
@@ -42,8 +42,7 @@ export class PostgresAdmissionExecutionBindingOwner implements AdmissionExecutio
           AND allocation.execution_namespace=space.execution_namespace
           AND allocation.state='applied'
         WHERE space.site_ref=$1 AND space.project_ref=$2 AND space.state='active'
-        LIMIT 2
-        FOR SHARE OF space,allocation`,
+        LIMIT 2`,
       [input.siteId, input.projectRef],
     );
     if (rows.length > 1) throw new Error("ADMISSION_EXECUTION_SPACE_AMBIGUOUS");
@@ -79,10 +78,9 @@ export class PostgresAdmissionExecutionBindingOwner implements AdmissionExecutio
               capability_snapshot_ref AS "capabilitySnapshotRef",
               configuration_revision_id AS "configurationRevisionId",
               binding_digest AS "bindingDigest"
-         FROM platform.admission_session_execution_binding
+        FROM platform.admission_session_execution_binding
         WHERE site_id=$1 AND session_id=$2
-        LIMIT 2
-        FOR SHARE`,
+        LIMIT 2`,
       [input.siteId,input.sessionId],
     );
     if (bindingRows.length !== 1) throw new Error("ADMISSION_SESSION_BINDING_CORRUPT");

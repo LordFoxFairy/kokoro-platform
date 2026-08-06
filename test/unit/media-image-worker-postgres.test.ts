@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { canonicalMediaOperationInputV1Bytes } from
-  "../../src/interfaces/http/generated/platform-public/media-canonical.js";
+  "../../src/generated/contracts/openapi/platform-public/media-canonical.js";
 import {
   EnvelopeOperationInputProtector,
   type MediaOperationOwnerBinding,

@@ -27,6 +27,7 @@ export function createSiteAuthorityCommand(
 }
 
 function stableJson(value: unknown): string {
+  if (typeof value === "bigint") return `{"@bigint":${JSON.stringify(value.toString())}}`;
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   return `{${Object.entries(value as Record<string, unknown>)

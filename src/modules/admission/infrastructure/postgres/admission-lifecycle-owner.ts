@@ -46,7 +46,7 @@ export class PostgresAdmissionLifecycleOwner implements AdmissionLifecycleOwnerP
     const bindingDigest = bindingDigestFromRef(input.sessionExecutionBindingRef);
     const bindings = await sql.query<AdmissionBindingRow>(
       `${SELECT_BINDING}
-       WHERE site_id=$1 AND session_id=$2 FOR UPDATE`,
+       WHERE site_id=$1 AND session_id=$2`,
       [input.siteId, input.effect.sessionId],
     );
     assertBinding(bindings[0], {
@@ -87,14 +87,20 @@ export class PostgresAdmissionLifecycleOwner implements AdmissionLifecycleOwnerP
     if (!/^model-authorization:sha256:[0-9a-f]{64}$/u.test(gatewayAuthorizationHandle)) {
       throw new Error("ADMISSION_MODEL_GATEWAY_AUTHORIZATION_INVALID");
     }
+    if (
+      input.ownerFacts.runtime.model.provider !== input.modelRoute.adapterKind ||
+      input.ownerFacts.runtime.model.name !== input.modelRoute.gatewayModel
+    ) {
+      throw new Error("ADMISSION_MODEL_GATEWAY_ROUTE_MISMATCH");
+    }
     const projected = await sql.execute(
       `INSERT INTO platform.model_gateway_execution_authorization
        (authorization_handle,site_ref,execution_manifest_ref,authorization_segment_ref,
-        gateway_model,adapter_kind,expires_at,state)
-       VALUES ($1,$2,$3,$4,$5,$6,$7::timestamptz,'active')
+        gateway_model,provider_model,adapter_kind,expires_at,state)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::timestamptz,'active')
        ON CONFLICT (authorization_handle) DO NOTHING`,
       [gatewayAuthorizationHandle, input.siteId, input.manifestRef, input.authorizationSegmentRef,
-        input.ownerFacts.runtime.model.name, input.ownerFacts.runtime.model.provider,
+        input.modelRoute.gatewayModel, input.modelRoute.providerModel, input.modelRoute.adapterKind,
         input.expiresAt],
     );
     if (projected !== 1) {

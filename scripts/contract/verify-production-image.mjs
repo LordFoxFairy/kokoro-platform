@@ -51,7 +51,7 @@ const requiredEntries = Object.freeze([
   "node_modules/prisma/build/index.js",
   "kokoro-platform-kit/dist/index.js",
   "kokoro-hub/dist/interfaces/http/main.js",
-  "kokoro-hub/dist/interfaces/connect/main.js",
+  "dist/src/process/hub-connect.js",
 ]);
 const developmentTreePattern = /(?:^|[-_.])(?:src|test|tests|coverage|dev)(?:$|[-_.])/u;
 

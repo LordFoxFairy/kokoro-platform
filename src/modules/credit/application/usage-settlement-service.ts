@@ -74,7 +74,11 @@ export class UsageSettlementService {
       if (!isAttemptReceipt(prior.value)) throw new Error("CREDIT_USAGE_RECEIPT_CORRUPT");
       return { kind: "replayed", value: prior.value };
     }
-    const context = await this.dependencies.repository.lockUsageContext(transaction, input);
+    const context = await this.dependencies.repository.lockUsageContext(transaction, {
+      siteId: input.siteId,
+      authorizationSegmentRef: input.authorizationSegmentRef,
+      authority: "producer",
+    });
     if (context === null) return { kind: "not_found" };
     const racedReceipt = await this.dependencies.repository.findCommandReceipt(transaction, identity);
     if (racedReceipt.kind !== "none") {
@@ -203,6 +207,7 @@ export class UsageSettlementService {
     const context = await this.dependencies.repository.lockUsageContext(transaction, {
       siteId: input.siteId,
       authorizationSegmentRef: intent.authorizationSegmentRef,
+      authority: "producer",
     });
     if (context === null) return { kind: "not_found" };
     const scope = Object.freeze({ siteId: intent.siteId, executionBudgetRootRef: intent.executionBudgetRootRef,
@@ -269,7 +274,11 @@ export class UsageSettlementService {
       if (!isSettlementReceipt(priorReceipt.value)) throw new Error("CREDIT_USAGE_RECEIPT_CORRUPT");
       return { kind: "replayed", value: priorReceipt.value };
     }
-    const context = await this.dependencies.repository.lockUsageContext(transaction, input);
+    const context = await this.dependencies.repository.lockUsageContext(transaction, {
+      siteId: input.siteId,
+      authorizationSegmentRef: input.authorizationSegmentRef,
+      authority: "settlement_owner",
+    });
     if (context === null) return { kind: "not_found" };
     const racedReceipt = await this.dependencies.repository.findCommandReceipt(transaction, identity);
     if (racedReceipt.kind !== "none") {

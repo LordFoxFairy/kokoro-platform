@@ -7,7 +7,7 @@ import {
   CommandIdentityV2Schema,
   OperatorAssuranceLevel,
 } from
-  "../../src/interfaces/connect/generated-model-control/kokoro/common/v2/command_envelope_pb.js";
+  "../../src/generated/proto/kokoro/common/v2/command_envelope_pb.js";
 import {
   AuthenticatedOperatorQueryContextSchema,
   AuthenticatedOperatorCommandContextSchema,
@@ -16,7 +16,7 @@ import {
   SecurityEpochsSchema,
   SiteScopeSchema,
 } from
-  "../../src/interfaces/connect/generated-model-control/kokoro/platform/admin/v2/admin_shared_pb.js";
+  "../../src/generated/proto/kokoro/platform/admin/v2/admin_shared_pb.js";
 import type { AuthenticatedAdminSession } from
   "../../src/modules/admin/domain/admin-authorization.js";
 import type { AdminOperatorAuthority } from

@@ -43,6 +43,7 @@ describe("Postgres Site authority", () => {
       )).resolves.toBeUndefined();
       expect(statements[0]).toContain("catalog.agent_catalog_ref=release.agent_catalog_ref");
       expect(statements[0]).toContain("release.state='ready'");
+      expect(statements[0]).not.toContain("FOR SHARE OF catalog");
     } finally { revokePlatformTransaction(lease); }
   });
 
@@ -110,6 +111,26 @@ describe("Postgres Site authority", () => {
       expect(loaded?.activeReleaseRef).toBe("release_01");
       expect(calls[0]).toContain("FOR UPDATE");
       expect(calls[0]).toContain("platform.site");
+    } finally { revokePlatformTransaction(lease); }
+  });
+
+  it("serializes activation begin without granting Admin attempt update authority", async () => {
+    const calls: { statement: string; values: readonly unknown[] }[] = [];
+    const lease = issuePlatformTransaction({
+      query: async <Row extends Record<string, unknown>>(statement: string, values = []) => {
+        calls.push({ statement, values });
+        return (statement.includes("pg_advisory_xact_lock") ? [] : [attempt]) as unknown as
+          readonly Row[];
+      },
+      execute: async () => 0,
+    });
+    try {
+      await expect(new PostgresSiteAuthorityRepository().loadActivationForBegin(
+        lease.transaction, attempt.attemptRef,
+      )).resolves.toEqual(attempt);
+      expect(calls[0]?.statement).toContain("pg_advisory_xact_lock");
+      expect(calls[0]?.values).toEqual([`site_activation_attempt:${attempt.attemptRef}`]);
+      expect(calls[1]?.statement).not.toContain("FOR UPDATE");
     } finally { revokePlatformTransaction(lease); }
   });
 

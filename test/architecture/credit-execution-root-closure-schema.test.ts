@@ -2,8 +2,50 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 const migrationPath = "prisma/migrations/20260812_credit_execution_root_closure/migration.sql";
+const admissionAuthorityMigrationPath =
+  "prisma/migrations/20260822_admission_execution_root_role_authority/migration.sql";
 
 describe("Credit execution root closure schema", () => {
+  it("binds Admission closure authority to the configured database role identity", async () => {
+    const migration = await readFile(admissionAuthorityMigrationPath, "utf8");
+    expect(migration).toContain("runtime_role_identity_authority_role_kind_check");
+    expect(migration).toContain("'admission'");
+    for (const existingRoleKind of ["memory_public", "memory_runtime", "memory_worker"]) {
+      expect(migration).toContain(`'${existingRoleKind}'`);
+    }
+    expect(migration).toContain("CREATE FUNCTION platform.admission_role_identity_is_current()");
+    expect(migration).toContain("authority.role_kind='admission'");
+    expect(migration).toContain("runtime_role.rolname=SESSION_USER");
+    expect(migration).toContain("runtime_role.oid::BIGINT=authority.role_oid");
+    expect(migration).toContain("SECURITY DEFINER SET search_path=pg_catalog,platform");
+
+    for (const relation of [
+      "credit_execution_root_closure_receipt",
+      "credit_execution_root_reconciliation",
+      "credit_execution_root_outcome",
+      "admission_verified_terminal_evidence",
+    ]) {
+      expect(migration).toContain(`ON platform.${relation} TO platform_migrator`);
+    }
+    expect(migration.match(/platform\.admission_role_identity_is_current\(\)/gu)?.length)
+      .toBeGreaterThanOrEqual(7);
+    expect(migration).not.toContain("SESSION_USER<>'platform_admission'");
+    expect(migration).not.toContain("SESSION_USER='platform_admission'");
+
+    for (const routine of [
+      "record_admission_verified_terminal_evidence",
+      "find_execution_root_closure",
+      "lock_execution_root_closure",
+      "commit_execution_root_closure",
+      "mark_execution_root_reconciliation",
+    ]) {
+      expect(migration).toMatch(new RegExp(
+        `REVOKE EXECUTE ON FUNCTION platform\\.${routine}\\([\\s\\S]*?FROM platform_admission`,
+        "u",
+      ));
+    }
+  });
+
   it("keeps closure receipts immutable, conserved and fenced", async () => {
     const migration = await readFile(migrationPath, "utf8");
     expect(migration).toContain("credit_execution_root_closure_receipt");

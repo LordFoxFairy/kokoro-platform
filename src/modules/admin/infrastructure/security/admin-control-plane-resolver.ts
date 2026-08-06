@@ -5,13 +5,13 @@ import {
   type AuthenticatedOperatorCommandContext,
   type AuthenticatedOperatorQueryContext,
   type OperatorScope,
-} from "../../../../interfaces/connect/generated-admin-v2/kokoro/platform/admin/v2/admin_shared_pb.js";
+} from "../../../../generated/proto/kokoro/platform/admin/v2/admin_shared_pb.js";
 import { OperatorAssuranceLevel } from
-  "../../../../interfaces/connect/generated-admin-v2/kokoro/common/v2/command_envelope_pb.js";
+  "../../../../generated/proto/kokoro/common/v2/command_envelope_pb.js";
 import type { VerifiedAuthenticatedAdminAxes } from
-  "../../../../interfaces/connect/generated-admin-v2/command-envelope-digest.js";
+  "../../../../generated/contracts/platform-admin-command@v2/digest.js";
 import type { VerifiedAdminWorkloadAxes } from
-  "../../../../interfaces/connect/generated-admin-identity/command-envelope-digest.js";
+  "../../../../generated/contracts/platform-admin-identity@v1/digest.js";
 import {
   verifyRequestSecurityContext,
   type RequestSecurityContext,
@@ -45,7 +45,6 @@ export interface VerifiedAdminPeer {
 }
 
 export type CommerceAdminCommandOperation =
-  | "commerce.credit-program.publish"
   | "commerce.entitlement-template.publish"
   | "commerce.offer.publish"
   | "commerce.redemption-program.publish"
@@ -56,7 +55,9 @@ export type CommerceAdminCommandOperation =
   | "commerce.code-batch.suspend"
   | "commerce.code-batch.revoke";
 
-export type SiteProvisioningAdminOperation = "site.register" | "site.release.publish";
+export type CreditAdminCommandOperation = "credit.program.publish";
+
+export type SiteProvisioningAdminOperation = "site.register";
 
 export type ModelControlAdminOperation =
   | "model.inventory.import"
@@ -71,6 +72,7 @@ export type ProductCatalogPublicationAdminOperation =
 
 export type SitePublicationAdminOperation =
   | "site.release-candidate.authorize"
+  | "site.release-candidate.revoke"
   | "site.surface-inventory.publish"
   | "site.web-build-material-bundle.publish"
   | "site.web-build-intent.publish"
@@ -405,6 +407,33 @@ export class AdminControlPlaneResolver implements
       axes: axes(authenticated.session),
       context: await this.context(
         authenticated.session, request.operation, request.siteRef, scopeLabels(requested),
+        claimed.command?.commandId ?? "", [request.operation],
+      ),
+    });
+  }
+
+  async resolveCreditCommand(
+    claimed: AuthenticatedOperatorCommandContext,
+    transport: HandlerContext,
+    request: Readonly<{
+      operation: CreditAdminCommandOperation;
+      resourceRefs: readonly string[];
+    }>,
+  ): Promise<Readonly<{
+    context: VerifiedRequestSecurityContext;
+    axes: VerifiedAuthenticatedAdminAxes;
+  }>> {
+    const authenticated = await this.authenticate(claimed, transport);
+    const requested = scopeFromWire(claimed.scope);
+    if (requested.kind === "site") throw new Error("CREDIT_PROGRAM_GLOBAL_OPERATOR_REQUIRED");
+    this.authorizeScope(
+      authenticated, requested, request.operation, request.operation, null,
+      request.resourceRefs, [], true,
+    );
+    return Object.freeze({
+      axes: axes(authenticated.session),
+      context: await this.context(
+        authenticated.session, request.operation, null, scopeLabels(requested),
         claimed.command?.commandId ?? "", [request.operation],
       ),
     });

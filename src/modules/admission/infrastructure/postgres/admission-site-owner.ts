@@ -1,4 +1,4 @@
-import { AdmissionRetryClass } from "../../../../interfaces/connect/generated/kokoro/platform/admission/v1/admission_pb.js";
+import { AdmissionRetryClass } from "../../../../generated/proto/kokoro/platform/admission/v1/admission_pb.js";
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 import type {
   AdmissionOwnerResolution,

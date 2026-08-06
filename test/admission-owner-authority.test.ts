@@ -8,7 +8,7 @@ import {
   PrepareRunEffectSchema,
   ReconcileRunAuthorizationEffectSchema,
   ReleaseRunAuthorizationEffectSchema,
-} from "../src/interfaces/connect/generated/kokoro/platform/admission/v1/admission_pb.js";
+} from "../src/generated/proto/kokoro/platform/admission/v1/admission_pb.js";
 import {
   PlatformAdmissionOwnerAuthority,
   type PlatformAdmissionOwnerPorts,
@@ -142,8 +142,13 @@ function ports(events: string[] = []): PlatformAdmissionOwnerPorts {
       return {
         kind: "resolved" as const,
         value: {
-          provider: "anthropic",
-          name: "claude-sonnet",
+          provider: "direct",
+          name: "chat-primary",
+          route: {
+            adapterKind: "direct" as const,
+            gatewayModel: "chat-primary",
+            providerModel: "claude-sonnet",
+          },
           effort: "medium",
           modelLabel: "Claude Sonnet",
         },
@@ -340,8 +345,8 @@ describe("Platform Admission owner authority", () => {
         agent_catalog_ref: `agent-catalog:sha256:${"a".repeat(64)}`,
         agent_type: "general",
         model: {
-          provider: "anthropic",
-          name: "claude-sonnet",
+          provider: "direct",
+          name: "chat-primary",
           effort: "medium",
           authorization_handle: expect.stringMatching(/^model-authorization:sha256:[0-9a-f]{64}$/u),
         },
@@ -371,6 +376,11 @@ describe("Platform Admission owner authority", () => {
         authorizationSegmentRef?: string;
         segmentVersion?: bigint;
         expiresAt?: string;
+        modelRoute?: {
+          adapterKind: string;
+          gatewayModel: string;
+          providerModel: string;
+        };
       }>
       | undefined;
     expect(budgetInput?.manifestRef).toBe(`execution-manifest:sha256:${budgetInput?.manifestDigest}`);
@@ -380,11 +390,58 @@ describe("Platform Admission owner authority", () => {
       authorizationSegmentRef: "segment-1",
       segmentVersion: 1n,
       expiresAt: "2026-07-29T12:04:00.000Z",
+      modelRoute: {
+        adapterKind: "direct",
+        gatewayModel: "chat-primary",
+        providerModel: "claude-sonnet",
+      },
     });
     expect(events).toEqual([
       "session", "tx.begin", "site", "session-grant", "runtime-policy", "model", "capability",
       "assets", "execution-binding", "budget.reserve", "lifecycle.prepare", "tx.end",
     ]);
+  });
+
+  it("includes the private provider model in the manifest digest without exposing it to Agent", async () => {
+    const firstPorts = ports();
+    const secondPorts = ports();
+    vi.mocked(secondPorts.model.resolve).mockResolvedValue({
+      kind: "resolved",
+      value: {
+        provider: "direct",
+        name: "chat-primary",
+        route: {
+          adapterKind: "direct",
+          gatewayModel: "chat-primary",
+          providerModel: "claude-sonnet-next",
+        },
+        effort: "medium",
+        modelLabel: "Claude Sonnet",
+      },
+    });
+    const first = await new PlatformAdmissionOwnerAuthority({ ports: firstPorts,
+      mediaProjectionRecoveryKey, clock: () => now }).prepareRun({
+      caller, siteId: "site-1", commandId: "command-1",
+      requestDigest: "d".repeat(64), effect: prepareEffect(),
+    });
+    const second = await new PlatformAdmissionOwnerAuthority({ ports: secondPorts,
+      mediaProjectionRecoveryKey, clock: () => now }).prepareRun({
+      caller, siteId: "site-1", commandId: "command-1",
+      requestDigest: "d".repeat(64), effect: prepareEffect(),
+    });
+    if (first.kind !== "accepted" || second.kind !== "accepted") {
+      throw new Error("unexpected decision");
+    }
+
+    expect(first.ownerFacts).toEqual(second.ownerFacts);
+    expect(JSON.stringify(first.ownerFacts)).not.toMatch(/claude-sonnet/u);
+    expect(first.prepared.manifestDigest).not.toBe(second.prepared.manifestDigest);
+    expect(vi.mocked(secondPorts.lifecycle.prepare).mock.calls[0]?.[1].modelRoute)
+      .toEqual({
+        adapterKind: "direct",
+        gatewayModel: "chat-primary",
+        providerModel: "claude-sonnet-next",
+      });
   });
 
   it("issues Session projection outside local transactions and seals both opaque Media handles into runtime", async () => {

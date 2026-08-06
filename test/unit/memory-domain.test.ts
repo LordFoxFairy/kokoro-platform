@@ -260,6 +260,8 @@ describe("Memory M0 owner aggregates", () => {
       category: "preference",
       featurePolicyRevisionRef: space.featurePolicyRevisionRef,
       actorAuthorization: userActorAuthorization,
+      validFrom: null,
+      validTo: null,
       recordedAt: "2026-07-30T12:10:00.000Z",
     });
     expect(remembered.entry).toMatchObject({ entryRef: "memory-entry-1", version: 1n,
@@ -280,6 +282,8 @@ describe("Memory M0 owner aggregates", () => {
       protectedContent: protectedContent([4, 5, 6]),
       featurePolicyRevisionRef: space.featurePolicyRevisionRef,
       actorAuthorization: userActorAuthorization,
+      validFrom: null,
+      validTo: null,
       recordedAt: "2026-07-30T12:11:00.000Z",
     });
     expect(corrected.entry).toMatchObject({ entryRef: remembered.entry.entryRef,
@@ -299,6 +303,8 @@ describe("Memory M0 owner aggregates", () => {
       sourceDigest: "d".repeat(64), protectedContent: protectedContent(), category: "fact",
       featurePolicyRevisionRef: usePaused.featurePolicyRevisionRef,
       actorAuthorization: userActorAuthorization,
+      validFrom: null,
+      validTo: null,
       recordedAt: "2026-07-30T12:02:00.000Z",
     });
     expect(remembered.entry.revocationEpoch).toBe(usePaused.revocationEpoch);
@@ -311,6 +317,8 @@ describe("Memory M0 owner aggregates", () => {
       sourceDigest: "e".repeat(64), protectedContent: protectedContent(), category: "fact",
       featurePolicyRevisionRef: learningPaused.featurePolicyRevisionRef,
       actorAuthorization: userActorAuthorization,
+      validFrom: null,
+      validTo: null,
       recordedAt: "2026-07-30T12:02:00.000Z",
     });
     expect(explicitlyRemembered.entry).toMatchObject({ learningGeneration: 2n, state: "active" });
@@ -323,6 +331,8 @@ describe("Memory M0 owner aggregates", () => {
       protectedContent: protectedContent([4, 5, 6]),
       featurePolicyRevisionRef: learningPaused.featurePolicyRevisionRef,
       actorAuthorization: userActorAuthorization,
+      validFrom: null,
+      validTo: null,
       recordedAt: "2026-07-30T12:03:00.000Z",
     });
     expect(corrected.revision).toMatchObject({ reason: "corrected", revision: 2n });
@@ -336,6 +346,8 @@ describe("Memory M0 owner aggregates", () => {
       sourceDigest: "b".repeat(64), protectedContent: protectedContent(), category: "fact",
       featurePolicyRevisionRef: space.featurePolicyRevisionRef,
       actorAuthorization: userActorAuthorization,
+      validFrom: null,
+      validTo: null,
       recordedAt: "2026-07-30T12:10:00.000Z",
     });
     const forgotten = forgetMemoryEntry({ space, entry: remembered.entry,
@@ -351,6 +363,8 @@ describe("Memory M0 owner aggregates", () => {
       sourceCommandRef: "memory-command-2", sourceDigest: "c".repeat(64),
       protectedContent: protectedContent([4]), featurePolicyRevisionRef: space.featurePolicyRevisionRef,
       actorAuthorization: userActorAuthorization,
+      validFrom: null,
+      validTo: null,
       recordedAt: "2026-07-30T12:13:00.000Z",
     })).toThrowError(expect.objectContaining({ code: "MEMORY_ENTRY_STATE_CONFLICT" }));
   });
@@ -363,6 +377,8 @@ describe("Memory M0 owner aggregates", () => {
       sourceDigest: "7".repeat(64), protectedContent: protectedContent(), category: "fact",
       featurePolicyRevisionRef: space.featurePolicyRevisionRef,
       actorAuthorization: userActorAuthorization,
+      validFrom: null,
+      validTo: null,
       recordedAt: "2026-07-30T12:01:00.000Z",
     });
     const reset = resetMemorySpace({ space, expectedVersion: space.version,
@@ -375,6 +391,8 @@ describe("Memory M0 owner aggregates", () => {
       sourceCommandRef: "memory-command-stale-2", sourceDigest: "8".repeat(64),
       protectedContent: protectedContent([4]), featurePolicyRevisionRef: reset.featurePolicyRevisionRef,
       actorAuthorization: userActorAuthorization,
+      validFrom: null,
+      validTo: null,
       recordedAt: "2026-07-30T12:03:00.000Z",
     })).toThrowError(expect.objectContaining({ code: "MEMORY_ENTRY_FENCE_CONFLICT" }));
     expect(() => forgetMemoryEntry({ space: reset, entry: remembered.entry,

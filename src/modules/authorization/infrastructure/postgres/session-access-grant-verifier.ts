@@ -32,14 +32,14 @@ export class PostgresSessionAccessGrantVerifier implements SessionAccessGrantVer
     const audience = SESSION_ACCESS_AUDIENCES[input.purpose];
     if (audience === undefined) return null;
     const rows = await resolvePlatformTransaction(transaction).query<GrantAuthorityRow>(
-      `SELECT grant.site_ref AS "siteId",binding.release_ref AS "siteReleaseRef",
-              grant.project_ref AS "projectRef",grant.subject_ref AS "subjectRef",
-              grant.subject_generation AS "subjectGeneration",
-              grant.identity_session_ref AS "identitySessionRef",grant.resource
-         FROM platform.authorization_session_access_grant AS grant
+      `SELECT access_grant.site_ref AS "siteId",binding.release_ref AS "siteReleaseRef",
+              access_grant.project_ref AS "projectRef",access_grant.subject_ref AS "subjectRef",
+              access_grant.subject_generation AS "subjectGeneration",
+              access_grant.identity_session_ref AS "identitySessionRef",access_grant.resource
+         FROM platform.authorization_session_access_grant AS access_grant
          JOIN platform.authorization_product_binding AS binding
-           ON binding.binding_ref=grant.binding_ref
-          AND binding.site_ref=grant.site_ref
+           ON binding.binding_ref=access_grant.binding_ref
+          AND binding.site_ref=access_grant.site_ref
           AND binding.state='active'
           AND binding.environment=$5
           AND binding.region=$6
@@ -48,42 +48,41 @@ export class PostgresSessionAccessGrantVerifier implements SessionAccessGrantVer
           AND release.site_ref=binding.site_ref
           AND release.state='active'
          JOIN platform.authorization_site AS site
-           ON site.site_ref=grant.site_ref
+           ON site.site_ref=access_grant.site_ref
           AND site.state='active'
-          AND site.security_epoch=grant.site_security_epoch
-          AND site.policy_epoch=grant.policy_epoch
-          AND site.revocation_epoch=grant.revocation_epoch
+          AND site.security_epoch=access_grant.site_security_epoch
+          AND site.policy_epoch=access_grant.policy_epoch
+          AND site.revocation_epoch=access_grant.revocation_epoch
          JOIN platform.authorization_subject AS subject
-           ON subject.subject_ref=grant.subject_ref
-          AND subject.site_ref=grant.site_ref
+           ON subject.subject_ref=access_grant.subject_ref
+          AND subject.site_ref=access_grant.site_ref
           AND subject.state='active'
-          AND subject.subject_generation=grant.subject_generation
-          AND subject.restriction_epoch=grant.restriction_epoch
+          AND subject.subject_generation=access_grant.subject_generation
+          AND subject.restriction_epoch=access_grant.restriction_epoch
          JOIN platform.authorization_identity_session AS identity_session
-           ON identity_session.session_ref=grant.identity_session_ref
-          AND identity_session.subject_ref=grant.subject_ref
-          AND identity_session.site_ref=grant.site_ref
+           ON identity_session.session_ref=access_grant.identity_session_ref
+          AND identity_session.subject_ref=access_grant.subject_ref
+          AND identity_session.site_ref=access_grant.site_ref
           AND identity_session.state='active'
-          AND identity_session.session_epoch=grant.identity_session_epoch
-          AND identity_session.credential_epoch=grant.credential_epoch
+          AND identity_session.session_epoch=access_grant.identity_session_epoch
+          AND identity_session.credential_epoch=access_grant.credential_epoch
           AND identity_session.expires_at>statement_timestamp()
          JOIN platform.authorization_project AS project
-           ON project.project_ref=grant.project_ref
-          AND project.site_ref=grant.site_ref
+           ON project.project_ref=access_grant.project_ref
+          AND project.site_ref=access_grant.site_ref
           AND project.state='active'
          JOIN platform.authorization_project_membership AS membership
-           ON membership.project_ref=grant.project_ref
-          AND membership.subject_ref=grant.subject_ref
+           ON membership.project_ref=access_grant.project_ref
+          AND membership.subject_ref=access_grant.subject_ref
           AND membership.state='active'
-          AND membership.membership_epoch=grant.membership_epoch
-          AND membership.authorization_epoch=grant.authorization_epoch
-        WHERE grant.credential_digest=$1 AND grant.site_ref=$2
-          AND grant.purpose=$3 AND grant.audience=$4
-          AND grant.delivery_state='delivered'
-          AND grant.not_before<=statement_timestamp()
-          AND grant.expires_at>statement_timestamp()
-        LIMIT 2
-        FOR SHARE OF grant,binding,release,site,subject,identity_session,project,membership`,
+          AND membership.membership_epoch=access_grant.membership_epoch
+          AND membership.authorization_epoch=access_grant.authorization_epoch
+        WHERE access_grant.credential_digest=$1 AND access_grant.site_ref=$2
+          AND access_grant.purpose=$3 AND access_grant.audience=$4
+          AND access_grant.delivery_state='delivered'
+          AND access_grant.not_before<=statement_timestamp()
+          AND access_grant.expires_at>statement_timestamp()
+        LIMIT 2`,
       [signedCredentialDigest(input.credential), input.siteId, input.purpose, audience,
         input.environment, input.region],
     );

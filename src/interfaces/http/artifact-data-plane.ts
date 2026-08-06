@@ -2,8 +2,8 @@ import { once } from "node:events";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ProductWorkloadIdentity } from
   "../../modules/authorization/domain/session-access-grant.js";
-import type { ErrorCode, ErrorResponse } from "./generated/platform-public/types.gen.js";
-import { zErrorResponse } from "./generated/platform-public/zod.gen.js";
+import type { ErrorCode, ErrorResponse } from "../../generated/contracts/openapi/platform-public/types.gen.js";
+import { zErrorResponse } from "../../generated/contracts/openapi/platform-public/zod.gen.js";
 import type { ArtifactDeliveryWorkloadBinding } from
   "../../modules/artifact/application/contracts.js";
 import { ArtifactDeliveryRangeError } from

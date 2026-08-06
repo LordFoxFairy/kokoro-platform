@@ -8,11 +8,11 @@ import {
   CommandReceiptStateV2,
   CommandReceiptV2Schema,
   OperatorAssuranceLevel,
-} from "../../../../interfaces/connect/generated-admin-identity/kokoro/common/v2/command_envelope_pb.js";
+} from "../../../../generated/proto/kokoro/common/v2/command_envelope_pb.js";
 import {
   AdminIdentityService as AdminIdentityServiceDescriptor,
   AdminSessionDeliverySchema,
-} from "../../../../interfaces/connect/generated-admin-identity/kokoro/platform/identity/v1/admin_identity_pb.js";
+} from "../../../../generated/proto/kokoro/platform/identity/v1/admin_identity_pb.js";
 import {
   beginOperatorLoginRequestDigest,
   beginStepUpRequestDigest,
@@ -21,7 +21,7 @@ import {
   signOutRequestDigest,
   type VerifiedAdminWorkloadAxes,
   type VerifiedAuthenticatedAdminAxes,
-} from "../../../../interfaces/connect/generated-admin-identity/command-envelope-digest.js";
+} from "../../../../generated/contracts/platform-admin-identity@v1/digest.js";
 import type { AdminOidcReceipt, AdminOidcService } from
   "../../application/services/admin-oidc-service.js";
 import type { VerifiedRequestSecurityContext } from

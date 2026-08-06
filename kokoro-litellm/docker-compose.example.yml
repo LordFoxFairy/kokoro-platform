@@ -8,12 +8,15 @@ services:
       - "${LITELLM_PORT:-4000}:4000"
     volumes:
       - ./config/litellm.config.example.yaml:/app/config.yaml:ro
+      - ${LITELLM_TLS_DIR:-./secrets}:/run/secrets/kokoro:ro
     command:
       - "--config=/app/config.yaml"
+      - "--ssl_keyfile_path=/run/secrets/kokoro/server.key"
+      - "--ssl_certfile_path=/run/secrets/kokoro/server.crt"
     healthcheck:
       test:
         - CMD-SHELL
-        - curl -fsS "$${LITELLM_HEALTH_URL:-http://127.0.0.1:4000/health/liveliness}" >/dev/null
+        - curl --cacert "$${LITELLM_CA_CERT_FILE:-/run/secrets/kokoro/ca.crt}" -fsS "$${LITELLM_HEALTH_URL:-https://litellm:4000/health/liveliness}" >/dev/null
       interval: 10s
       timeout: 5s
       retries: 5

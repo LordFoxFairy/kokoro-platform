@@ -25,7 +25,7 @@ import {
   RecoverImageEffectByCommandResponseSchema,
   RequestCancelImageEffectResponseSchema,
   RequestCancelImageEffectEffectSchema,
-} from "../../../../interfaces/connect/generated-model-image-effect/kokoro/platform/model/image/v1/image_effect_pb.js";
+} from "../../../../generated/proto/kokoro/platform/model/image/v1/image_effect_pb.js";
 import type {
   CreateImageEffectCommand,
   ImageEffectAccessAuthorization,
@@ -50,7 +50,7 @@ import {
   issueImageEffectOutputAccessRequestDigest,
   requestCancelImageEffectRequestDigest,
   type VerifiedModelImageEffectCommandAxes,
-} from "../../../../interfaces/connect/generated-model-image-effect/command-envelope-digest.js";
+} from "../../../../generated/contracts/model-image-effect@v1/digest.js";
 
 export type ImageEffectConnectService = ServiceImpl<typeof ImageEffectV1Service>;
 

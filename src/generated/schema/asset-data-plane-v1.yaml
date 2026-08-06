@@ -1,0 +1,600 @@
+openapi: 3.1.0
+info:
+  title: Kokoro Asset Upload Data Plane API
+  version: 1.0.0
+  description: >-
+    Browser-facing, capability-authorized multipart upload protocol. The bearer capability is
+    opaque and short lived. No response exposes an object-store URL, bucket, key, upload id,
+    provider etag, provider version, or provider credential.
+servers:
+  - url: https://upload.invalid
+security:
+  - AssetUploadCapability: []
+paths:
+  /v1/multipart-uploads:
+    options:
+      operationId: preflightInitiateAssetMultipartUpload
+      security: []
+      parameters: &preflightParameters
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/AccessControlRequestMethod'
+        - $ref: '#/components/parameters/AccessControlRequestHeaders'
+      responses:
+        '204':
+          $ref: '#/components/responses/PostPreflightResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    post:
+      operationId: initiateAssetMultipartUpload
+      description: >-
+        Creates or recovers the one multipart upload bound to the capability's current upload
+        session and epoch. Repeating the same idempotency key returns the same opaque uploadRef.
+      parameters:
+        - $ref: '#/components/parameters/ContractVersion'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InitiateMultipartUploadInput'
+      responses:
+        '200':
+          $ref: '#/components/responses/MultipartUploadStateResponse'
+        '201':
+          $ref: '#/components/responses/MultipartUploadStateResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /v1/multipart-uploads/{uploadRef}/parts/{partNumber}:
+    options:
+      operationId: preflightPutAssetMultipartPart
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/UploadRef'
+        - $ref: '#/components/parameters/PartNumber'
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/AccessControlRequestMethod'
+        - $ref: '#/components/parameters/AccessControlRequestHeaders'
+      responses:
+        '204':
+          $ref: '#/components/responses/PutPreflightResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    put:
+      operationId: putAssetMultipartPart
+      description: >-
+        Streams one exact part to the provider. Content length and SHA-256 are verified before a
+        provider-neutral opaque part receipt is committed. A retry with the same bytes is
+        idempotent; different bytes for an existing part number are rejected.
+      parameters:
+        - $ref: '#/components/parameters/UploadRef'
+        - $ref: '#/components/parameters/PartNumber'
+        - $ref: '#/components/parameters/ContractVersion'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/ContentLength'
+        - $ref: '#/components/parameters/ContentSha256'
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          $ref: '#/components/responses/MultipartPartResponse'
+        '201':
+          $ref: '#/components/responses/MultipartPartResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /v1/multipart-uploads/{uploadRef}:complete:
+    options:
+      operationId: preflightCompleteAssetMultipartUpload
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/UploadRef'
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/AccessControlRequestMethod'
+        - $ref: '#/components/parameters/AccessControlRequestHeaders'
+      responses:
+        '204':
+          $ref: '#/components/responses/PostPreflightResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    post:
+      operationId: completeAssetMultipartUpload
+      description: >-
+        Commits exactly the ordered provider-neutral part receipts. The data plane rechecks the
+        current capability epoch, total size, and flat whole-object SHA-256 before reporting
+        uploaded. The SHA-256 is proven by streaming the completed quarantine object; a multipart
+        ETag or a composite part checksum is never accepted as that proof. This does not make the
+        object an Asset; Platform owner completion and scanning still follow. A deterministic
+        whole-object size or SHA-256 mismatch is durably terminal as integrity_rejected and is
+        never promoted or retried. Only transport ambiguity may become outcome_unknown.
+      parameters:
+        - $ref: '#/components/parameters/UploadRef'
+        - $ref: '#/components/parameters/ContractVersion'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteMultipartUploadInput'
+      responses:
+        '200':
+          $ref: '#/components/responses/MultipartUploadStateResponse'
+        '202':
+          $ref: '#/components/responses/MultipartUploadStateResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /v1/multipart-uploads/{uploadRef}:abort:
+    options:
+      operationId: preflightAbortAssetMultipartUpload
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/UploadRef'
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/AccessControlRequestMethod'
+        - $ref: '#/components/parameters/AccessControlRequestHeaders'
+      responses:
+        '204':
+          $ref: '#/components/responses/PostPreflightResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    post:
+      operationId: abortAssetMultipartUpload
+      description: >-
+        Aborts the exact multipart upload. Missing provider state and a previously completed abort
+        are successful idempotent outcomes; an already uploaded object cannot be aborted.
+      parameters:
+        - $ref: '#/components/parameters/UploadRef'
+        - $ref: '#/components/parameters/ContractVersion'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AbortMultipartUploadInput'
+      responses:
+        '200':
+          $ref: '#/components/responses/MultipartUploadStateResponse'
+        '202':
+          $ref: '#/components/responses/MultipartUploadStateResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /v1/multipart-uploads/{uploadRef}:
+    options:
+      operationId: preflightGetAssetMultipartUploadStatus
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/UploadRef'
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/AccessControlRequestMethod'
+        - $ref: '#/components/parameters/AccessControlRequestHeaders'
+      responses:
+        '204':
+          $ref: '#/components/responses/GetPreflightResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+    get:
+      operationId: getAssetMultipartUploadStatus
+      description: >-
+        Returns only resumable protocol state and provider-neutral part receipts. Every read
+        revalidates the capability and the Platform upload session's current binding epoch.
+      parameters:
+        - $ref: '#/components/parameters/UploadRef'
+        - $ref: '#/components/parameters/ContractVersion'
+      responses:
+        '200':
+          $ref: '#/components/responses/MultipartUploadStateResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+components:
+  securitySchemes:
+    AssetUploadCapability:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-asset-upload-v1
+      description: Short-lived opaque credential issued by Platform for one upload session epoch.
+  parameters:
+    ContractVersion:
+      name: Kokoro-Contract-Version
+      in: header
+      required: true
+      schema:
+        type: string
+        const: '1'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 191
+    UploadRef:
+      name: uploadRef
+      in: path
+      required: true
+      schema: &opaqueRef
+        type: string
+        minLength: 16
+        maxLength: 128
+        pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$'
+    PartNumber:
+      name: partNumber
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 10000
+    ContentLength:
+      name: X-Kokoro-Content-Length
+      in: header
+      required: true
+      schema:
+        $ref: '#/components/schemas/PositiveUint64String'
+      description: >-
+        Browser-declared byte length. It must be within the dynamic part bounds carried by the
+        capability and equal the exact number of bytes observed while streaming; callers do not
+        attempt to set the browser-forbidden HTTP Content-Length header.
+    ContentSha256:
+      name: X-Kokoro-Content-Sha256
+      in: header
+      required: true
+      schema: &sha256
+        type: string
+        pattern: '^[0-9a-f]{64}$'
+    Origin:
+      name: Origin
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uri
+        pattern: '^https://(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::[1-9][0-9]{0,4})?$'
+        maxLength: 512
+      description: >-
+        Authenticated requests must exactly match an HTTPS origin sealed into the upload
+        capability. Preflights must exactly match a bounded origin in current Site policy.
+    AccessControlRequestMethod:
+      name: Access-Control-Request-Method
+      in: header
+      required: true
+      schema:
+        type: string
+        enum: [GET, POST, PUT]
+    AccessControlRequestHeaders:
+      name: Access-Control-Request-Headers
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+  schemas:
+    PositiveUint64String:
+      type: string
+      description: Canonical positive unsigned 64-bit integer encoded as decimal text.
+      minLength: 1
+      maxLength: 20
+      pattern: '^[1-9][0-9]{0,19}$'
+      x-kokoro-maximum: '18446744073709551615'
+    ClientUploadId:
+      type: string
+      minLength: 16
+      maxLength: 128
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$'
+    InitiateMultipartUploadInput:
+      type: object
+      additionalProperties: false
+      properties:
+        clientUploadId:
+          $ref: '#/components/schemas/ClientUploadId'
+        protocolRevision:
+          type: string
+          const: s3-multipart-v1
+      required: [clientUploadId, protocolRevision]
+    AbortMultipartUploadInput:
+      type: object
+      additionalProperties: false
+      properties:
+        expectedVersion:
+          $ref: '#/components/schemas/PositiveUint64String'
+      required: [expectedVersion]
+    MultipartPartCommit:
+      type: object
+      additionalProperties: false
+      properties:
+        partNumber:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        partReceipt: *opaqueRef
+      required: [partNumber, partReceipt]
+    CompleteMultipartUploadInput:
+      type: object
+      additionalProperties: false
+      properties:
+        expectedVersion:
+          $ref: '#/components/schemas/PositiveUint64String'
+        expectedSize:
+          $ref: '#/components/schemas/PositiveUint64String'
+        expectedChecksumSha256: *sha256
+        parts:
+          type: array
+          minItems: 1
+          maxItems: 10000
+          items:
+            $ref: '#/components/schemas/MultipartPartCommit'
+      required: [expectedVersion, expectedSize, expectedChecksumSha256, parts]
+    MultipartCommandReceipt:
+      type: object
+      additionalProperties: false
+      description: >-
+        Provider-neutral durable receipt; it never contains a provider upload id or etag.
+        integrity_rejected is a stable terminal completion result, while outcome_unknown is
+        reserved for an effect whose transport result cannot yet be observed.
+      properties:
+        receiptRef: *opaqueRef
+        operation:
+          type: string
+          enum: [initiate, put_part, complete, abort]
+        state:
+          type: string
+          enum: [succeeded, integrity_rejected, outcome_unknown]
+        receivedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required: [receiptRef, operation, state, receivedAt, updatedAt]
+    MultipartPart:
+      type: object
+      additionalProperties: false
+      properties:
+        partNumber:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        partReceipt: *opaqueRef
+        size:
+          $ref: '#/components/schemas/PositiveUint64String'
+        checksumSha256: *sha256
+      required: [partNumber, partReceipt, size, checksumSha256]
+    MultipartUploadState:
+      type: object
+      additionalProperties: false
+      properties:
+        uploadRef: *opaqueRef
+        protocolRevision:
+          type: string
+          const: s3-multipart-v1
+        state:
+          type: string
+          enum:
+            - initiating
+            - uploading
+            - completing
+            - uploaded
+            - aborting
+            - aborted
+            - integrity_rejected
+            - outcome_unknown
+        expectedVersion:
+          $ref: '#/components/schemas/PositiveUint64String'
+        expectedSize:
+          $ref: '#/components/schemas/PositiveUint64String'
+        partSize:
+          $ref: '#/components/schemas/PositiveUint64String'
+        expiresAt:
+          type: string
+          format: date-time
+        retryClass:
+          type: string
+          enum: [never, immediate, after_delay, after_user_action]
+        retryAfter:
+          type: [string, 'null']
+          format: date-time
+        safeReasonCode:
+          type: [string, 'null']
+          enum: [UPLOAD_PART_INVALID, null]
+        parts:
+          type: array
+          maxItems: 10000
+          items:
+            $ref: '#/components/schemas/MultipartPart'
+      required:
+        - uploadRef
+        - protocolRevision
+        - state
+        - expectedVersion
+        - expectedSize
+        - partSize
+        - expiresAt
+        - retryClass
+        - retryAfter
+        - safeReasonCode
+        - parts
+    MultipartPartResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        receipt:
+          $ref: '#/components/schemas/MultipartCommandReceipt'
+        part:
+          $ref: '#/components/schemas/MultipartPart'
+        upload:
+          $ref: '#/components/schemas/MultipartUploadState'
+      required: [receipt, part, upload]
+    MultipartUploadStateResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        receipt:
+          oneOf:
+            - $ref: '#/components/schemas/MultipartCommandReceipt'
+            - type: 'null'
+        upload:
+          $ref: '#/components/schemas/MultipartUploadState'
+      required: [receipt, upload]
+    ErrorCode:
+      type: string
+      enum:
+        - UPLOAD_CAPABILITY_REJECTED
+        - UPLOAD_NOT_ACCEPTED
+        - UPLOAD_STATE_CONFLICT
+        - UPLOAD_PART_CONFLICT
+        - UPLOAD_PART_INVALID
+        - UPLOAD_SIZE_EXCEEDED
+        - UPLOAD_TEMPORARILY_UNAVAILABLE
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        retryClass:
+          type: string
+          enum: [never, immediate, after_delay, after_user_action]
+        retryAfter:
+          type: [string, 'null']
+          format: date-time
+        requestId:
+          type: string
+          format: uuid
+        safeMessage:
+          type: string
+          minLength: 1
+          maxLength: 256
+      required: [code, retryClass, retryAfter, requestId, safeMessage]
+  responses:
+    MultipartPartResponse:
+      description: One provider-neutral committed part receipt.
+      headers: &noStoreCorsHeaders
+        Cache-Control:
+          required: true
+          schema:
+            type: string
+            const: no-store
+        Access-Control-Allow-Origin:
+          required: true
+          schema:
+            type: string
+            format: uri
+            pattern: '^https://(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::[1-9][0-9]{0,4})?$'
+            maxLength: 512
+        Vary:
+          required: true
+          schema:
+            type: string
+            const: Origin
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MultipartPartResponse'
+    MultipartUploadStateResponse:
+      description: Current resumable upload state without provider storage facts.
+      headers: *noStoreCorsHeaders
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MultipartUploadStateResponse'
+    ErrorResponse:
+      description: >-
+        Existence-safe upload error. Access-Control-Allow-Origin is emitted only after exact
+        origin admission; a rejected origin is never reflected.
+      headers:
+        Cache-Control:
+          required: true
+          schema:
+            type: string
+            const: no-store
+        Access-Control-Allow-Origin:
+          required: false
+          schema:
+            type: string
+            format: uri
+            pattern: '^https://(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::[1-9][0-9]{0,4})?$'
+            maxLength: 512
+        Vary:
+          required: true
+          schema:
+            type: string
+            const: Origin
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    PostPreflightResponse:
+      description: Exact-origin preflight for a capability-authorized POST.
+      headers: &postPreflightHeaders
+        Access-Control-Allow-Origin:
+          required: true
+          schema:
+            type: string
+            format: uri
+            pattern: '^https://(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::[1-9][0-9]{0,4})?$'
+            maxLength: 512
+        Access-Control-Allow-Methods:
+          required: true
+          schema:
+            type: string
+            const: POST, OPTIONS
+        Access-Control-Allow-Headers:
+          required: true
+          schema:
+            type: string
+            const: authorization, content-type, idempotency-key, kokoro-contract-version
+        Access-Control-Max-Age:
+          required: true
+          schema:
+            type: integer
+            const: 300
+        Vary:
+          required: true
+          schema:
+            type: string
+            const: Origin
+    PutPreflightResponse:
+      description: Exact-origin preflight for streaming a capability-authorized part.
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: '#/components/responses/PostPreflightResponse/headers/Access-Control-Allow-Origin'
+        Access-Control-Allow-Methods:
+          required: true
+          schema:
+            type: string
+            const: PUT, OPTIONS
+        Access-Control-Allow-Headers:
+          required: true
+          schema:
+            type: string
+            const: authorization, content-type, idempotency-key, kokoro-contract-version, x-kokoro-content-length, x-kokoro-content-sha256
+        Access-Control-Max-Age:
+          $ref: '#/components/responses/PostPreflightResponse/headers/Access-Control-Max-Age'
+        Vary:
+          $ref: '#/components/responses/PostPreflightResponse/headers/Vary'
+    GetPreflightResponse:
+      description: Exact-origin preflight for a capability-authorized status read.
+      headers:
+        Access-Control-Allow-Origin:
+          $ref: '#/components/responses/PostPreflightResponse/headers/Access-Control-Allow-Origin'
+        Access-Control-Allow-Methods:
+          required: true
+          schema:
+            type: string
+            const: GET, OPTIONS
+        Access-Control-Allow-Headers:
+          required: true
+          schema:
+            type: string
+            const: authorization, kokoro-contract-version
+        Access-Control-Max-Age:
+          $ref: '#/components/responses/PostPreflightResponse/headers/Access-Control-Max-Age'
+        Vary:
+          $ref: '#/components/responses/PostPreflightResponse/headers/Vary'

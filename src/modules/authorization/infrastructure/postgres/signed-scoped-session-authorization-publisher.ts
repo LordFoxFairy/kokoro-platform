@@ -27,7 +27,7 @@ import {
   ProjectMembershipCurrentSchema,
   SiteCurrentSchema,
   SubjectCurrentSchema,
-} from "../../../../interfaces/connect/generated-authorization-v2/kokoro/platform/authorization/v2/scoped_session_authorization_pb.js";
+} from "../../../../generated/proto/kokoro/platform/authorization/v2/scoped_session_authorization_pb.js";
 import { PostgresScopedAuthorizationFeedRepository } from "./scoped-authorization-feed-repository.js";
 
 const MAX_POSTGRES_BIGINT = 9_223_372_036_854_775_807n;
@@ -173,7 +173,10 @@ export class SignedScopedSessionAuthorizationPublisher implements
     const binding = input.claims.binding;
     assertReference(input.correlationId, 256);
     if (!/^[0-9a-f]{64}$/u.test(input.claimsDigest)) throw new Error("SCOPED_AUTHORIZATION_DIGEST_INVALID");
-    const reservation = await this.repository.reserveGrantDelivery(transaction, binding.siteRef);
+    const reservation = input.reservation;
+    if (binding.authorizationStreamSequence !== reservation.streamSequence.toString()) {
+      throw new Error("SCOPED_AUTHORIZATION_RESERVATION_INVALID");
+    }
     const changedAt = instant(input.changedAt);
     const payload = this.basePayload(reservation, { siteRef: binding.siteRef, updatedAt: changedAt }, {
       case: "grantDelivered" as const,
@@ -199,6 +202,14 @@ export class SignedScopedSessionAuthorizationPublisher implements
     await this.append(transaction, { reservation, current: { siteRef: binding.siteRef, updatedAt: changedAt },
       correlationId: input.correlationId }, payload, (event) =>
       this.repository.appendGrantDelivered(transaction, event));
+  }
+
+  async reserveGrantDelivery(
+    transaction: Parameters<import("../../application/contracts/session-authorization-ports.js").SessionGrantDeliveryPublisher["reserveGrantDelivery"]>[0],
+    input: Parameters<import("../../application/contracts/session-authorization-ports.js").SessionGrantDeliveryPublisher["reserveGrantDelivery"]>[1],
+  ) {
+    assertReference(input.siteRef, 128);
+    return this.repository.reserveGrantDelivery(transaction, input.siteRef);
   }
 
   private basePayload(

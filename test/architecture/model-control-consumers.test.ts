@@ -86,6 +86,39 @@ describe("ModelControl consumer boundary", () => {
     expect(migration).toContain("item->'requiredCapabilities' ? (product_name||'.generate')");
   });
 
+  it("repairs PL/pgSQL JSON identifier ordering without changing the function contract", async () => {
+    const migration = await readFile(
+      resolve(
+        "prisma/migrations/20260819_model_json_identifier_array_ambiguity_fix/migration.sql",
+      ),
+      "utf8",
+    );
+    expect(migration).toContain(
+      'ordered.previous COLLATE "C" >= ordered.value COLLATE "C"',
+    );
+    expect(migration).not.toMatch(
+      /WHERE previous IS NOT NULL AND previous COLLATE "C" >= value COLLATE "C"/u,
+    );
+  });
+
+  it("repairs the Model catalog publication loop variable without weakening its owner function", async () => {
+    const migration = await readFile(
+      resolve(
+        "prisma/migrations/20260820_model_option_publication_ambiguity_fix/migration.sql",
+      ),
+      "utf8",
+    );
+    expect(migration).toContain(
+      "CREATE OR REPLACE FUNCTION platform.publish_site_release_model_catalog(",
+    );
+    expect(migration).toContain("option_revision_ref TEXT;");
+    expect(migration).toContain("revision.revision_ref=option_revision_ref");
+    expect(migration).not.toMatch(/^\s+revision_ref TEXT;$/mu);
+    expect(migration).toContain(
+      "LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform",
+    );
+  });
+
   it("exposes runtime ModelControl through safe projections instead of raw catalog reads", async () => {
     const [migration, repository, migrator] = await Promise.all([
       readFile(resolve("prisma/migrations/0003_model_control/migration.sql"), "utf8"),

@@ -33,12 +33,17 @@ describe("image-effect output token authority", () => {
   it("rejects token, routing and recovery-envelope tampering", () => {
     const authority = tokenAuthority();
     const issued = authority.issue(CLAIMS);
-    const last = issued.sourceAccessHandle.at(-1) === "A" ? "B" : "A";
-    expect(() => authority.verify(`${issued.sourceAccessHandle.slice(0, -1)}${last}`)).toThrow();
+    const encodedToken = issued.sourceAccessHandle.slice("kimg1.".length);
+    expect(() => authority.verify(`kimg1.${tamperBase64url(encodedToken)}`)).toThrow();
     expect(() => authority.recover({ ...issued.recoveryEnvelope,
-      authenticationTag: `${issued.recoveryEnvelope.authenticationTag.slice(0, -1)}A` }, CLAIMS)).toThrow();
+      authenticationTag: tamperBase64url(issued.recoveryEnvelope.authenticationTag) }, CLAIMS)).toThrow();
   });
 });
+
+function tamperBase64url(value: string): string {
+  const replacement = value[0] === "A" ? "B" : "A";
+  return `${replacement}${value.slice(1)}`;
+}
 
 function tokenAuthority() {
   return createImageEffectOutputTokenAuthority(createModelGatewayResponseProtector({

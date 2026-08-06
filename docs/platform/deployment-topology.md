@@ -46,6 +46,13 @@ authorization admission and the pending-to-terminal stream audit; the login has 
 the SDK credential chain and integrity/identity fences. Its HTTPS product listener and pod-only HTTP health listener are separate
 so kubelet never receives a Site BFF client key.
 
+`platform-model-gateway` defaults to one Direct OpenAI-compatible HTTPS `/v1` adapter. Compose passes
+`PLATFORM_MODEL_GATEWAY_DIRECT_ENDPOINT` and mounts `PLATFORM_MODEL_GATEWAY_SECRET_DIRECTORY` read-only at
+`/run/secrets/platform-model-gateway`; that directory contains the server TLS identity, client CA, exact inbound peer registry,
+response key ring, and `direct-api-key`. LiteLLM is not part of this default composition. Model Control publishes the exact
+`direct | litellm` adapter, Gateway alias, and provider model; a selected adapter that is not explicitly configured fails before
+provider I/O and is never substituted with another adapter.
+
 ## Docker Compose
 
 `deploy/docker-compose.services.yml` contains only root Platform processes and Hub. It expects
@@ -67,14 +74,17 @@ runtime GID. The reader rejects group/world write, execute, and world access. It
 Kubernetes AtomicWriter symlinks only when every hop stays inside a stable non-symlink trust root,
 then correlates the final path with one `O_NOFOLLOW` descriptor before and after bounded I/O.
 
-`platform-hub-connect` uses Connect 4252 and an unpublished probe-only port 4253. The Compose bind
-directory named by `KOKORO_HUB_CONNECT_SECRETS_DIRECTORY` must contain `server.key`, `server.crt`,
-`client-ca.crt`, `inbound-peers.json`, `catalog-signing.key`, `platform-client.key`,
-`platform-client.crt`, and `platform-ca.crt`; private key files must be mode 0400/0600 or mode 0440
-for a dedicated workload group. `KOKORO_HUB_CONNECT_TRUST_ROOT` must name that exact mounted
-directory; startup permits only a bounded Kubernetes AtomicWriter symlink chain whose final regular
-file remains inside the resolved trust root, and opens the target with `O_NOFOLLOW` plus inode and
-post-read snapshot checks. The storage
+`platform-hub-connect` uses Connect 4252 and an unpublished probe-only port 4253. Compose uses
+three independent read-only secret mounts: `KOKORO_HUB_CONNECT_INBOUND_SECRETS_DIRECTORY` contains
+`server.key`, `server.crt`, `client-ca.crt`, and `inbound-peers.json`;
+`KOKORO_HUB_CAPABILITY_SIGNING_SECRETS_DIRECTORY` contains only `catalog-signing.key`; and
+`KOKORO_HUB_PLATFORM_PROJECTION_SECRETS_DIRECTORY` contains `platform-client.key`,
+`platform-client.crt`, and `platform-ca.crt`. Their container boundaries are respectively
+`KOKORO_HUB_CONNECT_TRUST_ROOT`, `KOKORO_HUB_CAPABILITY_SIGNING_TRUST_ROOT`, and
+`KOKORO_HUB_PLATFORM_PROJECTION_TRUST_ROOT`; no file path may cross those roots. Private key files
+must be mode 0400/0600 or mode 0440 for a dedicated workload group. Startup permits only a bounded
+Kubernetes AtomicWriter symlink chain whose final regular file remains inside its resolved trust
+root, and opens the target with `O_NOFOLLOW` plus inode and post-read snapshot checks. The storage
 YAML named by `KOKORO_WORKSPACE_CONFIG_FILE` must have a production `hub` object-store entry.
 
 ```bash
@@ -90,14 +100,26 @@ docker compose -f deploy/docker-compose.services.yml up -d
 only the Service objects required by the environment. TLS files, peer registries, OIDC clients,
 keyrings, provider credentials, and database URLs belong in managed Secrets.
 
+For `platform-model-gateway`, `platform-model-gateway-secrets` supplies the Direct endpoint and all
+file references by default. The matching file Secret contains `server.key`, `server.crt`,
+`client-ca.crt`, `inbound-peers.json`, `response-key-ring.json`, and `direct-api-key`. An optional
+LiteLLM rollout must add its own endpoint, key file and trusted CA explicitly; it does not replace or
+implicitly fall back to Direct.
+
 For `platform-hub-connect`, create these referenced objects before rollout:
 
 - ConfigMap `platform-hub-connect-runtime`: `KOKORO_HUB_MONGO_DB`, both caller SAN URIs,
   capability signing key ref, Platform projection base URL and server name.
 - Secret `platform-hub-connect-secrets`: Mongo URL, S3 access/secret keys, and Hub secret master key.
-- Secret `platform-hub-connect-files`: the eight files listed for Compose; the volume declares
-  `defaultMode: 0400`. Kubernetes AtomicWriter links are accepted only inside the mount trust root;
-  a dedicated non-root fsGroup may add group-read but never group-write/execute or world access.
+- Secret `platform-hub-connect-inbound-files`: server key/certificate, client CA, and exact inbound
+  peer registry under `KOKORO_HUB_CONNECT_TRUST_ROOT`.
+- Secret `platform-hub-capability-signing-files`: only the catalog signing private key under
+  `KOKORO_HUB_CAPABILITY_SIGNING_TRUST_ROOT`.
+- Secret `platform-hub-platform-projection-files`: outbound projection client key/certificate and
+  Platform Admission CA under `KOKORO_HUB_PLATFORM_PROJECTION_TRUST_ROOT`.
+- All three Secret volumes declare `defaultMode: 0400`. Kubernetes AtomicWriter links are accepted
+  only inside their own mount trust root; a dedicated non-root fsGroup may add group-read but never
+  group-write/execute or world access.
 - ConfigMap `platform-hub-connect-storage`: `storage.yaml` with the Hub package-store declaration.
 
 The Kubernetes Service publishes only 4252. Port 4253 remains pod-local to probes, so health checks

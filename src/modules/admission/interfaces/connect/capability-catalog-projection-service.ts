@@ -10,12 +10,12 @@ import {
   ProjectCatalogResponseSchema,
   SignatureAlgorithm,
   type FrozenCatalogPublication,
-} from "../../../../interfaces/connect/generated-capability-catalog/kokoro/platform/capability/v1/capability_catalog_pb.js";
+} from "../../../../generated/proto/kokoro/platform/capability/v1/capability_catalog_pb.js";
 import {
   CommandDigestAlgorithm,
   CommandReceiptSchema,
   CommandReceiptState,
-} from "../../../../interfaces/connect/generated-capability-catalog/kokoro/common/v1/receipt_pb.js";
+} from "../../../../generated/proto/kokoro/common/v1/receipt_pb.js";
 import type { CapabilityCatalogPublication } from
   "../../infrastructure/crypto/capability-publication-verifier.js";
 import type { PostgresCapabilityCatalogProjectionRepository } from

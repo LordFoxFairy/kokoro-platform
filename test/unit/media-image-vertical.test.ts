@@ -16,13 +16,13 @@ import {
 import {
   CanonicalImageAspectRatio,
   CanonicalImageOutputFormat,
-} from "../../src/interfaces/connect/generated-media-runtime/kokoro/platform/media/v1/media_canonical_pb.js";
+} from "../../src/generated/proto/kokoro/platform/media/v1/media_canonical_pb.js";
 import { AgentImageIntentV1Schema } from
-  "../../src/interfaces/connect/generated-media-runtime/kokoro/platform/media/v1/media_runtime_pb.js";
+  "../../src/generated/proto/kokoro/platform/media/v1/media_runtime_pb.js";
 import { EnvelopeOperationInputProtector } from
   "../../src/modules/media/application/operation-input-protection.js";
 import { mediaCallerRequestFingerprintSha256 } from
-  "../../src/interfaces/http/generated/platform-public/media-canonical.js";
+  "../../src/generated/contracts/openapi/platform-public/media-canonical.js";
 import { verifyRequestSecurityContext } from
   "../../src/shared/security-context/request-security-context.js";
 

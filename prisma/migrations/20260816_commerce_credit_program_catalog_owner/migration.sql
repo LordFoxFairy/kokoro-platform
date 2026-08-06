@@ -104,11 +104,22 @@ CREATE TABLE platform.commerce_credit_program_outbox (
     REFERENCES platform.commerce_credit_program_catalog_revision(program_ref,revision,revision_digest)
 );
 
+CREATE FUNCTION platform.reject_credit_program_catalog_mutation() RETURNS TRIGGER
+LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
+BEGIN
+  RAISE EXCEPTION 'CREDIT_PROGRAM_CATALOG_FACT_IMMUTABLE' USING ERRCODE='23000';
+END $$;
+REVOKE ALL ON FUNCTION platform.reject_credit_program_catalog_mutation() FROM PUBLIC;
+
 CREATE TRIGGER commerce_credit_program_revision_immutable BEFORE UPDATE OR DELETE
-  ON platform.commerce_credit_program_catalog_revision FOR EACH ROW EXECUTE FUNCTION platform.reject_immutable_mutation();
+  ON platform.commerce_credit_program_catalog_revision
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_credit_program_catalog_mutation();
 CREATE TRIGGER commerce_credit_program_rule_immutable BEFORE UPDATE OR DELETE
-  ON platform.commerce_credit_program_grant_rule FOR EACH ROW EXECUTE FUNCTION platform.reject_immutable_mutation();
+  ON platform.commerce_credit_program_grant_rule
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_credit_program_catalog_mutation();
 CREATE TRIGGER commerce_credit_program_snapshot_revision_immutable BEFORE UPDATE OR DELETE
-  ON platform.commerce_credit_program_catalog_snapshot_revision FOR EACH ROW EXECUTE FUNCTION platform.reject_immutable_mutation();
+  ON platform.commerce_credit_program_catalog_snapshot_revision
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_credit_program_catalog_mutation();
 CREATE TRIGGER commerce_credit_program_audit_immutable BEFORE UPDATE OR DELETE
-  ON platform.commerce_credit_program_publication_audit FOR EACH ROW EXECUTE FUNCTION platform.reject_immutable_mutation();
+  ON platform.commerce_credit_program_publication_audit
+  FOR EACH ROW EXECUTE FUNCTION platform.reject_credit_program_catalog_mutation();

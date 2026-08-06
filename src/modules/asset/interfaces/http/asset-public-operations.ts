@@ -3,7 +3,7 @@ import type {
   AssetUploadIntentResponse,
   AssetUploadStatusResponse,
   TrustedAssetGrantResponse,
-} from "../../../../interfaces/http/generated/platform-public/types.gen.js";
+} from "../../../../generated/contracts/openapi/platform-public/types.gen.js";
 import { definePlatformPublicOperation } from "../../../../interfaces/http/platform-public-operation-registry.js";
 import type { CreateUploadIntentService } from "../../application/services/create-upload-intent.js";
 import type { CompleteUploadService } from "../../application/services/complete-upload.js";

@@ -42,6 +42,11 @@ describe("Postgres Admission Model owner", () => {
       value: {
         provider: "litellm",
         name: "chat-fallback-gateway",
+        route: {
+          adapterKind: "litellm",
+          gatewayModel: "chat-fallback-gateway",
+          providerModel: "unused",
+        },
         effort: "medium",
         modelLabel: "Standard",
       },
@@ -58,7 +63,7 @@ describe("Postgres Admission Model owner", () => {
       runtimeCandidates: [{
         modelKey: "chat-primary", modelPosition: 0, bindingKey: "binding:direct",
         bindingPriority: 0, providerPriority: 0, adapterKind: "direct",
-        provider: "anthropic", upstreamModel: "claude-sonnet-4", gatewayModelName: "not-used",
+        provider: "anthropic", upstreamModel: "claude-sonnet-4", gatewayModelName: "chat-direct",
       }],
     }));
 
@@ -68,9 +73,18 @@ describe("Postgres Admission Model owner", () => {
     });
     expect(result).toEqual({
       kind: "resolved",
-      value: { provider: "anthropic", name: "claude-sonnet-4", modelLabel: "Standard" },
+      value: {
+        provider: "direct",
+        name: "chat-direct",
+        route: {
+          adapterKind: "direct",
+          gatewayModel: "chat-direct",
+          providerModel: "claude-sonnet-4",
+        },
+        modelLabel: "Standard",
+      },
     });
-    expect(JSON.stringify(result)).not.toMatch(/secret|account|binding/u);
+    expect(JSON.stringify(result)).not.toMatch(/secret|account|binding|anthropic/u);
   });
 
   it("denies an unpublished option, unsupported effort, or unavailable runtime", async () => {

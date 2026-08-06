@@ -12,9 +12,7 @@
   },
   "scripts": {
     "dev": "tsx src/interfaces/http/main.ts",
-    "dev:connect": "tsx src/interfaces/connect/main.ts",
     "start": "node --conditions=kokoro-runtime dist/interfaces/http/main.js",
-    "start:connect": "node --conditions=kokoro-runtime dist/interfaces/connect/main.js",
     "build:runtime": "tsc -p tsconfig.runtime.json",
     "test": "vitest run test/unit",
     "test:integration": "vitest run test/integration --no-file-parallelism",

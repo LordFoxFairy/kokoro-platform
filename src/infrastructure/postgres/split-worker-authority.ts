@@ -1,3 +1,8 @@
+import {
+  ASSET_RELATIONS,
+  ASSET_WORKER_INSERT_RELATIONS,
+} from "./runtime-relation-authority.js";
+
 export type SplitWorkerRole =
   | "commerce-worker"
   | "site-worker"
@@ -41,28 +46,6 @@ const OUTBOX_UPDATE_COLUMNS = [
   "consumer_delivery_id",
   "consumer_acknowledged_at",
   "updated_at",
-] as const;
-
-const ASSET_RELATIONS = [
-  "asset_upload_intent",
-  "asset_upload_session",
-  "asset_quota_account",
-  "asset_quota_reservation",
-  "asset_multipart_upload",
-  "asset_multipart_part",
-  "asset_blob_candidate",
-  "asset_cleanup_group",
-  "asset_object_cleanup",
-  "asset_object_cleanup_receipt",
-  "asset_upload_rejection",
-  "asset_scan_evaluation",
-  "asset_promotion_intent",
-  "asset_blob",
-  "asset_resource",
-  "asset_version",
-  "asset_reference",
-  "asset_eligibility_projection",
-  "asset_promotion_receipt",
 ] as const;
 
 const entries = (
@@ -177,7 +160,7 @@ export const SPLIT_WORKER_RELATION_AUTHORITY = Object.freeze({
   "asset-worker": [
     ...base(...ASSET_RELATIONS),
     ...outboxConsumer(true),
-    ...entries("INSERT", ASSET_RELATIONS.slice(6)),
+    ...entries("INSERT", ASSET_WORKER_INSERT_RELATIONS),
     columns("asset_upload_intent", "UPDATE", ["state", "expected_version", "updated_at"]),
     columns("asset_upload_session", "UPDATE", [
       "capability_epoch",
@@ -273,6 +256,7 @@ export const SPLIT_WORKER_RELATION_AUTHORITY = Object.freeze({
       "transaction_ref",
       "credential_revision",
       "state",
+      "attempt_count",
     ]),
     columns("identity_verification_delivery", "UPDATE", [
       "state",
@@ -307,6 +291,7 @@ export const SPLIT_WORKER_RELATION_AUTHORITY = Object.freeze({
       "execution_space_ref",
       "execution_namespace",
       "state",
+      "attempt_count",
     ]),
     columns("identity_namespace_allocation_intent", "UPDATE", [
       "state",

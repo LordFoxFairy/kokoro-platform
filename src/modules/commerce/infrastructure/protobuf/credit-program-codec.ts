@@ -3,12 +3,12 @@ import { DurationSchema } from "@bufbuild/protobuf/wkt";
 import {
   CreditProgramBucketClass,
   CreditProgramDefinitionSchema,
-  CreditProgramExposure,
+  CatalogCandidateExposure,
   CreditProgramRevisionTargetSchema,
   CreditProgramRevisionViewSchema,
   CreditProgramRolloverPolicy,
   type CreditProgramDefinition as WireDefinition,
-} from "../../../../interfaces/connect/generated-admin-credit/kokoro/platform/credit/v1/credit_catalog_pb.js";
+} from "../../../../generated/proto/kokoro/platform/commerce/v1/commerce_catalog_pb.js";
 import { CanonicalCreditProgramDefinition, validateDefinition,
   type CreditProgramBucket, type CreditProgramDefinition,
   type PublishedCreditProgramRevision } from "../../domain/credit-program-catalog.js";
@@ -79,7 +79,7 @@ export function definitionToWire(value: CreditProgramDefinition) {
 export function creditProgramRevisionMessage(value: PublishedCreditProgramRevision) {
   return create(CreditProgramRevisionViewSchema, {
     target: create(CreditProgramRevisionTargetSchema, value.target),
-    definition: definitionToWire(value.definition), exposure: CreditProgramExposure.INERT,
+    definition: definitionToWire(value.definition), exposure: CatalogCandidateExposure.INERT,
     publishedAt: timestampFromDate(new Date(value.publishedAt)),
   });
 }

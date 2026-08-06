@@ -1,7 +1,7 @@
 import type { HandlerContext, ServiceImpl } from "@connectrpc/connect";
 import {
   AdmissionService,
-} from "../../../../interfaces/connect/generated/kokoro/platform/admission/v1/admission_pb.js";
+} from "../../../../generated/proto/kokoro/platform/admission/v1/admission_pb.js";
 import type { AdmissionCaller } from "../../application/admission-ports.js";
 import type { AdmissionApplicationService } from "../../application/admission-service.js";
 

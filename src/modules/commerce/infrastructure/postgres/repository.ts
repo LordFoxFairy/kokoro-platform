@@ -1,5 +1,8 @@
 import { CommandReceiptConflictError, CommandReceiptRepository } from "../../../../shared/outbox-inbox/receipt.js";
-import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
+import {
+  acquirePlatformSqlAdvisoryLock,
+  resolvePlatformTransaction,
+} from "../../../../shared/unit-of-work/platform-transaction.js";
 import { assertSha256 } from "../../domain/command-identity.js";
 import { compileFulfillmentOutputPlan, validateActualOutputSet } from "../../domain/output-line.js";
 import { canonicalFulfillmentTransaction } from "../../domain/canonical-fulfillment.js";
@@ -74,10 +77,7 @@ export class PostgresCommerceRepository implements CommerceRepository {
     assertSha256(input.snapshot.fulfillmentProgramDigest);
     assertSha256(input.snapshot.sourceDigest);
     const sql = resolvePlatformTransaction(transaction);
-    await sql.query(
-      "SELECT pg_advisory_xact_lock(hashtextextended($1,0)) AS locked",
-      [input.source.idempotencyKey],
-    );
+    await acquirePlatformSqlAdvisoryLock(sql, input.source.idempotencyKey);
     const storedRows = await sql.query<FulfillmentRow>(FULFILLMENT_BY_IDEMPOTENCY_SQL, [
       input.source.idempotencyKey,
     ]);

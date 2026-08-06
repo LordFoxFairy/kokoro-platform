@@ -11,6 +11,7 @@ const platformModules = [
   "authorization",
   "commerce",
   "credit",
+  "hub",
   "identity",
   "media",
   "memory",
@@ -43,7 +44,9 @@ describe("fresh Platform module topology", () => {
       const entries = readdirSync(join(process.cwd(), "src/modules", moduleName));
       const unexpected = entries.filter((entry) => !allowedModuleEntries.has(entry));
       expect(unexpected, `${moduleName} has an unowned top-level surface`).toEqual([]);
-      expect(entries).toContain("application");
+      if (moduleName === "hub") {
+        expect(entries.sort()).toEqual(["INDEX.md", "infrastructure", "interfaces"]);
+      } else expect(entries).toContain("application");
     }
   });
 });

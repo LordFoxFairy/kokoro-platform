@@ -1,0 +1,39 @@
+schema_version: 1
+
+# Typed payloads live in kokoro/session/media/v1/media_projection.proto. This
+# source freezes durable event names separately from the Connect target API.
+media_projection_events:
+  - MediaProjectionBindingCommitted
+  - MediaOperationProjectionChanged
+  - MediaCandidateProjectionChanged
+  - MediaArtifactProjectionChanged
+
+credit_cost_projection_events:
+  - CreditCostProjectionChanged
+
+# Durable-event names above remain the Platform owner facts. Delivery is not an
+# implicit broker callback: the Platform outbox pumps call this exact private
+# Connect entry and Session persists a closed receipt before acknowledging.
+session_ingest:
+  service: kokoro.session.media.v1.SessionMediaProjectionIngestService
+  transport: connect-rpc
+  authenticated_context: spiffe
+  caller_claims_on_wire: forbidden
+  activation_method: SessionMediaProjectionService.RecoverMediaProjectionActivation
+  media_method: ApplyMediaProjectionEvent # seq >= 2 only
+  credit_method: ApplyCreditCostProjectionEvent # independent chain, seq >= 1
+  receipt: kokoro.session.media.v1.ProjectionIngestReceipt
+  receipt_outcomes:
+    - applied
+    - replayed
+    - pending_gap
+    - rejected
+    - suppressed
+  recovery_actions:
+    - none
+    - recover_missing_predecessor
+    - reconcile_owner
+    - contact_support
+  safe_rejection_codes:
+    - record_integrity_conflict
+    - owner_fence_conflict

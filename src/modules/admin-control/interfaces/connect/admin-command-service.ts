@@ -6,7 +6,7 @@ import {
   CommandIdentityV2Schema,
   CommandReceiptV2Schema,
   CommandReceiptStateV2,
-} from "../../../../interfaces/connect/generated-admin-v2/kokoro/common/v2/command_envelope_pb.js";
+} from "../../../../generated/proto/kokoro/common/v2/command_envelope_pb.js";
 import {
   AdminCommandService as AdminCommandServiceDescriptor,
   ApprovalDecision,
@@ -14,16 +14,16 @@ import {
   OperatorAuthorityChangeAction,
   SubmitCommandState,
   type ChangeOperatorAuthority,
-} from "../../../../interfaces/connect/generated-admin-v2/kokoro/platform/admin/v2/admin_command_pb.js";
+} from "../../../../generated/proto/kokoro/platform/admin/v2/admin_command_pb.js";
 import type {
   AuthenticatedOperatorCommandContext,
   AuthenticatedOperatorQueryContext,
-} from "../../../../interfaces/connect/generated-admin-v2/kokoro/platform/admin/v2/admin_shared_pb.js";
+} from "../../../../generated/proto/kokoro/platform/admin/v2/admin_shared_pb.js";
 import {
   decideApprovalRequestDigest,
   submitCommandRequestDigest,
   type VerifiedAuthenticatedAdminAxes,
-} from "../../../../interfaces/connect/generated-admin-v2/command-envelope-digest.js";
+} from "../../../../generated/contracts/platform-admin-command@v2/digest.js";
 import type { JsonValue } from "../../../../shared/outbox-inbox/receipt.js";
 import type { VerifiedRequestSecurityContext } from
   "../../../../shared/security-context/index.js";

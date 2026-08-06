@@ -1,0 +1,1005 @@
+{
+  "contractRevision": "kokoro.generated-artifact-provenance.v1",
+  "boundaryId": "generated-kokoro-platform@v1",
+  "consumerRepository": "kokoro-platform",
+  "sourceRootCommit": "e66efb07a5839fe4085a719b77eb33cd534b01e9",
+  "sourceFiles": [
+    {
+      "path": "contract/buf.gen.yaml",
+      "sha256": "sha256:ba342b769bde295ee362a5876dd51ab06aa412ac84f117220bd78eb31d67ce6b"
+    },
+    {
+      "path": "contract/buf.lock",
+      "sha256": "sha256:f167aece00cd881df9e57b220d5edeff1343c5020a6caed6b425a213f75991ee"
+    },
+    {
+      "path": "contract/buf.yaml",
+      "sha256": "sha256:b71f20db373671d58f73156590cbeaf8fc1c470fe2fe1d69752808f0b4e80e1c"
+    },
+    {
+      "path": "contract/corpus/interaction-identity-v2.json",
+      "sha256": "sha256:29a12eca87ed52dd6e4bda6f862c493a6cdd2d6ba2decab2a37de87ffcd1ca26"
+    },
+    {
+      "path": "contract/corpus/media-canonicalization-v1.json",
+      "sha256": "sha256:cabeed365c6de315419d8913cce44f15b9d1689951ad307de6f7270de8966a76"
+    },
+    {
+      "path": "contract/corpus/presentation-v1.json",
+      "sha256": "sha256:692b98d30fea9ed7e5a81239ea0e368add84fba685bc70d10f29eb3201661706"
+    },
+    {
+      "path": "contract/corpus/projection-integrity-v1.json",
+      "sha256": "sha256:29e8d50c9c03fe3cbc1045bf022c46b9fe130ca44b6d28a4f8b8e269066cc29c"
+    },
+    {
+      "path": "contract/corpus/site-release-publication-command-v1.json",
+      "sha256": "sha256:fe95242fec4c006fe074532ab1bacb1bdbc0d0175cf30bfbdc44ca6182af18a6"
+    },
+    {
+      "path": "contract/corpus/web-release-composition-v1.json",
+      "sha256": "sha256:93be4068ce7c21a336bf84e9bd341c848907c93fe4de9adc5f04a1a74827b9d8"
+    },
+    {
+      "path": "contract/generate-media-canonical.mjs",
+      "sha256": "sha256:93d9651a6ff01b1deb8abc0f7cdb30eeeaeedc7e4c09ab1255f78b61281d6f2e"
+    },
+    {
+      "path": "contract/generate-public-openapi.mjs",
+      "sha256": "sha256:7a76893f453f79d02b8238302ec9d898714b225d07634824cb1b099afaff50a6"
+    },
+    {
+      "path": "contract/generate.mjs",
+      "sha256": "sha256:91be368f2c9b275a3928e1859ea24fa9c5ba19e9791f83f84d41e02fe184fab7"
+    },
+    {
+      "path": "contract/generate.py",
+      "sha256": "sha256:29220bc3360ac2b8994d1d5c59ca58f15ec9a597b144cc26e874979634db7b4e"
+    },
+    {
+      "path": "contract/lib/committed-worktree.mjs",
+      "sha256": "sha256:b8f16b7e55ecd4b9ffcbe6d8f1526776e45d65f940dda035f7d585b6c1d3553f"
+    },
+    {
+      "path": "contract/lib/generation/consumer-manifest.mjs",
+      "sha256": "sha256:245f3a29042c70adbd99e522b7ea5e6a66f7f8d1bc27b0b29b4cc1d899e17498"
+    },
+    {
+      "path": "contract/lib/generation/output-transaction.mjs",
+      "sha256": "sha256:6f9542ba15d47829a8110893baddefda08bbc8397590c8521d228be1d42d3ae8"
+    },
+    {
+      "path": "contract/lib/generation/presentation-typescript.mjs",
+      "sha256": "sha256:e59f1c88deb29fc0719b159fb9b09a3a49dd3b0d226b88b9bc0a2b1d25607c60"
+    },
+    {
+      "path": "contract/lib/generation/stage-consumer.mjs",
+      "sha256": "sha256:338eadfa494b1fc58db3144d8e409a1a7ac1b547b6895e1eb2b2877aeda09483"
+    },
+    {
+      "path": "contract/lib/provenance/build-manifest.mjs",
+      "sha256": "sha256:dd8bf717c79756f837e732c5428aafd9cfe80639fcbeff7517a621da83066458"
+    },
+    {
+      "path": "contract/lib/provenance/canonical-manifest.mjs",
+      "sha256": "sha256:969a057bb55ee2dd0f01f0148254d6a7339cdc4674413f2d16b49682da3afb2e"
+    },
+    {
+      "path": "contract/openapi/admin-web-v1.yaml",
+      "sha256": "sha256:0f8c267e5f2ad09e1c65a044beb5b5fcb88a4e50bd89602c2ad5dcccbf6be48c"
+    },
+    {
+      "path": "contract/openapi/asset-data-plane-v1.yaml",
+      "sha256": "sha256:33de398d498d8a11cd9ce65b63824b171aa9b0894952f901cde0672ec07fb1aa"
+    },
+    {
+      "path": "contract/openapi/platform-public-v1.yaml",
+      "sha256": "sha256:e117d10992722ffee6a3d7cead24e8329924af663ca6b13f216044e6af88f052"
+    },
+    {
+      "path": "contract/package.json",
+      "sha256": "sha256:378bfa9af5553465fe71265fac0548e2544c366888f73cc698809eb2961fe2d0"
+    },
+    {
+      "path": "contract/pnpm-lock.yaml",
+      "sha256": "sha256:f71c223be467971407c5942f60960b91a5654bf7be92e2a4fd9d93435b25deee"
+    },
+    {
+      "path": "contract/pnpm-workspace.yaml",
+      "sha256": "sha256:676e28272cd6e16e8f91702e78b5ed46fb19807c83121bfa5a6150b32461d600"
+    },
+    {
+      "path": "contract/proto/kokoro/agent/control/v2/session_agent_control.proto",
+      "sha256": "sha256:93db2d54fa8d54d3a369572701c6e115e9575070a22074bea8cfaab424081bd9"
+    },
+    {
+      "path": "contract/proto/kokoro/agent/execution/v1/agent_execution_evidence.proto",
+      "sha256": "sha256:01aa0f16d5c1a0d0d18af08a00770a7553063d0a1045b041caef12bf82b75f53"
+    },
+    {
+      "path": "contract/proto/kokoro/agent/execution/v2/agent_execution_evidence.proto",
+      "sha256": "sha256:f1edbdf71e2b9abcc2a3dd4ff294e9c6c38078b5273a76322d6186aa1f0693f7"
+    },
+    {
+      "path": "contract/proto/kokoro/agent/presentation/v1/presentation.proto",
+      "sha256": "sha256:c2ae6a209ee75b2e58938e3ba0978e63867c56e1863cd3cdd673ee9a909d4b3f"
+    },
+    {
+      "path": "contract/proto/kokoro/common/v1/error.proto",
+      "sha256": "sha256:ef7a83bd42248109e1bfdf60d37f19ec3c91eb36749bc566d9e6388a8fa33b3e"
+    },
+    {
+      "path": "contract/proto/kokoro/common/v1/projection_integrity.proto",
+      "sha256": "sha256:fa9c990f3937e3f807af747be1126e86f3b81f6e013290b53ee612527d81d34a"
+    },
+    {
+      "path": "contract/proto/kokoro/common/v1/receipt.proto",
+      "sha256": "sha256:eda1652a157f0829efe656f686a8a312aeca8d56206f21fbd7bb1141ff844719"
+    },
+    {
+      "path": "contract/proto/kokoro/common/v2/command_envelope.proto",
+      "sha256": "sha256:dd4451ec255413c5c3eb7f7a6caadc961d72e00828bdb54aa88fec5aed0a71e7"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/admin/v1/admin_auth.proto",
+      "sha256": "sha256:890b152347e995ac592616172ff3aee32d1da019488297b3a37600de7d8b57b9"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/admin/v2/admin_command.proto",
+      "sha256": "sha256:3eef80ba47ec0a9c2e6e4c1a9aca4b76a2406756fccd671dcedb80b1665d3b05"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/admin/v2/admin_query.proto",
+      "sha256": "sha256:9a8c650f37f57258ee382ec2249eb4bdd56ead6b46cdc70ac83e11bfe089768d"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/admin/v2/admin_shared.proto",
+      "sha256": "sha256:2468fe92f108706656d58edeceb02b7627f36c00d2e434a7e36b8862bdf505e1"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/admission/v1/admission.proto",
+      "sha256": "sha256:3e4091cde7ace9f08bb4c0a507471a8a975878e8ad5c5b2038c5b278040c1cca"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/asset/v1/asset_eligibility.proto",
+      "sha256": "sha256:6e496aa5de08e1ea660bb671fbc62d47fc7862a349ea42b7305097f6d36e7518"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/authorization/v1/session_authorization.proto",
+      "sha256": "sha256:fa9f17a1ee7399cf5c6b8aaa3c5e45fdd953132367407efe8e617e002dcaa3cf"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/authorization/v2/scoped_session_authorization.proto",
+      "sha256": "sha256:499e71b69a99d0a496756b76d17f514b27cdbbfc25ffd65bd1a8564c7e58a36f"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/capability/v1/capability_catalog.proto",
+      "sha256": "sha256:b4c9d8076f12ce3e513291a77f47cea9a8573ed90076732b2e7e04049c00fd3a"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/commerce/v1/admin_commerce.proto",
+      "sha256": "sha256:47fbe8d7f944c011a7524c77358791b7239b00900bc03f41f1f8dbbac6746665"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/commerce/v1/commerce_catalog.proto",
+      "sha256": "sha256:fdc50e36538af360bcf470dd15ae3716d37a97892c20cc6b524900131731fc61"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/commerce/v1/commerce_control.proto",
+      "sha256": "sha256:e3c9fc9127663e5602d3393f44e8609fa0dde4027b1809059706b3008e9f9b97"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/commerce/v1/fulfillment.proto",
+      "sha256": "sha256:4ca7419a1058e625a686375971a151ffa1fd8e48e8e0c0e1297108194f3e7d55"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/credit/v1/admin_credit.proto",
+      "sha256": "sha256:1cdb7118f920178754c99ac11c1b0aaa226cabd997d44cf4f9000a98b1eb7cc6"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/credit/v1/cost_projection.proto",
+      "sha256": "sha256:d0397fcefb0b3ca0f0864e53e56fdfb240b69c32beba7b6ed92f162674858d8c"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/credit/v1/cost_projection_recovery.proto",
+      "sha256": "sha256:6430b5fe17ed329d612d00997aaefea2d1aa445219fcceadef65a2b661595b18"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/identity/v1/admin_identity.proto",
+      "sha256": "sha256:ff78070d726c076633878cf04ec19d05e99f8956783c321dffa0fd70a0e39173"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/media/v1/media_canonical.proto",
+      "sha256": "sha256:4be16d9066250acc26695e49d130653908a8781ca013153427959522e40f3c53"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/media/v1/media_projection.proto",
+      "sha256": "sha256:57a657ec8f2fb80554c893137bb4c60eb1bf6be3562425ef41ab5f4e18acfe66"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/media/v1/media_projection_recovery.proto",
+      "sha256": "sha256:7190898a6872162fb0345ea0f5cac005f52d071ef549bd35df6a1eaa5eee0e14"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/media/v1/media_runtime.proto",
+      "sha256": "sha256:aaaa5af0bbe09b5fb61b044bb19a2b8b2a77aa9cb53b8e84d8a144abc255b687"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/model/image/v1/image_effect.proto",
+      "sha256": "sha256:4de437eafedefc453915695640fd1b0a4c3bc2a6ea95aaf4538e579f18a8fa90"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/model/v1/model_control.proto",
+      "sha256": "sha256:7f9aee6cd7eb388b220788da2439e2c018a8f53241a7ef97a664c763f3fa5958"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/model/v1/model_gateway.proto",
+      "sha256": "sha256:1ba64128c12ae01a2d24861554b433e0ee5401113cb1a0b1218617e11b3907b1"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/product/v1/product_catalog_publication.proto",
+      "sha256": "sha256:e36c3b6190d50c78e55243e3ff88ea10ee2d21796582d36b06834e6e00bf270d"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/publication/v1/publication_common.proto",
+      "sha256": "sha256:087c512f7ce907032e8cadc46cbd66a7831d11cb8363e9713d0eaed9825931a1"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/site/v1/site_lifecycle.proto",
+      "sha256": "sha256:c08935b7a22f012bb55aaf7ab62d6586e5ebf7a001fa05d470be5e9124c97dc7"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/site/v1/site_provisioning.proto",
+      "sha256": "sha256:3c2a9876b814d8e65c0ebf44747749f38cf401d1a394d35b50bd01de34f2b177"
+    },
+    {
+      "path": "contract/proto/kokoro/platform/site/v1/site_publication.proto",
+      "sha256": "sha256:59e0b18ea8304ae9f6bff0c73524c5e87abac714b526d3c22008c67a8a299fba"
+    },
+    {
+      "path": "contract/proto/kokoro/session/admission/v1/session_admission_owner.proto",
+      "sha256": "sha256:81f609f617858a82edc87a0a75bc33ff5f0689325e91c9adbc5c6251215944dd"
+    },
+    {
+      "path": "contract/proto/kokoro/session/dispatch/v1/dispatch_owner_evidence.proto",
+      "sha256": "sha256:f8c19d79a2b08a5381eb967b135a6125bbfc58bd24120648e465851ab7e56745"
+    },
+    {
+      "path": "contract/proto/kokoro/session/media/v1/media_projection.proto",
+      "sha256": "sha256:485a2cc406bdf00a2ec31fafce87af6331d322e6b7e35fce18a0d2b97c8b73e8"
+    },
+    {
+      "path": "contract/proto/kokoro/session/media/v1/media_projection_ingest.proto",
+      "sha256": "sha256:8601bca928113b028f66f2c35ddb4c34b09cce1ed9ee5b126288508aa14a2aaa"
+    },
+    {
+      "path": "contract/registry/boundaries.schema.json",
+      "sha256": "sha256:9306cd719e1e0daceb67e242737e3653a2403ec4e1e64a78e0b66447d3fd3853"
+    },
+    {
+      "path": "contract/registry/boundaries.yaml",
+      "sha256": "sha256:1c6768c25ea99ee2fa8904310e379e337d37ce67af0f5f7e6f801e194d33467a"
+    },
+    {
+      "path": "contract/registry/consumer-generation-transition-v1.yaml",
+      "sha256": "sha256:3553a52efdd00c53eed9e6bdd563575c57df5210967799bf2139f3e05902477f"
+    },
+    {
+      "path": "contract/registry/generated-consumers.schema.json",
+      "sha256": "sha256:2cc48b12ff5525bd2c940bb516d77b6c30578d74ecbbae9096b52d40aae0bdfe"
+    },
+    {
+      "path": "contract/registry/generated-consumers.yaml",
+      "sha256": "sha256:a722c46506990de7a37fe2239d63025e0a1179bd6cc16c7b4994277b339220ce"
+    },
+    {
+      "path": "contract/registry/platform-session-authorization-v1.yaml",
+      "sha256": "sha256:e413fefdb48f161dd34104a9aeaac07b2011c112c22373a4439ed33777daf36c"
+    },
+    {
+      "path": "contract/registry/platform-session-authorization-v2.yaml",
+      "sha256": "sha256:9fe15d0ad9a58c6574bd62d5c47429d23247a917a88efadc0df66bd0d7040d05"
+    },
+    {
+      "path": "contract/registry/prelaunch-protobuf-hard-cuts.yaml",
+      "sha256": "sha256:6f311bccd1cf753faf08246069952ef91d6a05952c05d22d0fe1c21f4dc97239"
+    },
+    {
+      "path": "contract/registry/prelaunch-schema-hard-cuts.yaml",
+      "sha256": "sha256:9fcf7b62b7a3fc3d166fb3bf7a9122e8f9c8850d59b884db0e593e061b6952c4"
+    },
+    {
+      "path": "contract/registry/presentation/INDEX.md",
+      "sha256": "sha256:47e65a1cbbd71500cf74a34a7d79629f28f9d292ccd701a527b81677d57b8418"
+    },
+    {
+      "path": "contract/registry/presentation/ag-ui-version-lock.yaml",
+      "sha256": "sha256:2e7d950ab9f5d7f21067d21c9ca6baba3159facbc916b4fd95791cfd486d5462"
+    },
+    {
+      "path": "contract/registry/presentation/state-policy-v1.yaml",
+      "sha256": "sha256:070159317b5b2e839f3d96b5152c055172bf0ebc0f478a3680d6a28b497c3374"
+    },
+    {
+      "path": "contract/registry/presentation/stream-policy-v1.yaml",
+      "sha256": "sha256:d38a958b200d8f908572529da8a547cf96fdbab8031acd30d57e7dfe37b16717"
+    },
+    {
+      "path": "contract/registry/presentation/submission-policy-v1.yaml",
+      "sha256": "sha256:393a109f09927008c4f07ada38c0f3e85788b539d61c238538738932fbbe65aa"
+    },
+    {
+      "path": "contract/registry/presentation/wire-profile-v1.yaml",
+      "sha256": "sha256:3a1f39d054dc0384a3f7c67abf879ba21b313949e6e12f2eab57506eb5c7685b"
+    },
+    {
+      "path": "contract/registry/root-contract-hard-cut-ledger-v1.yaml",
+      "sha256": "sha256:61c39b22e57f4298c72561768803d0a8ef052a285bbb042f09817d19b210befd"
+    },
+    {
+      "path": "contract/registry/trusted-web-release-producers.yaml",
+      "sha256": "sha256:4998f9e37779fa1f13bada783523a6f2abebf4ddf62c91421e987aa3fd1651b2"
+    },
+    {
+      "path": "contract/registry/web-release-composition.yaml",
+      "sha256": "sha256:0239f58040ee316cd772e170fa0c74f625eec59b08248815125c7665762a523d"
+    },
+    {
+      "path": "contract/spec/activation-authority-snapshot.yaml",
+      "sha256": "sha256:44a0b0732cd66cbf6e624c4656469395793a33e6976c43540fda2fb7cd303eea"
+    },
+    {
+      "path": "contract/spec/activation-eligibility-evidence.yaml",
+      "sha256": "sha256:70fafec289c197f47e2f2f49bccd34f76110daefb03573d70179c7083417abf7"
+    },
+    {
+      "path": "contract/spec/compiled-web-manifest.yaml",
+      "sha256": "sha256:d80a198e3fafc73b9ea759f2ba9b8fe17174297135c106097ba2295b11554b99"
+    },
+    {
+      "path": "contract/spec/control.yaml",
+      "sha256": "sha256:28b356b39bfd0ebc7e06d48b0b432e59fad0b35cedb7c789d2864ed106debc2b"
+    },
+    {
+      "path": "contract/spec/events.yaml",
+      "sha256": "sha256:86cf0536deb410768a58feb65a7b760493a51015187402c882152e363612f178"
+    },
+    {
+      "path": "contract/spec/generated-artifact-provenance-v1.yaml",
+      "sha256": "sha256:00f18254bc62670b33a09c7b0e4688b863798782c1cbc2aa8e00724773101cbe"
+    },
+    {
+      "path": "contract/spec/http.yaml",
+      "sha256": "sha256:044d029eef3a29eac20084ca4f3e5ce19e95c9d609e2f87c3ef5d30d34af3adf"
+    },
+    {
+      "path": "contract/spec/launch-product-profile.yaml",
+      "sha256": "sha256:2a94462472fcb15a51c380047d5de3cd06c5c8c255e7157bf22153b576fdbda7"
+    },
+    {
+      "path": "contract/spec/media-canonicalization.yaml",
+      "sha256": "sha256:a0a26ac4bb9b86f0d0c1e80bfc0c3330d8e9a6b5c1664eb015479e1ac5989808"
+    },
+    {
+      "path": "contract/spec/media-projection.yaml",
+      "sha256": "sha256:f1f3d8838186f49e9dbe59911f2307f03b01b5b9b9f05980bd30dcaa2277e0ca"
+    },
+    {
+      "path": "contract/spec/model-control-browser-recovery.yaml",
+      "sha256": "sha256:6d5fbc430bacf67bedaa818547a3221c50b0ea149766b916bc6e4c274d05f510"
+    },
+    {
+      "path": "contract/spec/platform-runtime.yaml",
+      "sha256": "sha256:b959bdcdd6c4e6fc3749d26e8f96862144efab97493422206b1da1b2cbebe4a2"
+    },
+    {
+      "path": "contract/spec/presentation/ag-ui-frame-v1.yaml",
+      "sha256": "sha256:8e89177b3f5fcdb79f5fc0a26c46d8de6c504047ee181ae884103d401bdb61b7"
+    },
+    {
+      "path": "contract/spec/presentation/ag-ui-submission-event-v1.yaml",
+      "sha256": "sha256:f929ec2c74103cd6c97baddbcea9f6485ffabbc30313d758b88273d155247f19"
+    },
+    {
+      "path": "contract/spec/presentation/binding-update-v1.yaml",
+      "sha256": "sha256:cfea776d58361f88a0c0a8d8ec5413983472f702abad0e7d425aa021356c26f7"
+    },
+    {
+      "path": "contract/spec/presentation/binding-v1.yaml",
+      "sha256": "sha256:9ea081aff4ab48ceb857d3f58464a01971ad7ed88f96133858827f729d269843"
+    },
+    {
+      "path": "contract/spec/presentation/domain-event-v1.yaml",
+      "sha256": "sha256:adb35e4adc4714146dd7ed505809fe6e14f9bbfe8bfc34560583b23c537c53fa"
+    },
+    {
+      "path": "contract/spec/presentation/owner-state-v1.yaml",
+      "sha256": "sha256:7913424e8b33d81614753139bac987a8c12de6522b179c38e42fd242521092c5"
+    },
+    {
+      "path": "contract/spec/presentation/snapshot-v1.yaml",
+      "sha256": "sha256:739157c1f3942e30558369286d2b8fce42cbfc2cfea42679ef2e1a566d42a66c"
+    },
+    {
+      "path": "contract/spec/presentation/stream-record-v1.yaml",
+      "sha256": "sha256:7d873772b9bf2854001a84705f420839d686c7264e9c3c0540b3a82ffde1b01f"
+    },
+    {
+      "path": "contract/spec/presentation/stream-v1.yaml",
+      "sha256": "sha256:26459aa9c97ce31933dbef684265823252ea12c4756df323db0d6658af68f86c"
+    },
+    {
+      "path": "contract/spec/presentation/submission-v1.yaml",
+      "sha256": "sha256:4e5031874ccdf27e3456a6561aed7f8c153a6dbafbb99be102df9bc12107572a"
+    },
+    {
+      "path": "contract/spec/product-surface-catalog.yaml",
+      "sha256": "sha256:d37698e12299f61079d704d9ed1996fcc4545d7771b7dfa1b05228cce1d1546c"
+    },
+    {
+      "path": "contract/spec/projection-integrity.yaml",
+      "sha256": "sha256:cd3855b7cf4d702ff063b90e8c017d2087bbec07d9a9d3557217b651b6b3cdc7"
+    },
+    {
+      "path": "contract/spec/release-certification-instance.yaml",
+      "sha256": "sha256:2e0f27eddd0be8fed7f7b12425dd928ab36fe5b73315a83fbd785c7b500116d1"
+    },
+    {
+      "path": "contract/spec/release-certification-revocation.yaml",
+      "sha256": "sha256:5fa1b99f0a155052b2ede0899836e8bdfdd3c94c50256867f295f8614695751b"
+    },
+    {
+      "path": "contract/spec/session-agent-control-v2.yaml",
+      "sha256": "sha256:0cfdcb65a4be79528e07a40e857941ee007cf9ed1539ec066af0dd747b5653a3"
+    },
+    {
+      "path": "contract/spec/site-release-candidate.yaml",
+      "sha256": "sha256:d6e31adf4014fc235a8c029baeb119862be77df67adb6ab5fedf32d9b3754045"
+    },
+    {
+      "path": "contract/spec/site-release.yaml",
+      "sha256": "sha256:f980d25f590c2895738ff78c75d7c827024ebdaf72e38d4995d731e24dfc54e9"
+    },
+    {
+      "path": "contract/spec/storage.yaml",
+      "sha256": "sha256:b735968ab37b057a3667e8f4ccd2bb79bb38dbc74e9a59cdce3877070f7b2a8e"
+    },
+    {
+      "path": "contract/spec/streams.yaml",
+      "sha256": "sha256:0f53536738a71ed37f834b051b07e340fe87c41989c9fa48f7f1e00700f0210b"
+    },
+    {
+      "path": "contract/spec/surface-inventory.yaml",
+      "sha256": "sha256:9ddca157bfd2dbb9db0ce6fa9ff97742348c198908a38b9e50cb0384c22ee08c"
+    },
+    {
+      "path": "contract/spec/web-artifact-provenance-profile.yaml",
+      "sha256": "sha256:42099053581a28b790237f5dadd8c06e422b21ac1e08e78edaaf1137993ffe05"
+    },
+    {
+      "path": "contract/spec/web-build-intent.yaml",
+      "sha256": "sha256:69f4f1dc053df5aa456b23f15dc8dd1280372b9a3fab17815f5ef9ba4a0e4ec5"
+    },
+    {
+      "path": "contract/spec/web-build-material-bundle.yaml",
+      "sha256": "sha256:5146ef2e810c42d221f63df7eea17921b69c65329e60a3ee60024c4730228c00"
+    },
+    {
+      "path": "contract/spec/web-build-toolchain.yaml",
+      "sha256": "sha256:79b5091f7aeb43ec6342ff7a88af013e5585fb4088689f412e6fc185abcb268d"
+    },
+    {
+      "path": "contract/spec/web-composition-registry.yaml",
+      "sha256": "sha256:20edfc25b4d2b97ac4705faf3d47a9afa634cdaed3051d2fcbd2aac04c15b121"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "sha256:20bf81f3b0e5fdab7fbd4fe46fca5a0a601a1143b2c9698e21ba890d4a4fb829"
+    },
+    {
+      "path": "scripts/contract/openapi-reader.mjs",
+      "sha256": "sha256:2ff646e8e3868bc25d053904b351b4b16ee0b68b797ab6f844634ae7a53df9b8"
+    },
+    {
+      "path": "scripts/contract/read-openapi.py",
+      "sha256": "sha256:36412bfc52791979816f49cea9bc046769a542e3418ec6688be0fe78f6a8eb49"
+    },
+    {
+      "path": "uv.lock",
+      "sha256": "sha256:3d3d45c5d4b8b8ef93efbb871457c461bf3bdfa2af2a7ca1ab508d5bd6ae8423"
+    }
+  ],
+  "generator": {
+    "name": "contract/generate.mjs",
+    "version": "kokoro.consumer-generation.v1",
+    "lockDigest": "sha256:51b592a7eaf2cdf5da0d9c3cdf7bf0f3ec663924b5f1454aae770fbac727a484",
+    "argv": [
+      "--consumer",
+      "kokoro-platform",
+      "--source-root",
+      "@source-root",
+      "--output-repository",
+      "@consumer-root"
+    ]
+  },
+  "toolchain": {
+    "language": "node+python",
+    "runtimeVersion": "node@24.13.0;python@3.11.14",
+    "packageManagerVersion": "pnpm@11.2.2;uv@0.10.4 (079e3fd05 2026-02-17)"
+  },
+  "outputs": [
+    {
+      "path": "src/generated/contracts/agent-execution-evidence@v1/metadata.ts",
+      "sha256": "sha256:99b29570a304ded08c3937b163f9e142b877871126d14b2fddc19ea40d5e9087"
+    },
+    {
+      "path": "src/generated/contracts/agent-execution-evidence@v2/metadata.ts",
+      "sha256": "sha256:fd2c4cdf3505c4c6f5da53f941ba77531c05dc75e5032c9359f9490583d0d371"
+    },
+    {
+      "path": "src/generated/contracts/hub-capability-catalog@v1/metadata.ts",
+      "sha256": "sha256:c896b3d6007c70b433c7f92772348f710aa5e8c39cd8a2341ae909806ac0a118"
+    },
+    {
+      "path": "src/generated/contracts/hub-runtime@v1/metadata.ts",
+      "sha256": "sha256:194b4b76afb36377f4d55acbaa8badf0f458a522052bde9c6983e2985e89baa6"
+    },
+    {
+      "path": "src/generated/contracts/legacy/hub-storage.ts",
+      "sha256": "sha256:5db1d85772d9bd838da9d51f7db4de5f66a455c328c60b5649809d37d03abb0a"
+    },
+    {
+      "path": "src/generated/contracts/legacy/platform-control.ts",
+      "sha256": "sha256:12704d81be935f75c2740bdf2ce86f712923769f65e7974340b5a30ac50db61c"
+    },
+    {
+      "path": "src/generated/contracts/legacy/platform-runtime.ts",
+      "sha256": "sha256:e02be7ce45fcc550cbc26ce5463ca990e8acdf3f198df22c97a40841df59057c"
+    },
+    {
+      "path": "src/generated/contracts/media/canonicalization-v1.json",
+      "sha256": "sha256:cabeed365c6de315419d8913cce44f15b9d1689951ad307de6f7270de8966a76"
+    },
+    {
+      "path": "src/generated/contracts/model-gateway@v1/digest.ts",
+      "sha256": "sha256:19a6c595e4fc799c02f781daedd5959b84643cc0098be54ecb5a14db7e87fee4"
+    },
+    {
+      "path": "src/generated/contracts/model-gateway@v1/metadata.ts",
+      "sha256": "sha256:be5752853dea40e39624bd348c777d96f780b595b34ca79956aed203da9fafa1"
+    },
+    {
+      "path": "src/generated/contracts/model-image-effect@v1/digest.ts",
+      "sha256": "sha256:b1d317de6e4d074e2384a207081453b6135c1493d670761f9e222f3974b1f8e2"
+    },
+    {
+      "path": "src/generated/contracts/model-image-effect@v1/metadata.ts",
+      "sha256": "sha256:d3f68cd19a6aa12309cfb23ee063501eb89c3f338fa94f1a62a4cc9f993a30f1"
+    },
+    {
+      "path": "src/generated/contracts/openapi/asset-data-plane/contract-metadata.ts",
+      "sha256": "sha256:179740c483788cce81f88c9cfdece89d35a5da5b8bc80663294513b4df8c93b8"
+    },
+    {
+      "path": "src/generated/contracts/openapi/asset-data-plane/index.ts",
+      "sha256": "sha256:18c9e71d96d1905c732c15660970c3af917151fbcda3eb1eb4f0567a1bda6f04"
+    },
+    {
+      "path": "src/generated/contracts/openapi/asset-data-plane/operations.gen.ts",
+      "sha256": "sha256:24c065b30e44ddde4bd082d10212b606402a4d3658d93ced5c54a7994f614dca"
+    },
+    {
+      "path": "src/generated/contracts/openapi/asset-data-plane/types.gen.ts",
+      "sha256": "sha256:2a50986a2f26150e7b2e900fe68671f4b2745e2c5391e3d7b214af43fd93f05a"
+    },
+    {
+      "path": "src/generated/contracts/openapi/asset-data-plane/zod.gen.ts",
+      "sha256": "sha256:3f597749593c698b5eecf705118e3027b8c06483b9aa256a30add4504b96c1ac"
+    },
+    {
+      "path": "src/generated/contracts/openapi/platform-public/artifact-delivery.ts",
+      "sha256": "sha256:adb86c4b546db1c0f753671984c8bef6f61a00e921636ce17f5f44e73aacd125"
+    },
+    {
+      "path": "src/generated/contracts/openapi/platform-public/contract-metadata.ts",
+      "sha256": "sha256:8fea624f905f4771a4aa46e41b231d6ae8de5fc370881b87013f0e166152f610"
+    },
+    {
+      "path": "src/generated/contracts/openapi/platform-public/index.ts",
+      "sha256": "sha256:1ddc02bf926ae678cf6bde0d302bf318cae5dd70b536281710d17468639113de"
+    },
+    {
+      "path": "src/generated/contracts/openapi/platform-public/media-canonical.ts",
+      "sha256": "sha256:6c3893493ad4df0607c9800e7b100bf80c5cbc069b675ad5c7fec927ac833290"
+    },
+    {
+      "path": "src/generated/contracts/openapi/platform-public/operations.gen.ts",
+      "sha256": "sha256:dc1b6c725a0103a6d89ee3e842313ad25e504a5bf6a264fc825598d8ff99e062"
+    },
+    {
+      "path": "src/generated/contracts/openapi/platform-public/types.gen.ts",
+      "sha256": "sha256:3e70b8cd4fdf6a26e64526361dde3abc92f76bbf923b5b883be450a05eddae29"
+    },
+    {
+      "path": "src/generated/contracts/openapi/platform-public/zod.gen.ts",
+      "sha256": "sha256:1351b1c72b05e6760efe64d9a27b0960f83d5de89c86ff0aa58964ed0a17143f"
+    },
+    {
+      "path": "src/generated/contracts/platform-admin-command@v2/digest.ts",
+      "sha256": "sha256:a68d026097535ddb87a0eabcad8baf774ffe84b4b68201eff9ce647d8f0c2074"
+    },
+    {
+      "path": "src/generated/contracts/platform-admin-command@v2/metadata.ts",
+      "sha256": "sha256:9b556cd9450052f7b9891c354222d479f2948ba0d9a7d9fed45b08dbdaa8d7c2"
+    },
+    {
+      "path": "src/generated/contracts/platform-admin-commerce@v1/digest.ts",
+      "sha256": "sha256:bf16d198dd2a244e9e7939a5310ca7e8783a1bd70b7f4066a8398457041e912e"
+    },
+    {
+      "path": "src/generated/contracts/platform-admin-commerce@v1/metadata.ts",
+      "sha256": "sha256:5220e6118e9e298b2de283166ce3386c37a4d80afada298df8ac9a52834f0681"
+    },
+    {
+      "path": "src/generated/contracts/platform-admin-credit@v1/digest.ts",
+      "sha256": "sha256:339de87e9d5428fba70e65efaa20821b21ad5907544a7c227ca63a7c31a9ed1d"
+    },
+    {
+      "path": "src/generated/contracts/platform-admin-credit@v1/metadata.ts",
+      "sha256": "sha256:186acf6ee252ee4dc585e56ec095825203e333cea51d1950c8bad7b512cebd30"
+    },
+    {
+      "path": "src/generated/contracts/platform-admin-identity@v1/digest.ts",
+      "sha256": "sha256:84a45dacef6d42822d90b286a1c98554427668b7c6c8846e98644a99cfa9d03c"
+    },
+    {
+      "path": "src/generated/contracts/platform-admin-identity@v1/metadata.ts",
+      "sha256": "sha256:1bb4df9d091ffbdf6918d461e4c46096c9d5708f74499d30610b992d52dfb461"
+    },
+    {
+      "path": "src/generated/contracts/platform-admin-query@v2/metadata.ts",
+      "sha256": "sha256:43eaa5874a2a178b9a94f6638c9eedcfe14d7272d93a2a78d53abe58ab42dfc6"
+    },
+    {
+      "path": "src/generated/contracts/platform-admission@v1/metadata.ts",
+      "sha256": "sha256:a8275f7c4dd03c4eb60522aecc3076bda98ae2eafe98431fc0cf9d1253fd83eb"
+    },
+    {
+      "path": "src/generated/contracts/platform-asset-eligibility@v1/metadata.ts",
+      "sha256": "sha256:07f27c425de521cafb42bc5a84a2aae8df03bed2340f609b46939613139fb308"
+    },
+    {
+      "path": "src/generated/contracts/platform-capability-projection@v1/metadata.ts",
+      "sha256": "sha256:7b444d6579d65599cd579d99ad9179eba0ce441ae988c6611195acdb9dd6bf04"
+    },
+    {
+      "path": "src/generated/contracts/platform-credit-cost-projection-recovery@v1/digest.ts",
+      "sha256": "sha256:8cf830feacf105de41ff81c027076d0555466440d53cb7f4934fa8c48f99bedc"
+    },
+    {
+      "path": "src/generated/contracts/platform-credit-cost-projection-recovery@v1/metadata.ts",
+      "sha256": "sha256:4898b2d627e993a47a6a7dd87471126a6dbaed99c4b9b8300c9e9d806d80f262"
+    },
+    {
+      "path": "src/generated/contracts/platform-media-projection-recovery@v1/digest.ts",
+      "sha256": "sha256:653db5cd3310fa887a28e281e0b87b1cd05e7181b16cc0f85be718c6a3bd087b"
+    },
+    {
+      "path": "src/generated/contracts/platform-media-projection-recovery@v1/metadata.ts",
+      "sha256": "sha256:53f7522f1dbc358754d488952d7f3324ef89430e5cf5ab348ba4d5957670837b"
+    },
+    {
+      "path": "src/generated/contracts/platform-media-runtime@v1/metadata.ts",
+      "sha256": "sha256:79d02a6ede9a05312b59b462de749ea54bf613e9408b9779cbec43f72a2382d0"
+    },
+    {
+      "path": "src/generated/contracts/platform-model-control@v1/digest.ts",
+      "sha256": "sha256:77350966afcdcc71840493684959df5308b79f40e54a70849c9212dabb751ad9"
+    },
+    {
+      "path": "src/generated/contracts/platform-model-control@v1/errors.ts",
+      "sha256": "sha256:651ea50cc9ba1b6bb821bad2d20f8e6e8476b737ef184fa92c773a1d28d2c66e"
+    },
+    {
+      "path": "src/generated/contracts/platform-model-control@v1/metadata.ts",
+      "sha256": "sha256:49f96ace7baeed0e3d913520f600f38fa58485ee417ad8c9e11530818c04b28f"
+    },
+    {
+      "path": "src/generated/contracts/platform-product-catalog-publication@v1/digest.ts",
+      "sha256": "sha256:44627d08453b9488e4bc5f073919f010211f5ece103793f0e00f3a01de95bb3b"
+    },
+    {
+      "path": "src/generated/contracts/platform-product-catalog-publication@v1/metadata.ts",
+      "sha256": "sha256:e6df6547a33d7fb8b42abc77c36c219d4225beb11138a9e717a3a62181f2a01d"
+    },
+    {
+      "path": "src/generated/contracts/platform-session-authorization@v2/metadata.ts",
+      "sha256": "sha256:3c7bb7caae64f287b8edbe5c94ff5bba60d3211115eed5cf26f4e1826a4855e1"
+    },
+    {
+      "path": "src/generated/contracts/platform-site-evidence-admission@v1/digest.ts",
+      "sha256": "sha256:83688f37b17e7294f883c5ba934a31b504a1241b46be18a9e0b00e06a3cb00ce"
+    },
+    {
+      "path": "src/generated/contracts/platform-site-evidence-admission@v1/metadata.ts",
+      "sha256": "sha256:38176304847ffe66d05fabd1e4a27e349f022916e23a670821ead16fdd559e3d"
+    },
+    {
+      "path": "src/generated/contracts/platform-site-lifecycle@v1/digest.ts",
+      "sha256": "sha256:df356776589d00d1354a8bc0545670e467afcd44b3b83b1a73a2d44a6568a594"
+    },
+    {
+      "path": "src/generated/contracts/platform-site-lifecycle@v1/metadata.ts",
+      "sha256": "sha256:38a756b13aa2f48bc2fc1287b86ed8f870d961c0f1fc30a2bb166148df56e035"
+    },
+    {
+      "path": "src/generated/contracts/platform-site-provisioning@v1/digest.ts",
+      "sha256": "sha256:c41ed8db09317abf2bea24f0f47b45378155043c7183b43722e8a759531c4295"
+    },
+    {
+      "path": "src/generated/contracts/platform-site-provisioning@v1/metadata.ts",
+      "sha256": "sha256:1261c4ba743621b5bd7a05310b3997c1651274fc11fed7b1aed6e64c4d6cc945"
+    },
+    {
+      "path": "src/generated/contracts/platform-site-publication@v1/digest.ts",
+      "sha256": "sha256:10349f67d984f6032d1990aacf924f67b3d92b1975f15cdff6027fd9c617f35c"
+    },
+    {
+      "path": "src/generated/contracts/platform-site-publication@v1/metadata.ts",
+      "sha256": "sha256:0a1acd39a3dff344b1947003738b334e4faeece286d36374788329ff17aa6a36"
+    },
+    {
+      "path": "src/generated/contracts/projection/integrity-v1.json",
+      "sha256": "sha256:29e8d50c9c03fe3cbc1045bf022c46b9fe130ca44b6d28a4f8b8e269066cc29c"
+    },
+    {
+      "path": "src/generated/contracts/registry/boundaries.yaml",
+      "sha256": "sha256:1c6768c25ea99ee2fa8904310e379e337d37ce67af0f5f7e6f801e194d33467a"
+    },
+    {
+      "path": "src/generated/contracts/session-admission-owner@v1/metadata.ts",
+      "sha256": "sha256:e68e07340e1acde5ae1ef0fe229634a8959318e1d474713d2e676e51c117219f"
+    },
+    {
+      "path": "src/generated/contracts/session-dispatch-owner-evidence@v1/metadata.ts",
+      "sha256": "sha256:abb79b5b808b511f99c8921de0240b6f4ff24101e861ef0235eec82309708bf8"
+    },
+    {
+      "path": "src/generated/contracts/session-media-projection-ingest@v1/metadata.ts",
+      "sha256": "sha256:560c09fbff434183474fb37a5379e4adbcc5ded5c98039e05a8f8de4e58ecfed"
+    },
+    {
+      "path": "src/generated/contracts/session-media-projection@v1/metadata.ts",
+      "sha256": "sha256:01dda8f7bf9f4d84e557ea6360cd40ab2c2cc7ef5c09039478ce1e799249d13e"
+    },
+    {
+      "path": "src/generated/contracts/site/publication-command-v1.json",
+      "sha256": "sha256:fe95242fec4c006fe074532ab1bacb1bdbc0d0175cf30bfbdc44ca6182af18a6"
+    },
+    {
+      "path": "src/generated/contracts/web/release-composition-v1.json",
+      "sha256": "sha256:93be4068ce7c21a336bf84e9bd341c848907c93fe4de9adc5f04a1a74827b9d8"
+    },
+    {
+      "path": "src/generated/proto/buf/validate/validate_pb.ts",
+      "sha256": "sha256:ef1dae2da337e6f88ffb333624d946b65e289d4b816920f85ffcad50261a30a0"
+    },
+    {
+      "path": "src/generated/proto/kokoro/agent/execution/v1/agent_execution_evidence_pb.ts",
+      "sha256": "sha256:930c3f7264796006a43baf12d271c411adb48cf46481f10d9bbd059b98e4b066"
+    },
+    {
+      "path": "src/generated/proto/kokoro/agent/execution/v2/agent_execution_evidence_pb.ts",
+      "sha256": "sha256:5798d9fb59f14269b354f36c51f23bef985a14b44fca144dd097264eabcabaca"
+    },
+    {
+      "path": "src/generated/proto/kokoro/common/v1/error_pb.ts",
+      "sha256": "sha256:c0b06f3d5853cddc60b3ba2f7b1db141a9fdb67d3dd5df7bd09f572cd12fb31d"
+    },
+    {
+      "path": "src/generated/proto/kokoro/common/v1/projection_integrity_pb.ts",
+      "sha256": "sha256:3e6d6ff51cb19481c09fd202303395ed0183aef136bdf9285e28aeab7acea406"
+    },
+    {
+      "path": "src/generated/proto/kokoro/common/v1/receipt_pb.ts",
+      "sha256": "sha256:5e5f8d4393d499fec04ac60509e6cee7710c257e59faa23c97a0f06eb74d870e"
+    },
+    {
+      "path": "src/generated/proto/kokoro/common/v2/command_envelope_pb.ts",
+      "sha256": "sha256:c0650bf4519b0b4a7f4b9f9ec665978297abc66847207ef720d534ce4ff73a5a"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/admin/v2/admin_command_pb.ts",
+      "sha256": "sha256:546659a248f01ea336ae7db449823fd95dfac7cb52c84286eb72dcf1dfdf0793"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/admin/v2/admin_query_pb.ts",
+      "sha256": "sha256:ee09dfc7d84b928c139709a779c577fde2c86fcdf95270b7f26ca0b6799a78c0"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/admin/v2/admin_shared_pb.ts",
+      "sha256": "sha256:69e08953b9fb9437a0078370c29b9f38ce907139184e94e7e73c091668256239"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/admission/v1/admission_pb.ts",
+      "sha256": "sha256:566e076388584dc45d9a3475e9020bc003b8ec4177342dc96ebbac0868e687b9"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/asset/v1/asset_eligibility_pb.ts",
+      "sha256": "sha256:05ba625aeadf90617a608a063cb9bacf8168b9c24dbe37b746d457806b2deadc"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/authorization/v2/scoped_session_authorization_pb.ts",
+      "sha256": "sha256:7de44e2eea24e772c79fa88e75ebd5b9f977cd2b095fa3d955698d6cfe6889e9"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/capability/v1/capability_catalog_pb.ts",
+      "sha256": "sha256:75d341401afba7fdab4fd5b44f229f9ff2d15459f12356d0fa81670d8094b4ca"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/commerce/v1/admin_commerce_pb.ts",
+      "sha256": "sha256:51d9a3732fa7943d231d59ae04cbfc624e1ec64efef54fefa3b0e6fa06f458c0"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/commerce/v1/commerce_catalog_pb.ts",
+      "sha256": "sha256:763e567c683ba829a1797e0b2d11877a2f494d432c9efa1c83ce0f8fd92c0448"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/commerce/v1/commerce_control_pb.ts",
+      "sha256": "sha256:b162330c863186cb14979b36207f778ce2ed73b838ac376245e08185f1f8e275"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/commerce/v1/fulfillment_pb.ts",
+      "sha256": "sha256:daa8ebe4f16917ffb0e31e23732cc3222e55ec0ebee8e911e6e161756fdc1984"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/credit/v1/admin_credit_pb.ts",
+      "sha256": "sha256:03641406a64745a45b15c2ff53d1a1bf867c0a4136316aaf20e896ff474511e8"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/credit/v1/cost_projection_pb.ts",
+      "sha256": "sha256:8ae8d97557e511cd705392cd662cbbfa6f123c27d0faecb817d278c53fe23082"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/credit/v1/cost_projection_recovery_pb.ts",
+      "sha256": "sha256:d29376d0a1982e3a692a8da82501d7d3447ecf4f16beb5f4082201a80fd8b3bb"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/identity/v1/admin_identity_pb.ts",
+      "sha256": "sha256:4af6e3e891c539f14c625d226a803eda3d5fe6d7ac40c80d94e0a40fb4150c77"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/media/v1/media_canonical_pb.ts",
+      "sha256": "sha256:ee52e188faf8da2e623eaeb7bd3adb258baaec314f4ec4aaac5dac0041f185da"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/media/v1/media_projection_pb.ts",
+      "sha256": "sha256:2fcd89606ba61d0ed80eab09fd25033b3b26fef2bd11954033193bc33fe42533"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/media/v1/media_projection_recovery_pb.ts",
+      "sha256": "sha256:7a7c0b245919be2b8492f4bdbaf5961e61b1f9d701a32b38c452dc1203acc4c9"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/media/v1/media_runtime_pb.ts",
+      "sha256": "sha256:a4ca7b34e0ed42bcd393586d2df4855087b821655dccfd4a9c9e4e2cd61cf073"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/model/image/v1/image_effect_pb.ts",
+      "sha256": "sha256:818e9d5b843c288dbd2b24d04e3a45fcbd671d329c2a271a854e52087478ff06"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/model/v1/model_control_pb.ts",
+      "sha256": "sha256:6a447ecf870af5aac470ebe2bf24fb20c9cfabaf02df053556c51ce56b0c15d6"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/model/v1/model_gateway_pb.ts",
+      "sha256": "sha256:d18b2f231c5181e83b1c9762538a6546133a0971e619e08153224eddba45a918"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/product/v1/product_catalog_publication_pb.ts",
+      "sha256": "sha256:95f6cd8399c565da26974bec994354feec27c109b9a27d5d1d23719cd7f799b3"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/publication/v1/publication_common_pb.ts",
+      "sha256": "sha256:3432bfe7bda80739b375c3fd38e0d42bb24634a5176b33d83b9b0cf5a1aaaaa9"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/site/v1/site_lifecycle_pb.ts",
+      "sha256": "sha256:230660dab0c00852889b806caf481af2a1289389d4d20ad314c59a98777559f7"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/site/v1/site_provisioning_pb.ts",
+      "sha256": "sha256:2548249c2f4a5e05d0253891f67b7ed9944a412733c3aafc13ec198316d5a03d"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/site/v1/site_publication_pb.ts",
+      "sha256": "sha256:d2a34d27e92bc6c6e50b56cfad36e55f2f986e38bb6575a814718e3b501ee275"
+    },
+    {
+      "path": "src/generated/proto/kokoro/session/admission/v1/session_admission_owner_pb.ts",
+      "sha256": "sha256:5940feeb81c4c1b02da91678a25d04745add82f6687a3d6137c5e248840c1eee"
+    },
+    {
+      "path": "src/generated/proto/kokoro/session/dispatch/v1/dispatch_owner_evidence_pb.ts",
+      "sha256": "sha256:7f255718dadc6b2e821d14ec2f898a4193a55c850ce86bdf3930adda4b3f51a5"
+    },
+    {
+      "path": "src/generated/proto/kokoro/session/media/v1/media_projection_ingest_pb.ts",
+      "sha256": "sha256:4cc516ae60fe4f093fc889045484658f059ebea89625dcbada067f4972508819"
+    },
+    {
+      "path": "src/generated/proto/kokoro/session/media/v1/media_projection_pb.ts",
+      "sha256": "sha256:0de50df9066c091e3121331fe0604657d79479bc3bd69cabedadc72ff8db6330"
+    },
+    {
+      "path": "src/generated/schema/asset-data-plane-v1.yaml",
+      "sha256": "sha256:33de398d498d8a11cd9ce65b63824b171aa9b0894952f901cde0672ec07fb1aa"
+    },
+    {
+      "path": "src/generated/schema/media-projection.yaml",
+      "sha256": "sha256:f1f3d8838186f49e9dbe59911f2307f03b01b5b9b9f05980bd30dcaa2277e0ca"
+    },
+    {
+      "path": "src/generated/schema/platform-public-v1.yaml",
+      "sha256": "sha256:e117d10992722ffee6a3d7cead24e8329924af663ca6b13f216044e6af88f052"
+    },
+    {
+      "path": "src/generated/schema/platform-runtime.yaml",
+      "sha256": "sha256:b959bdcdd6c4e6fc3749d26e8f96862144efab97493422206b1da1b2cbebe4a2"
+    },
+    {
+      "path": "src/generated/schema/platform-session-authorization-v2.yaml",
+      "sha256": "sha256:9fe15d0ad9a58c6574bd62d5c47429d23247a917a88efadc0df66bd0d7040d05"
+    },
+    {
+      "path": "src/generated/schema/product-catalog/launch-product-profile.schema.json",
+      "sha256": "sha256:2a94462472fcb15a51c380047d5de3cd06c5c8c255e7157bf22153b576fdbda7"
+    },
+    {
+      "path": "src/generated/schema/product-catalog/product-surface-catalog.schema.json",
+      "sha256": "sha256:d37698e12299f61079d704d9ed1996fcc4545d7771b7dfa1b05228cce1d1546c"
+    },
+    {
+      "path": "src/generated/schema/product-catalog/validator.ts",
+      "sha256": "sha256:cb550a0c3241c6ce277e25b2dda6f87c7b0eb6c342d1b6dbce9da6e901b38792"
+    },
+    {
+      "path": "src/generated/schema/site-publication/compiled-web-manifest.schema.json",
+      "sha256": "sha256:d80a198e3fafc73b9ea759f2ba9b8fe17174297135c106097ba2295b11554b99"
+    },
+    {
+      "path": "src/generated/schema/site-publication/release-certification-instance.schema.json",
+      "sha256": "sha256:2e0f27eddd0be8fed7f7b12425dd928ab36fe5b73315a83fbd785c7b500116d1"
+    },
+    {
+      "path": "src/generated/schema/site-publication/site-release-candidate.schema.json",
+      "sha256": "sha256:d6e31adf4014fc235a8c029baeb119862be77df67adb6ab5fedf32d9b3754045"
+    },
+    {
+      "path": "src/generated/schema/site-publication/site-release.schema.json",
+      "sha256": "sha256:f980d25f590c2895738ff78c75d7c827024ebdaf72e38d4995d731e24dfc54e9"
+    },
+    {
+      "path": "src/generated/schema/site-publication/surface-inventory.schema.json",
+      "sha256": "sha256:9ddca157bfd2dbb9db0ce6fa9ff97742348c198908a38b9e50cb0384c22ee08c"
+    },
+    {
+      "path": "src/generated/schema/site-publication/validator.ts",
+      "sha256": "sha256:184bc03826a2e60a65d37a94bf77c8861bdfb757aa9c3bd1faa08e6d14191302"
+    },
+    {
+      "path": "src/generated/schema/site-publication/web-artifact-provenance-profile.schema.json",
+      "sha256": "sha256:42099053581a28b790237f5dadd8c06e422b21ac1e08e78edaaf1137993ffe05"
+    },
+    {
+      "path": "src/generated/schema/site-publication/web-build-intent.schema.json",
+      "sha256": "sha256:69f4f1dc053df5aa456b23f15dc8dd1280372b9a3fab17815f5ef9ba4a0e4ec5"
+    },
+    {
+      "path": "src/generated/schema/site-publication/web-build-material-bundle.schema.json",
+      "sha256": "sha256:5146ef2e810c42d221f63df7eea17921b69c65329e60a3ee60024c4730228c00"
+    }
+  ],
+  "manifestDigest": "sha256:e2e535ae567d4aa5affca87974af86c2cada9ff7c007bca8f087816812ed4daa"
+}

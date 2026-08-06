@@ -7,7 +7,7 @@ import {
 import {
   validateLaunchProfileShape,
   validateProductCatalogShape,
-} from "../../../interfaces/json-schema/generated-product-catalog/product-publication-schema-validator.js";
+} from "../../../generated/schema/product-catalog/validator.js";
 
 interface CatalogProduct {
   readonly productRef: string;

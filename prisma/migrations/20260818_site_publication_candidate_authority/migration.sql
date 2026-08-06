@@ -168,7 +168,7 @@ RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF NEW.candidate_ref<>OLD.candidate_ref OR NEW.candidate_version<>OLD.candidate_version OR
      NEW.candidate_digest<>OLD.candidate_digest OR OLD.state<>'authorized' OR NEW.state<>'revoked' OR
-     NEW.authorization_epoch<=OLD.authorization_epoch OR
+     NEW.authorization_epoch<>OLD.authorization_epoch+1 OR
      NEW.updated_by_command_id=OLD.updated_by_command_id OR NEW.updated_at<=OLD.updated_at THEN
     RAISE EXCEPTION 'SITE_CANDIDATE_AUTHORIZATION_TRANSITION_INVALID';
   END IF;
@@ -320,16 +320,3 @@ REVOKE ALL ON TABLE platform.site_activation_authority_snapshot FROM PUBLIC;
 REVOKE ALL ON TABLE platform.site_activation_eligibility_evidence FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.reject_immutable_site_publication_authority_mutation() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.site_candidate_authorization_epoch_guard() FROM PUBLIC;
-
-GRANT SELECT,INSERT ON platform.site_release_candidate_authority TO platform_admin;
-GRANT SELECT,INSERT,UPDATE ON platform.site_release_candidate_authorization TO platform_admin;
-GRANT SELECT,INSERT ON platform.site_publication_revision TO platform_admin;
-GRANT SELECT ON platform.site_release_candidate_authority TO platform_worker;
-GRANT SELECT ON platform.site_release_candidate_authorization TO platform_worker;
-GRANT SELECT,INSERT ON platform.site_publication_revision TO platform_worker;
-GRANT SELECT,INSERT ON platform.site_active_release_pointer TO platform_admin;
-GRANT SELECT,INSERT,UPDATE ON platform.site_active_release_pointer TO platform_worker;
-GRANT SELECT,INSERT ON platform.site_activation_authority_snapshot TO platform_admin;
-GRANT SELECT,INSERT ON platform.site_activation_authority_snapshot TO platform_worker;
-GRANT SELECT ON platform.site_activation_eligibility_evidence TO platform_admin;
-GRANT SELECT,INSERT ON platform.site_activation_eligibility_evidence TO platform_worker;

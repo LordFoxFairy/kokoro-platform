@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
 import type { PlatformUnitOfWork } from "../../../../shared/unit-of-work/unit-of-work.js";
 import type { JsonValue } from "../../../../shared/outbox-inbox/receipt.js";
+import type { RedemptionReceipt } from
+  "../../../../generated/contracts/openapi/platform-public/types.gen.js";
 import type { CommerceCommandFence } from "../command-fence.js";
 import type {
   RedemptionConfirmationRepository,
@@ -17,7 +19,7 @@ export type ConfirmRedemptionView =
   | Readonly<{
     kind: "succeeded";
     command: RedemptionCommandCursor;
-    redemption: Omit<StoredRedemptionReceipt, "commandReceivedAt" | "commandUpdatedAt">;
+    redemption: PublicRedemptionReceipt;
   }>
   | Readonly<{
     kind: "rejected";
@@ -41,6 +43,13 @@ type RedemptionCommandCursor = Readonly<{
   requestDigest: string;
   updatedAt: string;
 }>;
+
+type PublicRedemptionReceipt = Readonly<
+  Omit<RedemptionReceipt, "outputs" | "reversalRefs"> & {
+    outputs: readonly Readonly<RedemptionReceipt["outputs"][number]>[];
+    reversalRefs: readonly string[];
+  }
+>;
 
 export class ConfirmRedemptionService {
   readonly #clock: () => Date;
@@ -155,11 +164,36 @@ export function redemptionCommandView(
 }
 
 function succeededView(receipt: StoredRedemptionReceipt, requestDigest: string): ConfirmRedemptionView {
-  const { commandReceivedAt, commandUpdatedAt, ...redemption } = receipt;
+  const redemption = Object.freeze({
+    commandId: receipt.commandId,
+    fulfillmentRef: receipt.fulfillmentRef,
+    outputSetDigest: receipt.outputSetDigest,
+    outputs: Object.freeze(receipt.outputs.map((output) => Object.freeze({
+      kind: output.kind,
+      outputLineId: output.outputLineId,
+      resourceRef: output.resourceRef,
+      templateRevisionRef: output.templateRevisionRef,
+    } satisfies RedemptionReceipt["outputs"][number]))),
+    planRef: receipt.planRef,
+    planVersionRef: receipt.planVersionRef,
+    productRef: receipt.productRef,
+    productVersionRef: receipt.productVersionRef,
+    redeemedAt: receipt.redeemedAt,
+    redemptionId: receipt.redemptionId,
+    reversalRefs: Object.freeze([...receipt.reversalRefs]),
+    safeCodeFingerprint: receipt.safeCodeFingerprint,
+    state: receipt.state,
+    stateObservedAt: receipt.stateObservedAt,
+  } satisfies PublicRedemptionReceipt);
   return Object.freeze({
     kind: "succeeded" as const,
-    command: cursor(receipt.commandId, requestDigest, commandReceivedAt, commandUpdatedAt),
-    redemption: Object.freeze(redemption),
+    command: cursor(
+      receipt.commandId,
+      requestDigest,
+      receipt.commandReceivedAt,
+      receipt.commandUpdatedAt,
+    ),
+    redemption,
   });
 }
 

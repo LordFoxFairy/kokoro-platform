@@ -162,6 +162,7 @@ export interface UsageSettlementRepository {
   lockUsageContext(transaction: PlatformTransaction, input: Readonly<{
     siteId: string;
     authorizationSegmentRef: string;
+    authority: "producer" | "settlement_owner";
   }>): Promise<StoredUsageSettlementContext | null>;
   loadCommittedAttemptMaximum(transaction: PlatformTransaction, input: Readonly<{
     siteId: string;

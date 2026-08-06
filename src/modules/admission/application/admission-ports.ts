@@ -14,7 +14,7 @@ import type {
   ReconcileRunAuthorizationEffect,
   ReleasedRunAuthorizationSchema,
   ReleaseRunAuthorizationEffect,
-} from "../../../interfaces/connect/generated/kokoro/platform/admission/v1/admission_pb.js";
+} from "../../../generated/proto/kokoro/platform/admission/v1/admission_pb.js";
 
 export type AdmissionOperationName =
   | "prepare_run"

@@ -27,6 +27,10 @@ export interface SiteAuthorityRepository {
     siteRef: string,
     releaseRef: string,
   ): Promise<SiteRelease | null>;
+  loadActivationForBegin(
+    transaction: PlatformTransaction,
+    attemptRef: string,
+  ): Promise<ActivationAttempt | null>;
   loadActivationForUpdate(
     transaction: PlatformTransaction,
     attemptRef: string,

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { CreditProgramCatalogService } from
   "../../src/modules/commerce/application/credit-program-catalog-service.js";
@@ -33,8 +34,29 @@ const definition: CreditProgramDefinition = Object.freeze({
   allowNegativeBalance: false,
   accountingPolicyRef: "accounting:standard-credit-v1",
 });
+const catalogMigration = readFileSync(new URL(
+  "../../prisma/migrations/20260816_commerce_credit_program_catalog_owner/migration.sql",
+  import.meta.url,
+), "utf8");
 
 describe("Commerce-owned global Program catalog", () => {
+  it("owns an exact immutable-fact trigger instead of calling a missing generic helper", () => {
+    expect(catalogMigration).toContain(
+      "CREATE FUNCTION platform.reject_credit_program_catalog_mutation()",
+    );
+    expect(catalogMigration).toContain("SET search_path=pg_catalog,platform");
+    expect(catalogMigration).toContain(
+      "RAISE EXCEPTION 'CREDIT_PROGRAM_CATALOG_FACT_IMMUTABLE' USING ERRCODE='23000'",
+    );
+    expect(catalogMigration).toContain(
+      "REVOKE ALL ON FUNCTION platform.reject_credit_program_catalog_mutation() FROM PUBLIC",
+    );
+    expect(catalogMigration).not.toContain("platform.reject_immutable_mutation()");
+    expect(catalogMigration.match(
+      /EXECUTE FUNCTION platform\.reject_credit_program_catalog_mutation\(\)/gu,
+    )).toHaveLength(4);
+  });
+
   it("commits the exact catalog mapping, not only reusable definition bytes", () => {
     const empty = `sha256:${createHash("sha256").update("").digest("hex")}`;
     const definitionDigest = `sha256:${"a".repeat(64)}`;

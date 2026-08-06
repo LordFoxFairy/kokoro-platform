@@ -5,11 +5,11 @@ import { TLSSocket } from "node:tls";
 import { connectNodeAdapter } from "@connectrpc/connect-node";
 import type { PlatformTransactionalDatabaseClient } from "../infrastructure/postgres/client.js";
 import { resolvePlatformTransaction } from "../shared/unit-of-work/platform-transaction.js";
-import { AdmissionService } from "../interfaces/connect/generated/kokoro/platform/admission/v1/admission_pb.js";
+import { AdmissionService } from "../generated/proto/kokoro/platform/admission/v1/admission_pb.js";
 import { AssetEligibilityService as AssetEligibilityConnectDefinition } from
-  "../interfaces/connect/generated-asset-eligibility/kokoro/platform/asset/v1/asset_eligibility_pb.js";
+  "../generated/proto/kokoro/platform/asset/v1/asset_eligibility_pb.js";
 import { CapabilityCatalogProjectionService as CapabilityProjectionConnectDefinition } from
-  "../interfaces/connect/generated-capability-catalog/kokoro/platform/capability/v1/capability_catalog_pb.js";
+  "../generated/proto/kokoro/platform/capability/v1/capability_catalog_pb.js";
 import { AdmissionApplicationService } from "../modules/admission/application/admission-service.js";
 import type { AdmissionCaller, AdmissionOwnerAuthority } from "../modules/admission/application/admission-ports.js";
 import {

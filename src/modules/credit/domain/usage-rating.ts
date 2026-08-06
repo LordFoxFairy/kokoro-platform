@@ -72,6 +72,17 @@ export type RatingPolicyRevision = Readonly<{
   rules: readonly RatingRule[];
 }>;
 
+export function defineRatingPolicyRevision(input: RatingPolicyRevision): RatingPolicyRevision {
+  validatePolicy(input);
+  return Object.freeze({
+    ratingPolicyRevisionRef: input.ratingPolicyRevisionRef,
+    customerUnit: input.customerUnit,
+    chargeableAttemptOutcomes: Object.freeze([...input.chargeableAttemptOutcomes]),
+    minimumAmount: input.minimumAmount,
+    rules: Object.freeze(input.rules.map((rule) => Object.freeze({ ...rule }))),
+  });
+}
+
 export type RatedUsageLineItem = Readonly<{
   dimensionKey: string;
   quantity: bigint;

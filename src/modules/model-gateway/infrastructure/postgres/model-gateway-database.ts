@@ -52,6 +52,7 @@ interface AuthorizationRow extends Record<string, unknown> {
   executionManifestRef: string;
   authorizationSegmentRef: string;
   authorizedGatewayModel: string;
+  providerModel: unknown;
   adapterKind: string;
   expiresAt: Date | string;
 }
@@ -199,7 +200,8 @@ export class PostgresModelGatewayDatabase implements ModelGatewayUnitOfWork, Mod
         `SELECT authorization_handle AS "modelAuthorizationHandle",site_ref AS "siteId",
                 execution_manifest_ref AS "executionManifestRef",
                 authorization_segment_ref AS "authorizationSegmentRef",
-                gateway_model AS "authorizedGatewayModel",adapter_kind AS "adapterKind",
+                gateway_model AS "authorizedGatewayModel",provider_model AS "providerModel",
+                adapter_kind AS "adapterKind",
                 expires_at AS "expiresAt"
            FROM platform.resolve_model_gateway_authorization($1,$2)`,
         [scope.modelAuthorizationHandle, scope.operation],
@@ -363,13 +365,15 @@ function mapAuthorization(
   operation: "prepare" | "attach" | "claim" | "frame" | "finalize" | "unknown",
 ): ModelInvocationAuthorization {
   const expiresAt = row.expiresAt instanceof Date ? row.expiresAt.toISOString() : row.expiresAt;
-  if (row.modelAuthorizationHandle !== expectedHandle || row.adapterKind !== "litellm" ||
+  if (row.modelAuthorizationHandle !== expectedHandle ||
+      (row.adapterKind !== "litellm" && row.adapterKind !== "direct") ||
+      typeof row.providerModel !== "string" ||
       !Number.isFinite(Date.parse(expiresAt)) ||
       (operation === "prepare" && Date.parse(expiresAt) <= Date.now())) {
     throw new Error("MODEL_GATEWAY_AUTHORIZATION_INVALID");
   }
   for (const value of [row.siteId, row.executionManifestRef, row.authorizationSegmentRef,
-    row.authorizedGatewayModel]) {
+    row.authorizedGatewayModel, row.providerModel]) {
     if (value.length < 1 || value.length > 256 || /[\0\r\n]/u.test(value)) {
       throw new Error("MODEL_GATEWAY_AUTHORIZATION_INVALID");
     }
@@ -380,6 +384,8 @@ function mapAuthorization(
     executionManifestRef: row.executionManifestRef,
     authorizationSegmentRef: row.authorizationSegmentRef,
     authorizedGatewayModel: row.authorizedGatewayModel,
+    providerModel: row.providerModel,
+    adapterKind: row.adapterKind,
     expiresAt: new Date(expiresAt).toISOString(),
   });
 }
@@ -481,6 +487,11 @@ const RUNTIME_IDENTITY_SQL = `
       AND (has_table_privilege(current_user, 'platform.model_gateway_frame', 'SELECT') AND has_table_privilege(current_user, 'platform.model_gateway_frame', 'INSERT'))
       AND has_table_privilege(current_user,'platform.model_gateway_dispatch_queue','INSERT')
       AND NOT has_table_privilege(current_user,'platform.model_gateway_dispatch_queue','SELECT')
+      AND has_column_privilege(current_user,'platform.model_gateway_dispatch_queue','site_ref','SELECT')
+      AND has_column_privilege(current_user,'platform.model_gateway_dispatch_queue','invocation_ref','SELECT')
+      AND has_column_privilege(current_user,'platform.model_gateway_dispatch_queue','state','SELECT')
+      AND has_column_privilege(current_user,'platform.model_gateway_dispatch_queue','dispatch_owner_ref','SELECT')
+      AND has_column_privilege(current_user,'platform.model_gateway_dispatch_queue','dispatch_lease_expires_at','SELECT')
       AND has_column_privilege(current_user,'platform.model_gateway_dispatch_queue','state','UPDATE')
       AND has_column_privilege(current_user,'platform.model_gateway_dispatch_queue','dispatch_owner_ref','UPDATE')
       AND has_column_privilege(current_user,'platform.model_gateway_dispatch_queue','dispatch_lease_expires_at','UPDATE')

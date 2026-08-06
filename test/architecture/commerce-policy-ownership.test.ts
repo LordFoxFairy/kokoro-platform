@@ -19,6 +19,24 @@ describe("Commerce policy ownership", () => {
     expect(existsSync(join(sourceRoot, "workflows"))).toBe(false);
   });
 
+  it("does not mount an Unimplemented AdminCommerce placeholder in production", () => {
+    const placeholder = join(
+      sourceRoot,
+      "modules",
+      "commerce",
+      "interfaces",
+      "connect",
+      "admin-commerce-service.ts",
+    );
+    const composition = readFileSync(join(sourceRoot, "process", "admin-composition.ts"), "utf8");
+
+    expect(existsSync(placeholder)).toBe(false);
+    expect(composition).not.toContain("generated/proto/kokoro/platform/commerce/v1/admin_commerce_pb.js");
+    expect(composition).not.toContain("admin-commerce-service.js");
+    expect(composition).not.toContain("createAdminCommerceConnectService");
+    expect(composition).not.toContain("router.service(AdminCommerceService");
+  });
+
   it("reserves orchestration for journeys spanning multiple bounded contexts", () => {
     const orchestrationRoot = join(sourceRoot, "orchestration");
     const violations: string[] = [];

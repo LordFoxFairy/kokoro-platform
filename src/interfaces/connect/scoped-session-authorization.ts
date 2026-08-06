@@ -26,7 +26,7 @@ import {
   SignedAuthorizationEventSchema,
   type AuthorizationEventSigningPayload,
   type AuthorizationSnapshotRecord,
-} from "./generated-authorization-v2/kokoro/platform/authorization/v2/scoped_session_authorization_pb.js";
+} from "../../generated/proto/kokoro/platform/authorization/v2/scoped_session_authorization_pb.js";
 
 export type ScopedSessionAuthorizationFeedService = ServiceImpl<typeof ScopedSessionAuthorizationService>;
 const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;

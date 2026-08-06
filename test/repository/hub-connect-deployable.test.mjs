@@ -24,9 +24,11 @@ const requiredRuntimeEnvironment = Object.freeze([
   "KOKORO_HUB_CATALOG_PLATFORM_CALLER_SAN_URI",
   "KOKORO_HUB_RUNTIME_AGENT_CALLER_SAN_URI",
   "KOKORO_HUB_CAPABILITY_SIGNING_KEY_REF",
+  "KOKORO_HUB_CAPABILITY_SIGNING_TRUST_ROOT",
   "KOKORO_HUB_CAPABILITY_SIGNING_KEY_FILE",
   "KOKORO_HUB_PLATFORM_PROJECTION_BASE_URL",
   "KOKORO_HUB_PLATFORM_PROJECTION_SERVER_NAME",
+  "KOKORO_HUB_PLATFORM_PROJECTION_TRUST_ROOT",
   "KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_KEY_FILE",
   "KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_CERT_FILE",
   "KOKORO_HUB_PLATFORM_PROJECTION_SERVER_CA_FILE",
@@ -43,9 +45,10 @@ test("the closed image selector starts the compiled Hub Connect main independent
   ]);
   assert.match(
     entrypoint,
-    /"platform-hub-connect":\s*\{\s*module:\s*"\.\.\/\.\.\/kokoro-hub\/dist\/interfaces\/connect\/main\.js",\s*start:\s*"runHubConnectMain",?\s*\}/u,
+    /"platform-hub-connect":\s*\{\s*module:\s*"\.\.\/\.\.\/dist\/src\/process\/hub-connect\.js",\s*start:\s*"runHubConnectMain",?\s*\}/u,
   );
-  assert.match(imageVerifier, /kokoro-hub\/dist\/interfaces\/connect\/main\.js/u);
+  assert.match(imageVerifier, /dist\/src\/process\/hub-connect\.js/u);
+  assert.doesNotMatch(imageVerifier, /kokoro-hub\/dist\/interfaces\/connect\/main\.js/u);
 });
 
 test("deployable inventory declares the Hub Connect contract and dependency boundary", async () => {
@@ -98,6 +101,28 @@ test("Compose keeps Hub HTTP and Hub Connect in separate processes with complete
   for (const name of requiredRuntimeEnvironment) {
     assert.ok(Object.hasOwn(connect.environment, name), `Compose missing ${name}`);
   }
+  assert.equal(connect.environment.KOKORO_HUB_CONNECT_TRUST_ROOT,
+    "/run/secrets/hub-connect-inbound");
+  assert.equal(connect.environment.KOKORO_HUB_CAPABILITY_SIGNING_TRUST_ROOT,
+    "/run/secrets/hub-capability-signing");
+  assert.equal(connect.environment.KOKORO_HUB_PLATFORM_PROJECTION_TRUST_ROOT,
+    "/run/secrets/hub-platform-projection");
+  assert.deepEqual(connect.volumes.slice(0, 3), [{
+    type: "bind",
+    source: "${KOKORO_HUB_CONNECT_INBOUND_SECRETS_DIRECTORY:?required}",
+    target: "/run/secrets/hub-connect-inbound",
+    read_only: true,
+  }, {
+    type: "bind",
+    source: "${KOKORO_HUB_CAPABILITY_SIGNING_SECRETS_DIRECTORY:?required}",
+    target: "/run/secrets/hub-capability-signing",
+    read_only: true,
+  }, {
+    type: "bind",
+    source: "${KOKORO_HUB_PLATFORM_PROJECTION_SECRETS_DIRECTORY:?required}",
+    target: "/run/secrets/hub-platform-projection",
+    read_only: true,
+  }]);
   assert.deepEqual(connect.depends_on, {
     "platform-admission": { condition: "service_started" },
   });
@@ -161,7 +186,9 @@ test("Kubernetes publishes only Hub Connect traffic and probes dependency-aware 
     "KOKORO_HUB_CONNECT_TLS_CERT_FILE",
     "KOKORO_HUB_CONNECT_TLS_CLIENT_CA_FILE",
     "KOKORO_HUB_CONNECT_MTLS_PEERS_FILE",
+    "KOKORO_HUB_CAPABILITY_SIGNING_TRUST_ROOT",
     "KOKORO_HUB_CAPABILITY_SIGNING_KEY_FILE",
+    "KOKORO_HUB_PLATFORM_PROJECTION_TRUST_ROOT",
     "KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_KEY_FILE",
     "KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_CERT_FILE",
     "KOKORO_HUB_PLATFORM_PROJECTION_SERVER_CA_FILE",
@@ -171,13 +198,26 @@ test("Kubernetes publishes only Hub Connect traffic and probes dependency-aware 
     { configMapRef: { name: "platform-hub-connect-runtime" } },
     { secretRef: { name: "platform-hub-connect-secrets" } },
   ]);
-  assert.ok(
-    container.volumeMounts.some(
-      (entry) => entry.name === "hub-connect-mtls" && entry.readOnly === true,
-    ),
-  );
-  const secretVolume = pod.volumes.find((entry) => entry.name === "hub-connect-mtls");
-  assert.equal(secretVolume.secret.defaultMode, 256);
+  const expectedSecretMounts = Object.freeze({
+    "hub-connect-inbound": "/run/secrets/hub-connect-inbound",
+    "hub-capability-signing": "/run/secrets/hub-capability-signing",
+    "hub-platform-projection": "/run/secrets/hub-platform-projection",
+  });
+  for (const [name, mountPath] of Object.entries(expectedSecretMounts)) {
+    assert.deepEqual(container.volumeMounts.find((entry) => entry.name === name), {
+      name, mountPath, readOnly: true,
+    });
+    const secretVolume = pod.volumes.find((entry) => entry.name === name);
+    assert.equal(secretVolume.secret.defaultMode, 256);
+  }
+  assert.equal(container.env.find((entry) => entry.name === "KOKORO_HUB_CONNECT_TRUST_ROOT").value,
+    expectedSecretMounts["hub-connect-inbound"]);
+  assert.equal(container.env.find(
+    (entry) => entry.name === "KOKORO_HUB_CAPABILITY_SIGNING_TRUST_ROOT").value,
+  expectedSecretMounts["hub-capability-signing"]);
+  assert.equal(container.env.find(
+    (entry) => entry.name === "KOKORO_HUB_PLATFORM_PROJECTION_TRUST_ROOT").value,
+  expectedSecretMounts["hub-platform-projection"]);
   assert.ok(
     container.volumeMounts.some(
       (entry) => entry.name === "hub-storage-config" && entry.readOnly === true,
@@ -198,4 +238,23 @@ test("Kubernetes publishes only Hub Connect traffic and probes dependency-aware 
   const httpContainer = httpDeployment.spec.template.spec.containers[0];
   assert.equal(environmentNames(httpContainer).has("KOKORO_HUB_CONNECT_PORT"), false);
   assert.equal(environmentNames(container).has("KOKORO_HUB_PORT"), false);
+});
+
+test("operator examples document the three non-overlapping Hub trust roots", async () => {
+  const [example, topology] = await Promise.all([
+    readFile(resolve(root, ".env.example"), "utf8"),
+    readFile(resolve(root, "docs/platform/deployment-topology.md"), "utf8"),
+  ]);
+  for (const name of [
+    "KOKORO_HUB_CONNECT_INBOUND_SECRETS_DIRECTORY",
+    "KOKORO_HUB_CAPABILITY_SIGNING_SECRETS_DIRECTORY",
+    "KOKORO_HUB_PLATFORM_PROJECTION_SECRETS_DIRECTORY",
+    "KOKORO_HUB_CONNECT_TRUST_ROOT",
+    "KOKORO_HUB_CAPABILITY_SIGNING_TRUST_ROOT",
+    "KOKORO_HUB_PLATFORM_PROJECTION_TRUST_ROOT",
+  ]) {
+    assert.match(example, new RegExp(`^${name}=`, "mu"), `.env.example missing ${name}`);
+    assert.ok(topology.includes(`\`${name}\``), `topology missing ${name}`);
+  }
+  assert.match(topology, /three independent read-only secret mounts/u);
 });

@@ -13,7 +13,7 @@ import {
   GetRunDurableCheckpointResponseSchema,
   RunCompletedEvidenceStatus,
   RunCompletedEvidenceV1Schema,
-} from "../src/interfaces/connect/generated-agent-evidence/kokoro/agent/execution/v1/agent_execution_evidence_pb.js";
+} from "../src/generated/proto/kokoro/agent/execution/v1/agent_execution_evidence_pb.js";
 import {
   AgentExecutionEvidenceLookupError,
   buildAgentExecutionEvidenceTransportOptions,
@@ -22,6 +22,10 @@ import {
 
 const runId = "run-a";
 const evidenceRef = "agent-execution-evidence:v1:terminal-a";
+const initialOutputDigest = createHash("sha256")
+  .update("kokoro-output-chain-v1\0")
+  .update(runId)
+  .digest("hex");
 
 function terminalEvidence(
   overrides: Readonly<Record<string, unknown>> = {},
@@ -35,6 +39,8 @@ function terminalEvidence(
         value: create(RunCompletedEvidenceV1Schema, {
           status,
           tokenUsage: { inputTokens: 5n, outputTokens: 8n },
+          outputHighWatermark: 0n,
+          outputDigestSha256: initialOutputDigest,
         }),
       },
     }),
@@ -92,7 +98,7 @@ describe("Agent durable execution-evidence consumer", () => {
     }, new AbortController().signal)).resolves.toEqual({
       kind: "terminal_observed",
       terminalEvidenceRef: evidenceRef,
-      terminalEvidenceDigest: "208107ab02275841dfacb48c959d17e5bc22db4124f7e7f90c0d4ec368a04dc3",
+      terminalEvidenceDigest: terminalEvidence().payloadSha256,
       terminalOutcome: "completed",
       safeStatusRef: evidenceRef,
     });

@@ -5,9 +5,9 @@ import type {
 import { definePlatformPublicOperation } from
   "../../../../interfaces/http/platform-public-operation-registry.js";
 import type { PlatformPublicOperationResponseMap } from
-  "../../../../interfaces/http/generated/platform-public/operations.gen.js";
+  "../../../../generated/contracts/openapi/platform-public/operations.gen.js";
 import type { ArtifactDeliveryAuthorizationInput } from
-  "../../../../interfaces/http/generated/platform-public/types.gen.js";
+  "../../../../generated/contracts/openapi/platform-public/types.gen.js";
 import type { ArtifactPublicOwnerService } from "../../application/artifact-public-owner.js";
 
 export const ARTIFACT_PUBLIC_OPERATION_IDS = Object.freeze([

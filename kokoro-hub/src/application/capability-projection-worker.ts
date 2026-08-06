@@ -4,7 +4,7 @@ import type { CapabilityPublicationRepository } from
 import {
   CapabilityProjectionDeliveryError,
   type PlatformCapabilityProjectionClient,
-} from "../infrastructure/connect/platform-capability-projection-client.js";
+} from "./capability-projection-client.js";
 
 export class CapabilityProjectionWorker {
   readonly #clock: () => Date;

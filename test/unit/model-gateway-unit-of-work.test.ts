@@ -7,6 +7,10 @@ import { resolvePlatformTransaction } from
 class Client {
   readonly calls: Array<{ text: string; values: readonly unknown[] }> = [];
   released = false;
+  constructor(
+    private readonly adapterKind: "litellm" | "direct" = "litellm",
+    private readonly providerModel: unknown = "provider-chat-v1",
+  ) {}
   async query(text: string, values: readonly unknown[] = []) {
     this.calls.push({ text, values });
     if (text.includes("resolve_model_gateway_authorization")) return { rows: [{
@@ -15,7 +19,8 @@ class Client {
       executionManifestRef: `execution-manifest:sha256:${"a".repeat(64)}`,
       authorizationSegmentRef: "segment-a",
       authorizedGatewayModel: "chat-primary",
-      adapterKind: "litellm",
+      providerModel: this.providerModel,
+      adapterKind: this.adapterKind,
       expiresAt: "2030-01-01T00:00:00.000Z",
     }], rowCount: 1 };
     return { rows: [], rowCount: 1 };
@@ -75,7 +80,12 @@ describe("Postgres Model Gateway database", () => {
       operation: "prepare",
       modelAuthorizationHandle: handle,
     }, async (transaction, authorization) => {
-      expect(authorization).toMatchObject({ siteId: "site-a", authorizedGatewayModel: "chat-primary" });
+      expect(authorization).toMatchObject({
+        siteId: "site-a",
+        authorizedGatewayModel: "chat-primary",
+        providerModel: "provider-chat-v1",
+        adapterKind: "litellm",
+      });
       await resolvePlatformTransaction(transaction).execute("UPDATE exact_gateway_table SET state=state");
       return "ok";
     });
@@ -91,6 +101,42 @@ describe("Postgres Model Gateway database", () => {
     expect(client.calls[1]?.values).toEqual([handle, "prepare"]);
     expect(client.calls[2]?.values).toEqual(["model-gateway.prepare", "site-a"]);
     expect(client.released).toBe(true);
+  });
+
+  it("preserves a direct adapter authorization for Gateway-owned routing", async () => {
+    const client = new Client("direct");
+    const database = new PostgresModelGatewayDatabase({
+      pool: { connect: async () => client, end: async () => undefined },
+      expectedDatabaseUser: "platform_model_gateway",
+      expectedDatabaseName: "kokoro_platform",
+      migratorDatabaseUser: "platform_migrator",
+    });
+    const handle = `model-authorization:sha256:${"f".repeat(64)}`;
+
+    await expect(database.execute({
+      operation: "prepare",
+      modelAuthorizationHandle: handle,
+    }, async (_transaction, authorization) => authorization.adapterKind))
+      .resolves.toBe("direct");
+    expect(client.calls.at(-1)?.text).toBe("COMMIT");
+    expect(client.released).toBe(true);
+  });
+
+  it("rejects an invalid provider model with a stable authorization error", async () => {
+    const client = new Client("direct", null);
+    const database = new PostgresModelGatewayDatabase({
+      pool: { connect: async () => client, end: async () => undefined },
+      expectedDatabaseUser: "platform_model_gateway",
+      expectedDatabaseName: "kokoro_platform",
+      migratorDatabaseUser: "platform_migrator",
+    });
+
+    await expect(database.execute({
+      operation: "prepare",
+      modelAuthorizationHandle: `model-authorization:sha256:${"f".repeat(64)}`,
+    }, async () => "unexpected"))
+      .rejects.toThrowError("MODEL_GATEWAY_AUTHORIZATION_INVALID");
+    expect(client.calls.at(-1)?.text).toBe("ROLLBACK");
   });
 
   it("rolls back when authorization is absent and never runs provider work", async () => {

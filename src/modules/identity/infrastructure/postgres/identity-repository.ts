@@ -9,6 +9,7 @@ import type {
 import type { IdentitySessionCurrentFact } from "../../../authorization/application/contracts/scoped-session-authorization-port.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import {
+  acquirePlatformSqlAdvisoryLock,
   resolvePlatformTransaction,
   type PlatformSqlTransaction,
 } from "../../../../shared/unit-of-work/platform-transaction.js";
@@ -19,10 +20,8 @@ export class PostgresIdentityRepository implements IdentityRepository {
     input: Parameters<IdentityRepository["createVerification"]>[1],
   ): Promise<"created" | "undisclosed"> {
     const sql = resolvePlatformTransaction(transaction);
-    await sql.query(
-      `SELECT pg_advisory_xact_lock(hashtextextended($1 || chr(31) || $2,0)) AS locked`,
-      [input.siteRef, input.emailNormalized],
-    );
+    await acquirePlatformSqlAdvisoryLock(sql,
+      JSON.stringify(["identity-verification", input.siteRef, input.emailNormalized]));
     const existing = await sql.query<{ accountRef: string; subjectRef: string; accountState: string }>(
       `SELECT identifier.account_ref AS "accountRef",identifier.subject_ref AS "subjectRef",
               account.state AS "accountState"
@@ -332,8 +331,7 @@ export class PostgresIdentityRepository implements IdentityRepository {
          ON binding.site_ref=site.site_ref AND binding.release_ref=release.release_ref
            AND binding.binding_ref=$3 AND binding.workload_identity_id=$4
            AND binding.binding_epoch=$5::bigint AND binding.state='active'
-       WHERE site.site_ref=$1 AND site.state='active'
-       FOR SHARE OF site,release,binding`,
+       WHERE site.site_ref=$1 AND site.state='active'`,
       [input.siteRef, input.siteReleaseRef, input.siteProjectBindingRef,
         input.workloadIdentityId, input.bindingEpoch],
     );
@@ -392,7 +390,7 @@ export class PostgresIdentityRepository implements IdentityRepository {
          ON subject.site_ref=account.site_ref AND subject.subject_ref=account.subject_ref
        WHERE account.site_ref=$1 AND identifier.normalized_value=$2 AND identifier.status='active'
          AND account.state='active' AND subject.state='active'
-       FOR SHARE OF account,identifier,credential,subject`,
+       FOR SHARE OF account,identifier,credential`,
       [input.siteRef, input.emailNormalized],
     );
     const row = rows[0];
@@ -404,10 +402,8 @@ export class PostgresIdentityRepository implements IdentityRepository {
     input: Parameters<IdentityRepository["beginIdentityAuthentication"]>[1],
   ) {
     const sql = resolvePlatformTransaction(transaction);
-    await sql.query(
-      `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`,
-      [`identity-auth\0${input.siteRef}\0${input.accountRef}`],
-    );
+    await acquirePlatformSqlAdvisoryLock(sql,
+      JSON.stringify(["identity-auth", input.siteRef, input.accountRef]));
     const accounts = await sql.query<{ credentialEpoch: bigint } & Record<string, unknown>>(
       `SELECT credential.credential_epoch AS "credentialEpoch"
        FROM platform.identity_account account
@@ -417,7 +413,7 @@ export class PostgresIdentityRepository implements IdentityRepository {
          ON subject.site_ref=account.site_ref AND subject.subject_ref=account.subject_ref
        WHERE account.site_ref=$1 AND account.account_ref=$2 AND account.subject_ref=$3
          AND account.state='active' AND subject.state='active'
-       FOR SHARE OF account,credential,subject`,
+       FOR SHARE OF account,credential`,
       [input.siteRef, input.accountRef, input.subjectRef],
     );
     if (accounts[0]?.credentialEpoch.toString() !== input.passwordCredentialEpoch) {
@@ -500,10 +496,8 @@ export class PostgresIdentityRepository implements IdentityRepository {
     input: Parameters<IdentityRepository["recordIdentityPasswordFailure"]>[1],
   ): Promise<void> {
     const sql = resolvePlatformTransaction(transaction);
-    await sql.query(
-      `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`,
-      [`identity-auth\0${input.siteRef}\0${input.accountRef}`],
-    );
+    await acquirePlatformSqlAdvisoryLock(sql,
+      JSON.stringify(["identity-auth", input.siteRef, input.accountRef]));
     const accounts = await sql.query<{ credentialEpoch: bigint } & Record<string, unknown>>(
       `SELECT credential.credential_epoch AS "credentialEpoch"
        FROM platform.identity_account account
@@ -616,10 +610,8 @@ export class PostgresIdentityRepository implements IdentityRepository {
     );
     const owner = ownerRows[0];
     if (owner === undefined) return Object.freeze({ kind: "rejected" as const });
-    await sql.query(
-      `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`,
-      [`identity-auth\0${input.siteRef}\0${owner.accountRef}`],
-    );
+    await acquirePlatformSqlAdvisoryLock(sql,
+      JSON.stringify(["identity-auth", input.siteRef, owner.accountRef]));
     const rows = await sql.query<AuthTransactionRow>(
       `SELECT account_ref AS "accountRef",subject_ref AS "subjectRef",
               authenticator_ref AS "authenticatorRef",recovery_set_ref AS "recoverySetRef",
@@ -653,7 +645,7 @@ export class PostgresIdentityRepository implements IdentityRepository {
          ON subject.site_ref=account.site_ref AND subject.subject_ref=account.subject_ref
        WHERE account.site_ref=$1 AND account.account_ref=$2 AND account.subject_ref=$3
          AND account.state='active' AND subject.state='active'
-       FOR SHARE OF account,credential,subject`,
+       FOR SHARE OF account,credential`,
       [input.siteRef, auth.accountRef, auth.subjectRef],
     );
     const rateRows = await sql.query<AuthRateLimitRow>(
@@ -813,8 +805,7 @@ export class PostgresIdentityRepository implements IdentityRepository {
          ON family.site_ref=claim.site_ref AND family.session_ref=claim.session_ref
        WHERE claim.command_id=$1 AND claim.site_ref=$2 AND claim.state='first_claim_consumed'
          AND family.state='active'
-       FOR UPDATE OF claim,recovery,receipt,identity_session,family
-       FOR SHARE OF site,release,product_binding`,
+       FOR UPDATE OF claim,recovery,receipt,identity_session,family`,
       [input.priorCommandId, input.siteRef, input.siteReleaseRef, input.siteProjectBindingRef,
         input.workloadIdentityId, input.bindingEpoch],
     );
@@ -1041,8 +1032,7 @@ export class PostgresIdentityRepository implements IdentityRepository {
          ON credential.site_ref=family.site_ref AND credential.family_ref=family.family_ref
            AND credential.generation=family.current_generation AND credential.state='active'
        WHERE claim.command_id=$1 AND claim.site_ref=$2 AND claim.state='first_claim_consumed'
-       FOR UPDATE OF claim,recovery,receipt,identity_session,family,credential
-       FOR SHARE OF site,release,product_binding`,
+       FOR UPDATE OF claim,recovery,receipt,identity_session,family,credential`,
       [input.priorCommandId, input.siteRef, input.siteReleaseRef, input.siteProjectBindingRef,
         input.workloadIdentityId, input.bindingEpoch],
     );

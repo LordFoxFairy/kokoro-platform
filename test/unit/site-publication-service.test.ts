@@ -82,6 +82,7 @@ function baseRepository(): SiteAuthorityRepository & SitePublicationRepository {
     loadActiveProjectBindingForUpdate: async () => null,
     reserveRuntimeBindingEpoch: async () => { throw new Error("unexpected"); },
     loadSiteForUpdate: async () => null, loadReleaseForUpdate: async () => null,
+    loadActivationForBegin: async () => null,
     loadActivationForUpdate: async () => null, insertActivation: async () => undefined,
     updateActivation: async () => undefined, commitActivation: async () => undefined,
     recordObservationAndCandidateDeployment: async () => undefined,

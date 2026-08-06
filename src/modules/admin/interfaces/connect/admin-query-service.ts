@@ -11,9 +11,9 @@ import {
   PendingApprovalSummarySchema,
   SiteSummarySchema,
   UserSummarySchema,
-} from "../../../../interfaces/connect/generated-admin-query-v2/kokoro/platform/admin/v2/admin_query_pb.js";
+} from "../../../../generated/proto/kokoro/platform/admin/v2/admin_query_pb.js";
 import type { AuthenticatedOperatorQueryContext } from
-  "../../../../interfaces/connect/generated-admin-query-v2/kokoro/platform/admin/v2/admin_shared_pb.js";
+  "../../../../generated/proto/kokoro/platform/admin/v2/admin_shared_pb.js";
 
 export type AdminQueryConnectService = ServiceImpl<typeof AdminQueryServiceDescriptor>;
 
@@ -33,7 +33,7 @@ export interface AdminQueryPermit {
   readonly region: string;
   readonly operation: "admin.site.read" | "admin.site.list" | "admin.user.read" | "admin.audit.read" |
     "admin.operator.self.read" | "admin.operator.read" | "admin.operator.list" | "admin.approval.list" |
-    "commerce.credit-program.read" | "commerce.entitlement-template.read" |
+    "credit.program.read" | "commerce.entitlement-template.read" |
     "commerce.offer.read" | "commerce.redemption-program.read" | "commerce.code-batch.read" |
     "credit.summary.read" | "credit.account.read" | "credit.grant.read" | "credit.hold.read" |
     "credit.journal.read" | "credit.rated-usage.read" |

@@ -53,11 +53,12 @@ Hub 独占 Mongo 与包体存储；kokoro-agent 不直连这两类基础设施�
 ```bash
 cp .env.example .env      # 按需改 Mongo 连接
 pnpm --filter @kokoro/hub start
-pnpm --filter @kokoro/hub start:connect
 ```
 
-生产 artifact 使用两个互不混跑的 selector：`@kokoro/hub` 启动 HTTP 管理面，
-`platform-hub-connect` 启动 4252 私有 mTLS ConnectRPC；4253 只提供 Mongo-aware
+生产 artifact 使用两个互不混跑的 selector：`@kokoro/hub` 启动本包的 HTTP 管理面，
+`platform-hub-connect` 启动 Platform 根层 `src/process/hub-connect.ts` 的 4252 私有 mTLS
+ConnectRPC。根层进程只做组合与 Root 生成契约适配，业务权威、Mongo/S3 adapter 和运行时
+生命周期仍由 `@kokoro/hub` 导出；本包不保留第二套 Connect main。4253 只提供 Mongo-aware
 health/readiness，不进入 Service discovery。Connect 进程在打开 listener 前强制校验 Mongo、
 package store、secret keyring、签名 key、入站 peer registry 与出站 Platform projection mTLS。
 

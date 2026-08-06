@@ -50,12 +50,17 @@ describe("Platform SessionAccessGrant verifier", () => {
         "production", "us-east-1",
       ]);
       for (const fragment of [
-        "site.security_epoch=grant.site_security_epoch",
-        "membership.authorization_epoch=grant.authorization_epoch",
-        "grant.delivery_state='delivered'",
+        "site.security_epoch=access_grant.site_security_epoch",
+        "membership.authorization_epoch=access_grant.authorization_epoch",
+        "access_grant.delivery_state='delivered'",
         "identity_session.expires_at>statement_timestamp()",
         "release.state='active'",
       ]) expect(sql.statement).toContain(fragment);
+      expect(sql.statement).toContain("AS access_grant");
+      expect(sql.statement).not.toMatch(/\bAS\s+grant\b/iu);
+      expect(sql.statement).not.toMatch(
+        /FOR\s+(?:NO\s+KEY\s+)?UPDATE|FOR\s+(?:KEY\s+)?SHARE/iu,
+      );
     } finally {
       revokePlatformTransaction(lease);
     }

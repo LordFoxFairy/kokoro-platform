@@ -4,7 +4,7 @@ import {
   CanonicalImageAspectRatio,
   CanonicalImageOutputFormat,
   CanonicalMediaOperationInputV1Schema,
-} from "../../../../interfaces/connect/generated-media-runtime/kokoro/platform/media/v1/media_canonical_pb.js";
+} from "../../../../generated/proto/kokoro/platform/media/v1/media_canonical_pb.js";
 import type {
   MediaImageArtifactCheckpoint,
   MediaImageEffectCommandReceipt,

@@ -1,5 +1,5 @@
-// skills 文档「运营位 + 审核状态」扩展字段旁注记（HUB-4，已收编主仓 contract/spec/storage.yaml 单源(SkillDoc 四字段+review_status 枚举,经 generate.py 进 ./storage.ts)）。
-// 本文件保留 curation 便捷子 schema 与常量;字段形状真源=生成镜像 storage.ts 的 SkillDoc。
+// Hub owns its private Mongo collection names and curation persistence shape. These are not a
+// cross-service wire contract and must not be generated from Root's retired storage corpus.
 //
 // 语义：
 // - display_weight: 运营排序权重，越大越靠前；缺省 0。
@@ -9,6 +9,10 @@
 //   为后续人审留位）。池查询只出 approved；存量文档无字段 = 视为 approved（backfill 在读侧）。
 
 import { z } from "zod";
+
+export const SKILLS_COLLECTION = "skills";
+export const SKILL_STATE_COLLECTION = "skill_state";
+export const SKILL_REVISIONS_COLLECTION = "skill_revisions";
 
 export const REVIEW_STATUSES = ["pending", "approved", "rejected"] as const;
 export type ReviewStatus = (typeof REVIEW_STATUSES)[number];

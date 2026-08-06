@@ -7,6 +7,7 @@ import type { SitePublicationAuthorityRepository } from
   "../../application/contracts/site-publication-authority-ports.js";
 import {
   authorizeSiteReleaseCandidate,
+  revokeSiteReleaseCandidateAuthorization,
   type CandidateAuthorityBinding,
   type SitePublicationNode,
   type SitePublicationNodeKind,
@@ -119,6 +120,29 @@ implements SitePublicationAuthorityRepository {
     );
   }
 
+  async revokeCandidate(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      candidate: CandidateAuthorityBinding;
+      expectedAuthorizationEpoch: bigint;
+      authorizationEpoch: bigint;
+      commandId: string;
+    }>,
+  ): Promise<void> {
+    const changed = await resolvePlatformTransaction(transaction).execute(
+      `UPDATE platform.site_release_candidate_authorization
+       SET authorization_epoch=$1::numeric(20,0),state='revoked',
+           updated_by_command_id=$2,updated_at=clock_timestamp()
+       WHERE candidate_ref=$3 AND candidate_version=$4::numeric(20,0)
+         AND candidate_digest=$5 AND authorization_epoch=$6::numeric(20,0)
+         AND state='authorized'`,
+      [input.authorizationEpoch.toString(), input.commandId, input.candidate.ref,
+        input.candidate.version.toString(), input.candidate.digest,
+        input.expectedAuthorizationEpoch.toString()],
+    );
+    if (changed !== 1) throw new Error("SITE_PUBLICATION_CANDIDATE_REVOKE_CONFLICT");
+  }
+
   async loadNodeForUpdate(
     transaction: PlatformTransaction,
     kind: SitePublicationNodeKind,
@@ -173,8 +197,21 @@ function candidate(row: CandidateRow): SiteReleaseCandidateAuthority {
     businessBindingsDigest: row.businessBindingsDigest,
   }, { canonicalBytes: bytes(row.canonicalBytes), parsedDocument: row.canonicalPayload,
     digest: row.candidateDigest });
-  return row.state === "authorized" && row.currentAuthorizationEpoch === row.candidateAuthorizationEpoch
-    ? resolved : Object.freeze({ ...resolved, state: "revoked" });
+  if (row.state === "authorized") {
+    if (row.currentAuthorizationEpoch !== row.candidateAuthorizationEpoch) {
+      throw new Error("SITE_PUBLICATION_PERSISTED_CANDIDATE_EPOCH_INVALID");
+    }
+    return resolved;
+  }
+  const revoked = revokeSiteReleaseCandidateAuthorization(
+    resolved,
+    resolved.binding,
+    decimal(row.candidateAuthorizationEpoch),
+  ).candidate;
+  if (revoked.binding.authorizationEpoch !== decimal(row.currentAuthorizationEpoch)) {
+    throw new Error("SITE_PUBLICATION_PERSISTED_CANDIDATE_EPOCH_INVALID");
+  }
+  return revoked;
 }
 
 function node(row: NodeRow): SitePublicationNode {

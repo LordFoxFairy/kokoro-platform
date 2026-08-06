@@ -58,6 +58,18 @@ const commonEnvironment = {
 } as const;
 
 describe("Platform PostgreSQL authority", () => {
+  it("runs every compiled production role with the runtime export condition", async () => {
+    const packageJson = JSON.parse(await readFile(resolve("package.json"), "utf8")) as {
+      scripts?: Record<string, string>;
+    };
+    const runtimeScripts = Object.entries(packageJson.scripts ?? {})
+      .filter(([name]) => name.startsWith("start:"));
+    expect(runtimeScripts.length).toBeGreaterThan(0);
+    for (const [name, command] of runtimeScripts) {
+      expect(command, name).toMatch(/^node --conditions=kokoro-runtime dist\//u);
+    }
+  });
+
   it("loads an API-only identity with bounded connection and transaction settings", () => {
     const config = loadPlatformDatabaseConfig("api", {
       ...commonEnvironment,
@@ -205,6 +217,7 @@ describe("Platform PostgreSQL authority", () => {
 
 describe("Platform migrator", () => {
   it("preflights PostgreSQL 18 roles, locks migration, grants scoped access, and sanitizes env", async () => {
+    const leasedAdmissionRole = "kt_pg_platformadmission_fixture";
     const events: string[] = [];
     const grants: string[] = [];
     let authoritySql = "";
@@ -263,6 +276,15 @@ describe("Platform migrator", () => {
           events.push("verify-split-worker-role-identities");
           return { rows: [{ roleIdentityAuthorityExact: true }] };
         }
+        if (sql.includes("admissionRoleIdentityAuthority")) {
+          events.push("verify-admission-role-identity");
+          return { rows: [{ admissionRoleIdentityExact: true }] };
+        }
+        if (sql.includes("INSERT INTO platform.runtime_role_identity_authority") &&
+            sql.includes("'admission'")) {
+          events.push(`bind-admission-role:${String(values?.[0])}`);
+          return {};
+        }
         if (sql.includes("memoryRoleAuthority")) {
           events.push("verify-memory-role-authority");
           memoryAuthoritySql = sql;
@@ -306,7 +328,7 @@ describe("Platform migrator", () => {
           return {
             rows: [
               safeRole("platform_api"),
-              safeRole("platform_admission"),
+              safeRole(leasedAdmissionRole),
               safeRole("platform_authorization"),
               safeRole("platform_admin"),
             ],
@@ -318,7 +340,7 @@ describe("Platform migrator", () => {
           return {
             rows: [
               authority("platform_api"),
-              authority("platform_admission"),
+              authority(leasedAdmissionRole, leasedAdmissionRole),
               authority("platform_authorization"),
               authority("platform_admin"),
             ],
@@ -330,9 +352,10 @@ describe("Platform migrator", () => {
         if (sql.includes("splitWorkerPolicyCatalog")) {
           return { rows: splitWorkerPolicyRows() };
         }
+        if (sql.includes("platformMigratorPolicyBinding")) return { rows: [] };
         if (sql.includes("FROM pg_policy policy")) {
           events.push("verify-outbox-policies");
-          return { rows: outboxPolicyRows() };
+          return { rows: outboxPolicyRows(leasedAdmissionRole) };
         }
         if (sql.includes('SET "outboxPolicyAuthority"')) {
           events.push("persist-outbox-policy-authority");
@@ -357,6 +380,7 @@ describe("Platform migrator", () => {
         DATABASE_URL_PLATFORM: migratorUrl,
         PLATFORM_DATABASE_CREDENTIAL_CLASS: "migrator",
         PLATFORM_DATABASE_API_ROLE: "platform_api",
+        PLATFORM_DATABASE_ADMISSION_ROLE: leasedAdmissionRole,
         PATH: "/usr/bin",
         NODE_OPTIONS: "--inspect=0.0.0.0:9229",
         SITE_PROVIDER_SECRET: "must-not-leak",
@@ -392,13 +416,30 @@ describe("Platform migrator", () => {
     ]);
     expect(events[14]).toBe("execute");
     expect(grants).toContain(
-      "GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.resolve_admission_model_owner(TEXT, TEXT, TEXT) TO \"platform_admission\"",
+      "GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.resolve_admission_model_owner(TEXT, TEXT, TEXT) TO \"kt_pg_platformadmission_fixture\"",
+    );
+    expect(events).toContain(`bind-admission-role:${leasedAdmissionRole}`);
+    expect(events).toContain("verify-admission-role-identity");
+    expect(grants).toContain(
+      "GRANT EXECUTE ON FUNCTION platform.admission_role_identity_is_current(), " +
+        "platform.record_admission_verified_terminal_evidence(TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,CHAR), " +
+        "platform.find_execution_root_closure(TEXT,JSONB,TEXT,CHAR), " +
+        "platform.lock_execution_root_closure(TEXT,JSONB,TEXT,UUID,UUID,UUID,UUID,UUID,TEXT,BIGINT,BIGINT,BIGINT,NUMERIC,TEXT), " +
+        "platform.commit_execution_root_closure(JSONB), " +
+        "platform.mark_execution_root_reconciliation(JSONB) TO \"kt_pg_platformadmission_fixture\"",
     );
     expect(grants).toContain(
       "GRANT EXECUTE ON FUNCTION platform.resolve_model_gateway_authorization(TEXT,TEXT) TO \"platform_model_gateway\"",
     );
     expect(grants).toContain(
-      "GRANT INSERT ON TABLE platform.model_gateway_execution_authorization TO \"platform_admission\"",
+      "GRANT SELECT(site_ref,invocation_ref,state,dispatch_owner_ref,dispatch_lease_expires_at) " +
+        "ON TABLE platform.model_gateway_dispatch_queue TO \"platform_model_gateway\"",
+    );
+    expect(grants).not.toContain(
+      "GRANT SELECT ON TABLE platform.model_gateway_dispatch_queue TO \"platform_model_gateway\"",
+    );
+    expect(grants).toContain(
+      "GRANT INSERT ON TABLE platform.model_gateway_execution_authorization TO \"kt_pg_platformadmission_fixture\"",
     );
     expect(grants).toContain(
       "GRANT EXECUTE ON FUNCTION platform.enqueue_asset_upload_completion_event(UUID,TEXT,JSONB,CHAR(64),TEXT,TEXT) TO \"platform_asset_data_plane\"",
@@ -429,7 +470,17 @@ describe("Platform migrator", () => {
     expect(authoritySql).toContain('AS "hasRequiredProductCatalogPrivileges"');
     expect(grants.some((sql) =>
       sql.startsWith("GRANT INSERT ON TABLE platform.admission_command") &&
-      sql.endsWith('TO "platform_admission"'),
+      sql.endsWith(`TO "${leasedAdmissionRole}"`),
+    )).toBe(true);
+    expect(grants.some((sql) =>
+      sql.startsWith("GRANT INSERT ON TABLE platform.admission_command") &&
+      sql.includes("platform.admission_media_access_authorization") &&
+      sql.endsWith(`TO "${leasedAdmissionRole}"`),
+    )).toBe(true);
+    expect(grants.some((sql) =>
+      sql.startsWith("GRANT UPDATE ON TABLE platform.admission_command") &&
+      sql.includes("platform.admission_media_access_authorization") &&
+      sql.endsWith(`TO "${leasedAdmissionRole}"`),
     )).toBe(true);
     expect(grants.some((sql) =>
       sql.includes("platform.admission_command") &&
@@ -463,6 +514,19 @@ describe("Platform migrator", () => {
     expect(columnUpdateAuthority).toContain("runtime_role.rolname = $5");
     expect(columnUpdateAuthority).toContain("'admission_execution_manifest'");
     expect(columnUpdateAuthority).toContain("'admission_media_access_authorization'");
+    const admissionPostAuthority = authoritySql.slice(
+      authoritySql.indexOf("WHEN runtime_role.rolname = $5 THEN"),
+      authoritySql.indexOf("WHEN runtime_role.rolname = $3 THEN"),
+    );
+    expect(admissionPostAuthority).toContain(
+      "has_table_privilege(runtime_role.rolname, 'platform.admission_media_access_authorization', 'SELECT')",
+    );
+    expect(admissionPostAuthority).toContain(
+      "has_table_privilege(runtime_role.rolname, 'platform.admission_media_access_authorization', 'INSERT')",
+    );
+    expect(admissionPostAuthority).toContain(
+      "has_table_privilege(runtime_role.rolname, 'platform.admission_media_access_authorization', 'UPDATE')",
+    );
     const admissionSelectFence = authoritySql.match(
       /runtime_role\.rolname=\$5 AND \([\s\S]*?'SELECT'[\s\S]*?candidate\.relname <> ALL\(ARRAY\[[\s\S]*?'credit_authorization_segment'[\s\S]*?\]\)\)/u,
     )?.[0];
@@ -487,7 +551,7 @@ describe("Platform migrator", () => {
       )).toBe(true);
     }
     const adminRelationAllowlists = [...authoritySql.matchAll(
-      /runtime_role\.rolname = \$4\s+AND candidate\.relname = ANY\(ARRAY\[([\s\S]*?)\]\)\)/gu,
+      /runtime_role\.rolname = \$4\s+AND\s+candidate\.relname = ANY\(ARRAY\[([\s\S]*?)\]\)\)/gu,
     )].map((match) => match[1]);
     expect(adminRelationAllowlists.filter((allowlist) =>
       allowlist?.includes("'commerce_catalog_epoch_authority'") === true,
@@ -693,6 +757,7 @@ describe("Platform migrator", () => {
           return { rows: splitWorkerPolicyRows() };
         }
         if (sql.includes("splitWorkerExactAuthority")) return { rows: [splitAuthority()] };
+        if (sql.includes("platformMigratorPolicyBinding")) return { rows: [] };
         if (sql.includes("FROM pg_policy policy")) return { rows: outboxPolicyRows() };
         if (sql.includes('SET "outboxPolicyAuthority"')) {
           return { rows: [{ singleton: true }] };
@@ -765,6 +830,7 @@ describe("Platform migrator", () => {
             return { rows: splitWorkerPolicyRows() };
           }
           if (sql.includes("splitWorkerExactAuthority")) return { rows: [splitAuthority()] };
+          if (sql.includes("platformMigratorPolicyBinding")) return { rows: [] };
           if (sql.includes("FROM pg_policy policy")) return { rows: outboxPolicyRows() };
           if (sql.includes('SET "outboxPolicyAuthority"')) {
             return { rows: [{ singleton: true }] };
@@ -1046,7 +1112,10 @@ function safeMemoryRoles(): readonly Record<string, unknown>[] {
   }));
 }
 
-function authority(roleName: string): Record<string, unknown> {
+function authority(
+  roleName: string,
+  admissionRoleName = "platform_admission",
+): Record<string, unknown> {
   return {
     roleName,
     schemaOwner: "platform_migrator",
@@ -1069,7 +1138,7 @@ function authority(roleName: string): Record<string, unknown> {
     canExecuteModelAvailabilityReport: false,
     canExecuteCreditScopePolicy:
       roleName === "platform_api" ||
-      roleName === "platform_admission" ||
+      roleName === admissionRoleName ||
       roleName === "platform_admin",
     canExecuteCommerceSafeLabel:
       roleName === "platform_api" || roleName === "platform_admin",
@@ -1077,6 +1146,8 @@ function authority(roleName: string): Record<string, unknown> {
     canReadCommerceCatalogEpoch: roleName === "platform_admin",
     canUpdateCommerceCatalogEpoch: roleName === "platform_admin",
     canExecuteAdminAuthorityChange: false,
+    admissionRoleIdentityExact: roleName === admissionRoleName,
+    hasRequiredAdmissionExecutionRootFunctions: roleName === admissionRoleName,
     hasRequiredModelOptionFunctions: true,
     hasRequiredProductCatalogPrivileges: true,
     canSelectModelCatalogTable: roleName === "platform_admin",
@@ -1150,14 +1221,14 @@ function splitWorkerPolicyRows(): readonly Record<string, unknown>[] {
   return [...runtimePolicies, ...definerPolicies];
 }
 
-function outboxPolicyRows(): readonly Record<string, unknown>[] {
+function outboxPolicyRows(admissionRoleName = "platform_admission"): readonly Record<string, unknown>[] {
   return [
     ["outbox_asset_function_insert", "a", "platform_migrator", ["asset"]],
     ["outbox_admin_insert", "a", "platform_admin",
       ["admin-execution", "commerce", "site"]],
     ["outbox_admin_select", "r", "platform_admin",
       ["admin-execution", "commerce", "site"]],
-    ["outbox_admission_insert", "a", "platform_admission", ["credit"]],
+    ["outbox_admission_insert", "a", admissionRoleName, ["credit"]],
     ["outbox_api_insert", "a", "platform_api", ["identity", "commerce", "asset"]],
     ["outbox_api_select", "r", "platform_api", ["identity", "commerce", "asset"]],
     ["outbox_identity_worker_select", "r", "platform_identity_worker", ["identity"]],

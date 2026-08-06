@@ -7,7 +7,7 @@ import {
   AuthorizationEventSigningPayloadSchema,
   AuthorizationSnapshotReason,
   PullAuthorizationEventsRequestSchema,
-} from "../../src/interfaces/connect/generated-authorization-v2/kokoro/platform/authorization/v2/scoped_session_authorization_pb.js";
+} from "../../src/generated/proto/kokoro/platform/authorization/v2/scoped_session_authorization_pb.js";
 import type { PostgresScopedAuthorizationFeedRepository } from "../../src/modules/authorization/infrastructure/postgres/scoped-authorization-feed-repository.js";
 
 describe("scoped Session authorization provider", () => {

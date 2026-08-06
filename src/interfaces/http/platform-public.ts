@@ -18,8 +18,8 @@ import {
   type PlatformPublicOperationExecution,
   type RegisteredPlatformPublicOperation,
 } from "./platform-public-operation-registry.js";
-import type { PlatformPublicOperationId } from "./generated/platform-public/operations.gen.js";
-import type { ErrorCode, ErrorResponse } from "./generated/platform-public/types.gen.js";
+import type { PlatformPublicOperationId } from "../../generated/contracts/openapi/platform-public/operations.gen.js";
+import type { ErrorCode, ErrorResponse } from "../../generated/contracts/openapi/platform-public/types.gen.js";
 
 export interface PlatformPublicHttpHandler {
   handle(request: IncomingMessage, response: ServerResponse): Promise<boolean>;

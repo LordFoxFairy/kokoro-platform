@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { zConfirmRedemptionResponse } from
-  "../../src/interfaces/http/generated/platform-public/zod.gen.js";
+  "../../src/generated/contracts/openapi/platform-public/zod.gen.js";
 import { ConfirmRedemptionService } from
   "../../src/modules/commerce/application/services/confirm-redemption.js";
 import type {

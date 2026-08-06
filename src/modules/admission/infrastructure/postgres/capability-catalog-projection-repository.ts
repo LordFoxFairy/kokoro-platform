@@ -75,8 +75,7 @@ export class PostgresCapabilityCatalogProjectionRepository {
       const releases = await sql.query<{ agentCatalogRef: string }>(
         `SELECT agent_catalog_ref AS "agentCatalogRef"
            FROM platform.site_release
-          WHERE site_ref=$1 AND release_ref=$2 AND state='ready'
-          FOR UPDATE`,
+          WHERE site_ref=$1 AND release_ref=$2 AND state='ready'`,
         [command.publication.siteId, command.publication.siteReleaseRef],
       );
       if (releases.length !== 1 || releases[0]?.agentCatalogRef !== command.publication.agentCatalogRef) {

@@ -7,9 +7,9 @@ import {
   FrozenCatalogPublicationSchema,
   ProjectCatalogRequestSchema,
   SignatureAlgorithm,
-} from "../../src/interfaces/connect/generated-capability-catalog/kokoro/platform/capability/v1/capability_catalog_pb.js";
+} from "../../src/generated/proto/kokoro/platform/capability/v1/capability_catalog_pb.js";
 import { CommandDigestAlgorithm, CommandIdentitySchema } from
-  "../../src/interfaces/connect/generated-capability-catalog/kokoro/common/v1/receipt_pb.js";
+  "../../src/generated/proto/kokoro/common/v1/receipt_pb.js";
 import {
   capabilityProjectionRequestDigest,
   createCapabilityCatalogProjectionConnectService,

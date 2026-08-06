@@ -22,7 +22,7 @@ import {
   SubmitMediaCommandAcceptedSchema,
   SubmitMediaCommandOutcomeUnknownSchema,
   SubmitMediaCommandRejectedSchema,
-} from "../../../../interfaces/connect/generated-media-runtime/kokoro/platform/media/v1/media_runtime_pb.js";
+} from "../../../../generated/proto/kokoro/platform/media/v1/media_runtime_pb.js";
 import type { ImageOperationSubmissionService } from "../../application/index.js";
 import type {
   PostgresMediaRuntimeQueryRepository,

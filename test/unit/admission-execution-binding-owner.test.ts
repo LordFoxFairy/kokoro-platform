@@ -9,7 +9,9 @@ import {
 class BindingSql implements PlatformSqlTransaction {
   space?: Record<string, unknown>;
   binding?: Record<string, unknown>;
+  readonly queries: string[] = [];
   async query<Row extends Record<string, unknown>>(statement: string): Promise<readonly Row[]> {
+    this.queries.push(statement);
     const row = statement.includes("identity_execution_space") ? this.space : this.binding;
     return row === undefined ? [] : [row as Row];
   }
@@ -49,6 +51,12 @@ describe("Platform-local Admission execution binding owner", () => {
           sessionExecutionBindingRef: expect.stringMatching(/^session-execution-binding:sha256:[a-f0-9]{64}$/u),
         },
       });
+      expect(sql.queries).toHaveLength(4);
+      for (const statement of sql.queries) {
+        expect(statement).not.toMatch(
+          /FOR\s+(?:NO\s+KEY\s+)?UPDATE|FOR\s+(?:KEY\s+)?SHARE/iu,
+        );
+      }
     } finally {
       revokePlatformTransaction(lease);
     }

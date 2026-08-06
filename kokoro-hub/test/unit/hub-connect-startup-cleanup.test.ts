@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runHubConnectMain } from "../../src/interfaces/connect/main.js";
+import { runHubConnectMain } from "../../../src/process/hub-connect.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -54,8 +54,15 @@ async function startupEnvironment(input: Readonly<{
   const directory = await mkdtemp(resolve(tmpdir(), "hub-connect-startup-"));
   temporaryDirectories.push(directory);
   const trustRoot = resolve(directory, "secrets");
+  const signingTrustRoot = resolve(directory, "capability-signing");
+  const projectionTrustRoot = resolve(directory, "platform-projection");
   const packages = resolve(directory, "packages");
-  await Promise.all([mkdir(trustRoot), mkdir(packages)]);
+  await Promise.all([
+    mkdir(trustRoot),
+    mkdir(signingTrustRoot),
+    mkdir(projectionTrustRoot),
+    mkdir(packages),
+  ]);
   const storage = resolve(directory, "storage.yaml");
   await writeFile(
     storage,
@@ -68,10 +75,10 @@ async function startupEnvironment(input: Readonly<{
     serverCertificate: resolve(trustRoot, "server.crt"),
     clientCa: resolve(trustRoot, "client-ca.crt"),
     peers: resolve(trustRoot, "peers.json"),
-    signingKey: resolve(trustRoot, "signing.key"),
-    projectionKey: resolve(trustRoot, "projection.key"),
-    projectionCertificate: resolve(trustRoot, "projection.crt"),
-    projectionCa: resolve(trustRoot, "projection-ca.crt"),
+    signingKey: resolve(signingTrustRoot, "signing.key"),
+    projectionKey: resolve(projectionTrustRoot, "projection.key"),
+    projectionCertificate: resolve(projectionTrustRoot, "projection.crt"),
+    projectionCa: resolve(projectionTrustRoot, "projection-ca.crt"),
   };
   await Promise.all([
     writeFile(paths.serverKey, privateKey, { mode: 0o400 }),
@@ -101,9 +108,11 @@ async function startupEnvironment(input: Readonly<{
     KOKORO_HUB_CATALOG_PLATFORM_CALLER_SAN_URI: "spiffe://kokoro.internal/platform",
     KOKORO_HUB_RUNTIME_AGENT_CALLER_SAN_URI: "spiffe://kokoro.internal/agent",
     KOKORO_HUB_CAPABILITY_SIGNING_KEY_REF: "hub-signing:revision:1",
+    KOKORO_HUB_CAPABILITY_SIGNING_TRUST_ROOT: signingTrustRoot,
     KOKORO_HUB_CAPABILITY_SIGNING_KEY_FILE: paths.signingKey,
     KOKORO_HUB_PLATFORM_PROJECTION_BASE_URL: input.projectionBaseUrl,
     KOKORO_HUB_PLATFORM_PROJECTION_SERVER_NAME: "platform-admission.internal",
+    KOKORO_HUB_PLATFORM_PROJECTION_TRUST_ROOT: projectionTrustRoot,
     KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_KEY_FILE: paths.projectionKey,
     KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_CERT_FILE: paths.projectionCertificate,
     KOKORO_HUB_PLATFORM_PROJECTION_SERVER_CA_FILE: paths.projectionCa,

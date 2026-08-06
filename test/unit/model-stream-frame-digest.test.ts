@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { modelStreamFrameDigest } from
-  "../../src/interfaces/connect/generated-model-gateway/model-stream-frame-digest.js";
+  "../../src/generated/contracts/model-gateway@v1/digest.js";
 
 describe("model stream frame digest contract", () => {
   it("binds identity, sequence, previous digest, payload kind and bytes", () => {

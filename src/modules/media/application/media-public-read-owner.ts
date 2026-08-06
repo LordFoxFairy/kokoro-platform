@@ -11,7 +11,7 @@ import type {
   MediaOperationView,
   MediaSafeFailure,
   PublishedModelOption,
-} from "../../../interfaces/http/generated/platform-public/types.gen.js";
+} from "../../../generated/contracts/openapi/platform-public/types.gen.js";
 import type { PlatformTransaction } from "../../../shared/unit-of-work/index.js";
 import type {
   MediaPublicCursorCodec,

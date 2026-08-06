@@ -17,7 +17,7 @@ import {
   ModelUsageSchema,
   StreamModelResponseSchema,
   type InvokeModelRequest,
-} from "../../../../interfaces/connect/generated-model-gateway/kokoro/platform/model/v1/model_gateway_pb.js";
+} from "../../../../generated/proto/kokoro/platform/model/v1/model_gateway_pb.js";
 import {
   ModelGatewayService,
   type ModelGatewayJsonValue,
@@ -35,6 +35,7 @@ export function createModelGatewayConnectService(input: Readonly<{
   application: Pick<ModelGatewayService, "invoke" | "stream">;
   caller: VerifiedModelGatewayCallerResolver;
   agentCallerIdentity: string;
+  onError?: (error: unknown) => void;
 }>): ModelGatewayConnectService {
   if (typeof input.caller?.resolve !== "function" || !input.agentCallerIdentity.startsWith("spiffe://")) {
     throw new Error("MODEL_GATEWAY_VERIFIED_CALLER_REQUIRED");
@@ -105,7 +106,7 @@ export function createModelGatewayConnectService(input: Readonly<{
           }),
         },
       });
-    }),
+    }, input.onError),
     streamModel: async function* (request, context) {
       try {
         if (input.caller.resolve(context).identity !== input.agentCallerIdentity) {
@@ -134,6 +135,7 @@ export function createModelGatewayConnectService(input: Readonly<{
           });
         }
       } catch (error) {
+        reportError(input.onError, error);
         throw connectError(error);
       }
     },
@@ -305,12 +307,20 @@ const safeResponseSchema = z.union([
   }).strict(),
 ]);
 
-async function safeInvoke<Result>(work: () => Promise<Result>): Promise<Result> {
+async function safeInvoke<Result>(
+  work: () => Promise<Result>,
+  onError?: (error: unknown) => void,
+): Promise<Result> {
   try {
     return await work();
   } catch (error) {
+    reportError(onError, error);
     throw connectError(error);
   }
+}
+
+function reportError(onError: ((error: unknown) => void) | undefined, error: unknown): void {
+  try { onError?.(error); } catch { /* Error reporting cannot change RPC behavior. */ }
 }
 
 function connectError(error: unknown): ConnectError {

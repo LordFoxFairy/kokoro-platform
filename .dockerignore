@@ -3,7 +3,14 @@
 .env.local
 node_modules
 **/node_modules
-src/generated
+src/generated/*
+!src/generated/contracts
+!src/generated/contracts/**
+!src/generated/proto
+!src/generated/proto/**
+!src/generated/schema
+!src/generated/schema/**
+!src/generated/provenance.json
 kokoro-platform-admin
 kokoro-site
 kokoro-user

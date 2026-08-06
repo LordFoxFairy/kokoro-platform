@@ -6,27 +6,29 @@ import {
   CommandIdentityV2Schema,
   CommandReceiptStateV2,
   CommandReceiptV2Schema,
-} from "../../../../interfaces/connect/generated-site-publication/kokoro/common/v2/command_envelope_pb.js";
+} from "../../../../generated/proto/kokoro/common/v2/command_envelope_pb.js";
 import type { AuthenticatedOperatorCommandContext } from
-  "../../../../interfaces/connect/generated-site-publication/kokoro/platform/admin/v2/admin_shared_pb.js";
+  "../../../../generated/proto/kokoro/platform/admin/v2/admin_shared_pb.js";
 import {
   CandidateAuthorityBindingSchema,
   ImmutableContractRevisionBindingSchema,
   type CandidateAuthorityBinding as WireCandidate,
   type ImmutableContractRevisionBinding as WireRevision,
-} from "../../../../interfaces/connect/generated-site-publication/kokoro/platform/publication/v1/publication_common_pb.js";
+} from "../../../../generated/proto/kokoro/platform/publication/v1/publication_common_pb.js";
 import {
   PublishedSiteReleaseState,
+  SiteReleaseCandidateAuthorizationState,
   SitePublicationService as SitePublicationDescriptor,
-} from "../../../../interfaces/connect/generated-site-publication/kokoro/platform/site/v1/site_publication_pb.js";
+} from "../../../../generated/proto/kokoro/platform/site/v1/site_publication_pb.js";
 import {
   authorizeSiteReleaseCandidateRequestDigest,
   publishReleaseCertificationRequestDigest,
   publishSiteReleaseRequestDigest,
   publishSurfaceInventoryRequestDigest,
   publishWebBuildMaterialBundleRequestDigest,
+  revokeSiteReleaseCandidateRequestDigest,
   type VerifiedAuthenticatedAdminAxes,
-} from "../../../../interfaces/connect/generated-site-publication/command-envelope-digest.js";
+} from "../../../../generated/contracts/platform-site-publication@v1/digest.js";
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
 import type { ControlCommandReceiptTimestampReader } from
   "../../../admin/infrastructure/postgres/control-command-receipt-reader.js";
@@ -39,7 +41,8 @@ import type {
 
 export type SitePublicationConnectService = ServiceImpl<typeof SitePublicationDescriptor>;
 export type SitePublicationAdminOperation =
-  | "site.release-candidate.authorize" | "site.surface-inventory.publish"
+  | "site.release-candidate.authorize" | "site.release-candidate.revoke"
+  | "site.surface-inventory.publish"
   | "site.web-build-material-bundle.publish" | "site.web-build-intent.publish"
   | "site.release-certification.publish" | "site.release.publish";
 
@@ -53,7 +56,8 @@ export interface SitePublicationAdminResolver {
 }
 
 export function createSitePublicationConnectService(input: Readonly<{
-  owner: Pick<SitePublicationAuthorityService, "authorizeCandidate" | "publishNode" | "publishRelease">;
+  owner: Pick<SitePublicationAuthorityService,
+    "authorizeCandidate" | "revokeCandidate" | "publishNode" | "publishRelease">;
   resolver: SitePublicationAdminResolver;
   receipts: ControlCommandReceiptTimestampReader;
 }>): SitePublicationConnectService {
@@ -78,6 +82,39 @@ export function createSitePublicationConnectService(input: Readonly<{
       }, verified.context);
       return { candidate: wireCandidate(result.candidate), replayed: result.replayed,
         receipt: await receipt(input, verified.context, identity, "site.release-candidate.authorize") };
+    },
+
+    async revokeSiteReleaseCandidate(request, transport) {
+      const context = required(request.context, "SITE_PUBLICATION_CONTEXT_REQUIRED");
+      const effect = required(request.effect, "SITE_PUBLICATION_EFFECT_REQUIRED");
+      const candidate = required(effect.candidate, "SITE_PUBLICATION_CANDIDATE_REQUIRED");
+      const verified = await resolve(input, context, transport, "site.release-candidate.revoke",
+        request.siteId, [candidate.candidateRef]);
+      const identity = identityOf(context);
+      requireDigest(identity.requestDigest,
+        revokeSiteReleaseCandidateRequestDigest(context, request.siteId, effect, verified.axes));
+      const result = await input.owner.revokeCandidate({
+        commandId: identity.commandId,
+        idempotencyKey: identity.idempotencyKey,
+        siteRef: request.siteId,
+        candidate: candidateBinding(candidate),
+        expectedAuthorizationEpoch: effect.expectedAuthorizationEpoch,
+        reason: effect.reason,
+      }, verified.context);
+      return {
+        candidate: wireCandidate(result.candidate),
+        previousAuthorizationEpoch: result.previousAuthorizationEpoch,
+        authorizationEpoch: result.authorizationEpoch,
+        state: SiteReleaseCandidateAuthorizationState.REVOKED,
+        replayed: result.replayed,
+        receipt: await receipt(
+          input,
+          verified.context,
+          identity,
+          "site.release-candidate.revoke",
+          "kokoro.platform.site.v1.SitePublicationService/RevokeSiteReleaseCandidate",
+        ),
+      };
     },
 
     async publishSurfaceInventory(request, transport) {
@@ -208,9 +245,10 @@ function wireCandidate(value: DomainCandidate) {
 }
 async function receipt(input: Parameters<typeof createSitePublicationConnectService>[0],
   context: VerifiedRequestSecurityContext, identity: ReturnType<typeof identityOf>,
-  operation: SitePublicationAdminOperation) {
+  operation: SitePublicationAdminOperation, receiptOperation: string = operation) {
   const recordedAt = await input.receipts.read(context, { commandId: identity.commandId, operation });
-  return create(CommandReceiptV2Schema, { identity: create(CommandIdentityV2Schema, identity), operation,
+  return create(CommandReceiptV2Schema, { identity: create(CommandIdentityV2Schema, identity),
+    operation: receiptOperation,
     state: CommandReceiptStateV2.COMMITTED, recordedAt: timestampFromDate(canonicalDate(recordedAt)) });
 }
 function requireDigest(actual: string, expected: string): void {

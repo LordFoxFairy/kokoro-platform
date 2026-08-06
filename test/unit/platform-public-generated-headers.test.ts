@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   zRedeemArtifactDeliveryAuthorizationHeaders,
   zSubmitMediaOperationHeaders,
-} from "../../src/interfaces/http/generated/platform-public/zod.gen.js";
+} from "../../src/generated/contracts/openapi/platform-public/zod.gen.js";
 import { platformPublicRequestHeaders } from "../../src/interfaces/http/platform-public.js";
 
 describe("Platform Public generated header extraction", () => {

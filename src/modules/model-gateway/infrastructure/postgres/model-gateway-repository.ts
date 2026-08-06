@@ -16,7 +16,7 @@ import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.
 import { resolvePlatformTransaction } from
   "../../../../shared/unit-of-work/platform-transaction.js";
 import { modelStreamFrameDigest } from
-  "../../../../interfaces/connect/generated-model-gateway/model-stream-frame-digest.js";
+  "../../../../generated/contracts/model-gateway@v1/digest.js";
 
 interface InvocationRow extends Record<string, unknown> {
   siteId: string;
@@ -541,7 +541,7 @@ async function advanceFrameState(
          dispatch_lease_expires_at=CASE WHEN state='dispatching'
            THEN GREATEST(dispatch_lease_expires_at,now()+interval '30 seconds')
            ELSE dispatch_lease_expires_at END,
-         updated_at=now()
+         updated_at=GREATEST(updated_at,now())
      WHERE site_ref=$4 AND invocation_ref=$5 AND request_digest=$6
        AND last_frame_sequence=$7 AND last_frame_digest=$8
        AND frame_count<65536 AND total_frame_bytes+$3<=33554432`,

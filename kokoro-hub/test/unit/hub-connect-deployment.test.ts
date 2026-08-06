@@ -9,7 +9,7 @@ import {
   HUB_CONNECT_PRODUCTION_REQUIRED_ENVIRONMENT,
   loadHubConnectStartupConfig,
   readBoundedHubConnectFile,
-} from "../../src/interfaces/connect/main.js";
+} from "../../../src/process/hub-connect.js";
 
 const productionEnvironment = Object.freeze({
   NODE_ENV: "production",
@@ -29,12 +29,14 @@ const productionEnvironment = Object.freeze({
   KOKORO_HUB_CATALOG_PLATFORM_CALLER_SAN_URI: "spiffe://kokoro.internal/platform",
   KOKORO_HUB_RUNTIME_AGENT_CALLER_SAN_URI: "spiffe://kokoro.internal/agent",
   KOKORO_HUB_CAPABILITY_SIGNING_KEY_REF: "hub-signing:revision:1",
-  KOKORO_HUB_CAPABILITY_SIGNING_KEY_FILE: "/run/secrets/signing.key",
+  KOKORO_HUB_CAPABILITY_SIGNING_TRUST_ROOT: "/run/secrets/capability-signing",
+  KOKORO_HUB_CAPABILITY_SIGNING_KEY_FILE: "/run/secrets/capability-signing/signing.key",
   KOKORO_HUB_PLATFORM_PROJECTION_BASE_URL: "https://platform-admission.internal:4244",
   KOKORO_HUB_PLATFORM_PROJECTION_SERVER_NAME: "platform-admission.internal",
-  KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_KEY_FILE: "/run/secrets/projection.key",
-  KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_CERT_FILE: "/run/secrets/projection.crt",
-  KOKORO_HUB_PLATFORM_PROJECTION_SERVER_CA_FILE: "/run/secrets/projection-ca.crt",
+  KOKORO_HUB_PLATFORM_PROJECTION_TRUST_ROOT: "/run/secrets/platform-projection",
+  KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_KEY_FILE: "/run/secrets/platform-projection/client.key",
+  KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_CERT_FILE: "/run/secrets/platform-projection/client.crt",
+  KOKORO_HUB_PLATFORM_PROJECTION_SERVER_CA_FILE: "/run/secrets/platform-projection/server-ca.crt",
 });
 
 describe("Hub Connect deployment preflight", () => {
@@ -57,6 +59,8 @@ describe("Hub Connect deployment preflight", () => {
       port: 4252,
       healthPort: 4253,
       mongoDatabase: "kokoro_hub",
+      signingTrustRoot: "/run/secrets/capability-signing",
+      projectionTrustRoot: "/run/secrets/platform-projection",
     });
   });
 });

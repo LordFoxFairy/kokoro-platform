@@ -1,7 +1,7 @@
-# Dev 档网关配置：零真实凭据可跑（mock 模型），用于本地闭环与 agent litellm 档 smoke。
+# Dev 档网关配置：零真实凭据可跑（mock 模型），用于本地 Model Gateway LiteLLM 档 smoke。
 # 真实 provider 接入请以 litellm.config.example.yaml 为模板另起部署档，勿在 dev 档填真 key。
 model_list:
-  # 稳定网关名：与 kokoro-model ModelBinding.gatewayModelName 对齐。
+  # 稳定网关名：与 Model Control 为 adapterKind `litellm` 发布的 gatewayModel 对齐。
   - model_name: kokoro-dev-mock
     litellm_params:
       model: openai/gpt-4o-mini
@@ -9,9 +9,8 @@ model_list:
       mock_response: "kokoro litellm dev mock response"
       api_key: example-not-used
 
-  # 对外别名 claude-code → 内部真后端(openai 兼容)。model/base/key 全 env 注入(closure-up 决定):
-  # GLM 凭据有效→走 GLM;GLM 不可用但本机 ollama 在→回落本地真模型;两者皆无→上游 fake。
-  # 「对外 claude-code 名不变、网关侧一处换后端」就是这里——凭据绝不落此文件。
+  # 对外别名 claude-code -> 单个显式选择的 OpenAI-compatible 后端。model/base/key 全由
+  # 启动前配置注入；LiteLLM 运行期间不跨 adapter 或模型静默 fallback。
   - model_name: claude-code
     litellm_params:
       model: os.environ/CLAUDE_CODE_MODEL
@@ -19,7 +18,6 @@ model_list:
       api_key: os.environ/CLAUDE_CODE_API_KEY
 
 litellm_settings:
-  drop_params: true
   telemetry: false
 
 general_settings:

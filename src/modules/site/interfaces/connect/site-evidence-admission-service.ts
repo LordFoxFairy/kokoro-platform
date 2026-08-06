@@ -6,20 +6,20 @@ import {
   CommandIdentityV2Schema,
   CommandReceiptStateV2,
   CommandReceiptV2Schema,
-} from "../../../../interfaces/connect/generated-site-evidence-admission/kokoro/common/v2/command_envelope_pb.js";
+} from "../../../../generated/proto/kokoro/common/v2/command_envelope_pb.js";
 import {
   ImmutableContractRevisionBindingSchema,
   type CandidateAuthorityBinding as WireCandidate,
   type ImmutableContractRevisionBinding as WireRevision,
-} from "../../../../interfaces/connect/generated-site-evidence-admission/kokoro/platform/publication/v1/publication_common_pb.js";
+} from "../../../../generated/proto/kokoro/platform/publication/v1/publication_common_pb.js";
 import {
   SiteEvidenceAdmissionService as SiteEvidenceAdmissionDescriptor,
   type AttestedReleaseEvidenceContext,
-} from "../../../../interfaces/connect/generated-site-evidence-admission/kokoro/platform/site/v1/site_publication_pb.js";
+} from "../../../../generated/proto/kokoro/platform/site/v1/site_publication_pb.js";
 import {
   recordReleaseEvidenceRequestDigest,
   type VerifiedReleaseEvidenceWorkloadAxes,
-} from "../../../../interfaces/connect/generated-site-evidence-admission/command-envelope-digest.js";
+} from "../../../../generated/contracts/platform-site-evidence-admission@v1/digest.js";
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
 import type { ControlCommandReceiptTimestampReader } from
   "../../../admin/infrastructure/postgres/control-command-receipt-reader.js";

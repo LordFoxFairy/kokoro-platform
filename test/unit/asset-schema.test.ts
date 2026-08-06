@@ -1,5 +1,13 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import {
+  ASSET_API_MUTABLE_RELATIONS,
+  ASSET_RELATIONS,
+  ASSET_WORKER_INSERT_RELATIONS,
+  ASSET_WORKER_UPDATE_RELATIONS,
+} from "../../src/infrastructure/postgres/runtime-relation-authority.js";
+import { SPLIT_WORKER_RELATION_AUTHORITY } from
+  "../../src/infrastructure/postgres/split-worker-authority.js";
 
 const migration = readFileSync(
   new URL("../../prisma/migrations/20260729_asset_upload_authority/migration.sql", import.meta.url),
@@ -37,17 +45,35 @@ describe("Asset persistence authority", () => {
   });
 
   it("gives only the Platform worker write authority over candidates and rejection facts", () => {
+    const authority = SPLIT_WORKER_RELATION_AUTHORITY["asset-worker"];
     expect(migrator).toContain("const ASSET_TABLES");
-    expect(migrator).toContain(
-      "GRANT INSERT ON TABLE platform.outbox_event, platform.asset_blob_candidate, platform.asset_cleanup_group, platform.asset_object_cleanup, platform.asset_object_cleanup_receipt, platform.asset_upload_rejection",
-    );
-    expect(migrator).toContain(
-      "GRANT UPDATE ON TABLE platform.asset_upload_intent, platform.asset_upload_session, platform.asset_quota_account, platform.asset_quota_reservation, platform.asset_blob_candidate, platform.asset_cleanup_group, platform.asset_object_cleanup",
-    );
+    expect(authority.filter(({ privilege }) => privilege === "SELECT")
+      .map(({ relation }) => relation)).toEqual([
+      "platform_foundation", ...ASSET_RELATIONS, "outbox_event",
+    ]);
+    expect(authority.filter(({ privilege }) => privilege === "INSERT")
+      .map(({ relation }) => relation)).toEqual([
+      "outbox_event", ...ASSET_WORKER_INSERT_RELATIONS,
+    ]);
+    expect(new Set(authority.filter(({ privilege }) => privilege === "UPDATE")
+      .map(({ relation }) => relation))).toEqual(new Set([
+      "outbox_event", ...ASSET_WORKER_UPDATE_RELATIONS,
+    ]));
+    expect(authority).toContainEqual({ relation: "asset_blob_candidate", privilege: "INSERT" });
+    expect(authority).toContainEqual(expect.objectContaining({
+      relation: "asset_blob_candidate", privilege: "UPDATE",
+    }));
+    expect(authority).toContainEqual({ relation: "asset_upload_rejection", privilege: "INSERT" });
+    expect(authority).not.toContainEqual(expect.objectContaining({
+      relation: "asset_upload_rejection", privilege: "UPDATE",
+    }));
+    expect(ASSET_API_MUTABLE_RELATIONS).not.toContain("asset_blob_candidate");
+    expect(ASSET_API_MUTABLE_RELATIONS).not.toContain("asset_upload_rejection");
     expect(databaseClient).toContain('"asset.upload-completion.observe"');
     expect(databaseClient).toContain('"asset.scan.evaluate"');
     expect(databaseClient).toContain('"asset.cleanup.delete"');
-    expect(databaseClient).toContain('config.role !== "worker"');
+    expect(databaseClient).toContain('config.role !== "asset-worker"');
+    expect(databaseClient).not.toContain('config.role === "worker"');
     expect(databaseClient).toContain('scope.scopes[0] !== "asset:worker"');
   });
 

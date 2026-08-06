@@ -2,11 +2,11 @@ import { create } from "@bufbuild/protobuf";
 import type { HandlerContext } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import { AuthenticatedOperatorQueryContextSchema } from
-  "../../src/interfaces/connect/generated-admin-credit/kokoro/platform/admin/v2/admin_shared_pb.js";
+  "../../src/generated/proto/kokoro/platform/admin/v2/admin_shared_pb.js";
 import { CreditGrantSourceType, CreditReadFreshness, CreditUsageSourceDirection,
   GetSiteCreditSummaryRequestSchema, ListCreditGrantsRequestSchema,
   ListCreditHoldAllocationsRequestSchema, ListRatedUsageSourceAllocationsRequestSchema } from
-  "../../src/interfaces/connect/generated-admin-credit/kokoro/platform/credit/v1/admin_credit_pb.js";
+  "../../src/generated/proto/kokoro/platform/credit/v1/admin_credit_pb.js";
 import { HmacAdminPageCursorCodec } from
   "../../src/modules/admin/infrastructure/security/admin-page-cursor.js";
 import { createAdminCreditConnectService } from
@@ -14,6 +14,7 @@ import { createAdminCreditConnectService } from
 
 const transport = {} as HandlerContext;
 const context = create(AuthenticatedOperatorQueryContextSchema, { requestId: "request-001" });
+const authority = { operator: context, siteId: "site-1" };
 const permit = { operatorRef: "operator:1", environment: "production", region: "us-east-1",
   operation: "credit.summary.read", authorityBindingDigest: "a".repeat(64),
   scope: { kind: "site", siteRefs: ["site-1"] } } as const;
@@ -29,7 +30,7 @@ describe("AdminCredit Connect provider", () => {
     const service = harness({ resolve, getSiteCreditSummary });
 
     await expect(service.getSiteCreditSummary(create(GetSiteCreditSummaryRequestSchema, {
-      context, siteId: "site-1",
+      authority,
     }), transport)).resolves.toMatchObject({ summary: {
       siteId: "site-1", freshness: CreditReadFreshness.AUTHORITATIVE_DATABASE_OBSERVATION,
       creditAccountCount: 2n, balances: [{ availableAmount: "100" }],
@@ -57,7 +58,7 @@ describe("AdminCredit Connect provider", () => {
     }));
     const service = harness({ resolve, listCreditGrants });
     const first = await service.listCreditGrants(create(ListCreditGrantsRequestSchema, {
-      context, siteId: "site-1", sourceType: CreditGrantSourceType.REDEMPTION,
+      authority, sourceType: CreditGrantSourceType.REDEMPTION,
       sourceRef: "redeem:1", pageSize: 1,
     }), transport);
     expect(first.grants).toHaveLength(1);
@@ -68,7 +69,7 @@ describe("AdminCredit Connect provider", () => {
     }));
 
     await expect(service.listCreditGrants(create(ListCreditGrantsRequestSchema, {
-      context, siteId: "site-1", sourceType: CreditGrantSourceType.PAYMENT,
+      authority, sourceType: CreditGrantSourceType.PAYMENT,
       sourceRef: "redeem:1", pageSize: 1,
       pageToken: first.nextPageToken,
     }), transport)).rejects.toThrow("ADMIN_CREDIT_PAGE_TOKEN_INVALID");
@@ -80,7 +81,7 @@ describe("AdminCredit Connect provider", () => {
     const service = harness({ resolve, listCreditGrants });
 
     await expect(service.listCreditGrants(create(ListCreditGrantsRequestSchema, {
-      context, siteId: "site-1", sourceRef: "shared-ref", pageSize: 10,
+      authority, sourceRef: "shared-ref", pageSize: 10,
     }), transport)).rejects.toThrow("ADMIN_CREDIT_SOURCE_FILTER_INCOMPLETE");
     expect(resolve).not.toHaveBeenCalled();
     expect(listCreditGrants).not.toHaveBeenCalled();
@@ -94,7 +95,7 @@ describe("AdminCredit Connect provider", () => {
     const service = harness({ resolve, listCreditGrants });
 
     await expect(service.listCreditGrants(create(ListCreditGrantsRequestSchema, {
-      context, siteId: "site-1", pageSize: 10,
+      authority, pageSize: 10,
     }), transport)).rejects.toThrow("ADMIN_CREDIT_MEMBERSHIP_WATERMARK_MISMATCH");
   });
 
@@ -107,13 +108,13 @@ describe("AdminCredit Connect provider", () => {
     const first = harness({ resolve: vi.fn(async () => ({ ...permit, operation: "credit.grant.read" })),
       listCreditGrants: grants });
     const page = await first.listCreditGrants(create(ListCreditGrantsRequestSchema, {
-      context, siteId: "site-1", pageSize: 1,
+      authority, pageSize: 1,
     }), transport);
 
     const stale = harness({ resolve: vi.fn(async () => ({ ...permit, operation: "credit.grant.read",
       authorityBindingDigest: "b".repeat(64) })), listCreditGrants: grants });
     await expect(stale.listCreditGrants(create(ListCreditGrantsRequestSchema, {
-      context, siteId: "site-1", pageSize: 1, pageToken: page.nextPageToken,
+      authority, pageSize: 1, pageToken: page.nextPageToken,
     }), transport)).rejects.toThrow("ADMIN_CREDIT_PAGE_TOKEN_INVALID");
     expect(grants).toHaveBeenCalledTimes(1);
   });
@@ -131,7 +132,7 @@ describe("AdminCredit Connect provider", () => {
     const service = harness({ resolve, listCreditHoldAllocations });
 
     const response = await service.listCreditHoldAllocations(create(ListCreditHoldAllocationsRequestSchema, {
-      context, siteId: "site-1",
+      authority,
       trace: { case: "creditGrantId", value: "33333333-3333-4333-8333-333333333333" },
       pageSize: 10,
     }), transport);
@@ -154,12 +155,13 @@ describe("AdminCredit Connect provider", () => {
     const service = harness({ resolve, listRatedUsageSourceAllocations });
 
     const response = await service.listRatedUsageSourceAllocations(create(
-      ListRatedUsageSourceAllocationsRequestSchema, { context, siteId: "site-1",
+      ListRatedUsageSourceAllocationsRequestSchema, { authority,
         trace: { case: "ratedUsageRef", value: "55555555-5555-4555-8555-555555555555" },
         pageSize: 10 }), transport);
     expect(response.allocations).toMatchObject([{ creditGrantId: "33333333-3333-4333-8333-333333333333",
       direction: CreditUsageSourceDirection.CAPTURE, amount: "12", allocationOrdinal: 1 }]);
   });
+
 });
 
 function allocationGrant(suffix: string) {

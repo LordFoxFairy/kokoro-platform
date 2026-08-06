@@ -61,6 +61,7 @@ export class SiteLifecycleService {
       siteRef: string;
       candidateReleaseRef: string;
       expectedActiveReleaseRef: string | null;
+      activationFactsDigest: string;
       audience: string;
       sessionContractRevision: string;
       reason: string;
@@ -72,6 +73,7 @@ export class SiteLifecycleService {
       attemptRef: input.attemptRef,
       candidateReleaseRef: input.candidateReleaseRef,
       expectedActiveReleaseRef: input.expectedActiveReleaseRef,
+      activationFactsDigest: input.activationFactsDigest,
       audience: input.audience,
       sessionContractRevision: input.sessionContractRevision,
       reason: input.reason,
@@ -79,7 +81,7 @@ export class SiteLifecycleService {
     return this.unitOfWork.execute({ context, operation: command.operation }, async (transaction) => {
       const environment = deploymentEnvironment(context);
       const disposition = await this.journal.begin(transaction, command);
-      const existing = await this.repository.loadActivationForUpdate(transaction, input.attemptRef);
+      const existing = await this.repository.loadActivationForBegin(transaction, input.attemptRef);
       if (disposition === "replay") {
         if (existing === null || existing.siteRef !== input.siteRef ||
             existing.candidateReleaseRef !== input.candidateReleaseRef ||

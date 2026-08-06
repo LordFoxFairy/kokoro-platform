@@ -9,7 +9,7 @@ import type {
   CapabilityPublicationRepository,
 } from "../../src/domain/capability-publication-repository.js";
 import { CapabilityProjectionDeliveryError } from
-  "../../src/infrastructure/connect/platform-capability-projection-client.js";
+  "../../src/application/capability-projection-client.js";
 
 describe("capability projection worker", () => {
   it("releases a claimed lease when shutdown wins the claim race", async () => {

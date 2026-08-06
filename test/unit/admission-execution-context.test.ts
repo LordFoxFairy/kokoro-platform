@@ -1,7 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { OpaqueExecutionContextIntentSchema } from "../../src/interfaces/connect/generated/kokoro/platform/admission/v1/admission_pb.js";
+import { OpaqueExecutionContextIntentSchema } from "../../src/generated/proto/kokoro/platform/admission/v1/admission_pb.js";
 import { mapOpaqueExecutionContextIntent } from "../../src/modules/admission/interfaces/connect/opaque-execution-context.js";
 import {
   GaRunRequestDraftFactory,

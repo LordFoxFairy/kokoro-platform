@@ -12,9 +12,13 @@ describe("Postgres Identity receipt-recovery authority", () => {
   it("freezes the current release and product-binding revision at issuance", async () => {
     let insertStatement = "";
     let insertValues: readonly unknown[] = [];
+    let authorityStatement = "";
     const lease = issuePlatformTransaction({
       async query(statement) {
-        if (statement.includes("FROM platform.authorization_site site")) return [{}] as never;
+        if (statement.includes("FROM platform.authorization_site site")) {
+          authorityStatement = statement;
+          return [{}] as never;
+        }
         if (statement.includes("FROM platform.identity_receipt_recovery_capability")) {
           return [{
             siteRef: "site-1", siteReleaseRef: "release-1", siteProjectBindingRef: "binding-1",
@@ -40,6 +44,7 @@ describe("Postgres Identity receipt-recovery authority", () => {
 
       expect(insertStatement).toContain("site_release_ref,site_project_binding_ref");
       expect(insertStatement).toContain("workload_identity_id,binding_epoch");
+      expect(authorityStatement).not.toContain("FOR SHARE");
       expect(insertValues).toEqual([
         "1".repeat(32), "site-1", "release-1", "binding-1", "workload-1", "1",
         "createIdentitySession", null, "a".repeat(64), expiresAt,

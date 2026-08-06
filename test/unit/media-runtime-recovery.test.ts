@@ -4,7 +4,7 @@ import type { HandlerContext } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import {
   RecoverMediaOperationByCommandRequestSchema,
-} from "../../src/interfaces/connect/generated-media-runtime/kokoro/platform/media/v1/media_runtime_pb.js";
+} from "../../src/generated/proto/kokoro/platform/media/v1/media_runtime_pb.js";
 import { PostgresMediaRuntimeQueryRepository } from
   "../../src/modules/media/infrastructure/postgres/media-runtime-query-repository.js";
 import { createMediaRuntimeConnectService } from

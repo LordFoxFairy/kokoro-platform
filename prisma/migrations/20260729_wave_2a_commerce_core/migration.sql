@@ -1379,7 +1379,7 @@ BEGIN
         OR (expected.disposition='forbidden' AND actual.actual_count<>0)
       )
     )
-  ) THEN
+  THEN
     RAISE EXCEPTION 'FULFILLMENT_OUTPUT_SET_INVALID' USING ERRCODE='23514';
   END IF;
   RETURN NEW;

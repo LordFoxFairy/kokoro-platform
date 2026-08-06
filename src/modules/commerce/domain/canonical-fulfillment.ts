@@ -6,7 +6,7 @@ import {
   CommittedFulfillmentOutputKind,
   FulfillmentAcquisitionSourceKind,
   FulfillmentTransactionState,
-} from "../../../interfaces/connect/generated-commerce/kokoro/platform/commerce/v1/fulfillment_pb.js";
+} from "../../../generated/proto/kokoro/platform/commerce/v1/fulfillment_pb.js";
 import { commerceCanonicalJson } from "./canonical-json.js";
 
 const TYPE_NAME = "kokoro.platform.commerce.v1.CanonicalFulfillmentTransactionV1";

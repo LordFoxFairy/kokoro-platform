@@ -129,8 +129,11 @@ export class IdentityOutboxConsumer {
     const outcomes = await Promise.allSettled(events.map((event) =>
       this.#processEvent(event, context.signal)));
     if (context.signal.aborted) throw context.signal.reason;
-    const failures = outcomes.flatMap((outcome) =>
-      outcome.status === "rejected" ? [new Error("IDENTITY_OUTBOX_EVENT_PROCESSING_FAILED")] : []);
+    const failures = outcomes.flatMap((outcome) => outcome.status === "rejected"
+      ? [outcome.reason instanceof Error
+          ? outcome.reason
+          : new Error("IDENTITY_OUTBOX_EVENT_PROCESSING_FAILED")]
+      : []);
     if (failures.length > 0) {
       throw new AggregateError(failures, "IDENTITY_OUTBOX_BATCH_FAILED");
     }

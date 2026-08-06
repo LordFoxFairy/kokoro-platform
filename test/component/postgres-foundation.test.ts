@@ -911,6 +911,112 @@ describe("Platform PostgreSQL foundation", () => {
     }
   });
 
+  it("binds a leased Admission role to terminal Credit closure authority without inheritance", async () => {
+    expect(admissionUser).toMatch(/^kt_pg_[a-z0-9_]+$/u);
+    const admission = new Client({ connectionString: admissionDatabaseUrl });
+    const bootstrap = new Client({ connectionString: bootstrapDatabaseUrl });
+    const productionAdmission = createPlatformDatabaseClient(
+      loadPlatformDatabaseConfig("admission", {
+        DATABASE_URL_PLATFORM: admissionDatabaseUrl,
+        PLATFORM_DATABASE_CREDENTIAL_CLASS: "admission",
+        PLATFORM_DATABASE_ADMISSION_ROLE: admissionUser,
+        PLATFORM_DATABASE_MIGRATOR_ROLE: migratorUser,
+        PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
+      }),
+    );
+    await Promise.all([admission.connect(), bootstrap.connect()]);
+    const routines = [
+      "platform.admission_role_identity_is_current()",
+      "platform.record_admission_verified_terminal_evidence(text,text,text,text,text,text,text,character)",
+      "platform.find_execution_root_closure(text,jsonb,text,character)",
+      "platform.lock_execution_root_closure(text,jsonb,text,uuid,uuid,uuid,uuid,uuid,text,bigint,bigint,bigint,numeric,text)",
+      "platform.commit_execution_root_closure(jsonb)",
+      "platform.mark_execution_root_reconciliation(jsonb)",
+    ] as const;
+    try {
+      await productionAdmission.connect();
+      await productionAdmission.checkHealth();
+
+      const identity = await admission.query<{
+        current_user: string;
+        identity_exact: boolean;
+        all_routines: boolean;
+      }>(
+        `SELECT current_user,
+                platform.admission_role_identity_is_current() AS identity_exact,
+                bool_and(has_function_privilege(current_user,routine,'EXECUTE')) AS all_routines
+           FROM unnest($1::text[]) routine
+          GROUP BY current_user`,
+        [routines],
+      );
+      expect(identity.rows).toEqual([{
+        current_user: admissionUser,
+        identity_exact: true,
+        all_routines: true,
+      }]);
+
+      const role = await bootstrap.query<{
+        inherits: boolean;
+        bypasses_rls: boolean;
+        inherits_canonical_admission: boolean;
+      }>(
+        `SELECT runtime_role.rolinherit AS inherits,
+                runtime_role.rolbypassrls AS bypasses_rls,
+                pg_has_role(runtime_role.rolname,'platform_admission','MEMBER')
+                  AS inherits_canonical_admission
+           FROM pg_roles runtime_role WHERE runtime_role.rolname=$1`,
+        [admissionUser],
+      );
+      expect(role.rows).toEqual([{
+        inherits: false,
+        bypasses_rls: false,
+        inherits_canonical_admission: false,
+      }]);
+
+      const policies = await bootstrap.query<{
+        relation_name: string;
+        schema_owner_only: boolean;
+        using_expression: string;
+        with_check_expression: string;
+      }>(
+        `SELECT relation.relname AS relation_name,
+                policy.polroles=ARRAY[namespace.nspowner]::oid[] AS schema_owner_only,
+                pg_get_expr(policy.polqual,policy.polrelid,false) AS using_expression,
+                pg_get_expr(policy.polwithcheck,policy.polrelid,false) AS with_check_expression
+           FROM pg_policy policy
+           JOIN pg_class relation ON relation.oid=policy.polrelid
+           JOIN pg_namespace namespace ON namespace.oid=relation.relnamespace
+          WHERE namespace.nspname='platform' AND relation.relname=ANY($1::text[])
+          ORDER BY relation.relname`,
+        [[
+          "admission_verified_terminal_evidence",
+          "credit_execution_root_closure_receipt",
+          "credit_execution_root_outcome",
+          "credit_execution_root_reconciliation",
+        ]],
+      );
+      expect(policies.rows).toHaveLength(4);
+      expect(policies.rows.every((policy) =>
+        policy.schema_owner_only &&
+        policy.using_expression.includes("admission_role_identity_is_current") &&
+        policy.with_check_expression.includes("admission_role_identity_is_current")))
+        .toBe(true);
+
+      const apiAuthority = await bootstrap.query<{ can_execute: boolean }>(
+        `SELECT bool_or(has_function_privilege($1,routine,'EXECUTE')) AS can_execute
+           FROM unnest($2::text[]) routine`,
+        [apiUser, routines],
+      );
+      expect(apiAuthority.rows).toEqual([{ can_execute: false }]);
+    } finally {
+      await Promise.allSettled([
+        productionAdmission.disconnect(),
+        admission.end(),
+        bootstrap.end(),
+      ]);
+    }
+  });
+
   it("rejects a Media execution-root proof presented by the Admission database role", async () => {
     const admission = new Client({ connectionString: admissionDatabaseUrl });
     await admission.connect();

@@ -2,16 +2,16 @@ import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError, type HandlerContext } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import { KokoroErrorDetailSchema } from
-  "../../src/interfaces/connect/generated-product-catalog-publication/kokoro/common/v1/error_pb.js";
+  "../../src/generated/proto/kokoro/common/v1/error_pb.js";
 import { AuthenticatedOperatorCommandContextSchema } from
-  "../../src/interfaces/connect/generated-product-catalog-publication/kokoro/platform/admin/v2/admin_shared_pb.js";
+  "../../src/generated/proto/kokoro/platform/admin/v2/admin_shared_pb.js";
 import { ImmutableContractRevisionBindingSchema } from
-  "../../src/interfaces/connect/generated-product-catalog-publication/kokoro/platform/publication/v1/publication_common_pb.js";
+  "../../src/generated/proto/kokoro/platform/publication/v1/publication_common_pb.js";
 import {
   PublishProductSurfaceCatalogEffectSchema,
   PublishProductSurfaceCatalogRequestSchema,
 } from
-  "../../src/interfaces/connect/generated-product-catalog-publication/kokoro/platform/product/v1/product_catalog_publication_pb.js";
+  "../../src/generated/proto/kokoro/platform/product/v1/product_catalog_publication_pb.js";
 import { createProductCatalogPublicationConnectService } from
   "../../src/modules/product-catalog/interfaces/connect/product-catalog-publication-service.js";
 

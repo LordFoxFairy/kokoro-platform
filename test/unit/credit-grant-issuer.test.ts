@@ -42,7 +42,11 @@ describe("PostgresCreditGrantIssuer", () => {
         outputDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
       }]);
       const sql = statements.map(({ statement }) => statement).join("\n");
-      expect(sql).toMatch(/pg_advisory_xact_lock[\s\S]+FROM platform\.credit_account[\s\S]+FOR UPDATE/u);
+      expect(sql).toMatch(/pg_advisory_xact_lock[\s\S]+FROM platform\.credit_account/u);
+      expect(statements.find(({ statement }) => statement.includes("FROM platform.credit_account"))
+        ?.statement).not.toMatch(
+          /FOR\s+(?:NO\s+KEY\s+)?UPDATE|FOR\s+(?:KEY\s+)?SHARE/iu,
+        );
       expect(sql).toMatch(/INSERT INTO platform\.credit_account[\s\S]+INSERT INTO platform\.credit_grant/u);
       expect(sql).toContain("INSERT INTO platform.credit_journal_transaction");
       expect(sql.match(/INSERT INTO platform\.credit_journal_entry/gu)).toHaveLength(2);

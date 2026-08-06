@@ -33,6 +33,11 @@ describe("PostgresCreditAuthorityRepository", () => {
       await expect(repository.findOperationReceipt(lease.transaction, {
         ...identity, requestDigest: "b".repeat(64),
       })).resolves.toEqual({ kind: "conflict", code: "REQUEST_DIGEST_CONFLICT" });
+      expect(sql.reads[0]?.statement).toContain("pg_advisory_xact_lock");
+      expect(sql.reads[1]?.statement).toContain("platform.credit_budget_operation_receipt");
+      expect(sql.reads[1]?.statement).not.toMatch(
+        /FOR\s+(?:NO\s+KEY\s+)?UPDATE|FOR\s+(?:KEY\s+)?SHARE/iu,
+      );
     } finally {
       revokePlatformTransaction(lease);
     }
@@ -57,19 +62,19 @@ describe("PostgresCreditAuthorityRepository", () => {
       expect(sql.indexOf("platform.outbox_event")).toBeLessThan(sql.indexOf("platform.credit_budget_operation_receipt"));
 
       const journal = sql.writes.find((write) => write.statement.includes("credit_journal_transaction"));
-      const expectedCanonical = [
-        "0|site-1|00000000-0000-7000-8000-000000000001|credit_micros|debit|customer_available|40|00000000-0000-7000-8000-000000000101|00000000-0000-7000-8000-000000000201",
-        "1|site-1|00000000-0000-7000-8000-000000000001|credit_micros|credit|customer_reserved|40|00000000-0000-7000-8000-000000000101|00000000-0000-7000-8000-000000000201",
-        "2|site-1|00000000-0000-7000-8000-000000000001|credit_micros|debit|customer_available|20|00000000-0000-7000-8000-000000000102|00000000-0000-7000-8000-000000000201",
-        "3|site-1|00000000-0000-7000-8000-000000000001|credit_micros|credit|customer_reserved|20|00000000-0000-7000-8000-000000000102|00000000-0000-7000-8000-000000000201",
-      ].join("\n");
-      expect(journal?.values?.[7]).toBe(createHash("sha256").update(expectedCanonical).digest("hex"));
+      const expectedEntries = [
+        [0, "site-1", "00000000-0000-7000-8000-000000000001", "credit_micros", "debit", "customer_available", 40, "00000000-0000-7000-8000-000000000101", "00000000-0000-7000-8000-000000000201"],
+        [1, "site-1", "00000000-0000-7000-8000-000000000001", "credit_micros", "credit", "customer_reserved", 40, "00000000-0000-7000-8000-000000000101", "00000000-0000-7000-8000-000000000201"],
+        [2, "site-1", "00000000-0000-7000-8000-000000000001", "credit_micros", "debit", "customer_available", 20, "00000000-0000-7000-8000-000000000102", "00000000-0000-7000-8000-000000000201"],
+        [3, "site-1", "00000000-0000-7000-8000-000000000001", "credit_micros", "credit", "customer_reserved", 20, "00000000-0000-7000-8000-000000000102", "00000000-0000-7000-8000-000000000201"],
+      ];
+      expect(journal?.values?.[7]).toBe(databaseJournalDigest(expectedEntries));
     } finally {
       revokePlatformTransaction(lease);
     }
   });
 
-  it("serializes the CreditAccount before taking a fresh grant-balance snapshot", async () => {
+  it("serializes the CreditAccount identity before taking a SELECT-only grant-balance snapshot", async () => {
     const sql = new RecordingSql();
     sql.accountRows = [{ creditAccountId: "00000000-0000-7000-8000-000000000001",
       state: "active", aggregateVersion: 1n }];
@@ -85,7 +90,15 @@ describe("PostgresCreditAuthorityRepository", () => {
         consumptionScope: { surfaceRef: "general.chat", capabilityKey: "general.chat.message", agentRef: null },
       });
       expect(result).toMatchObject([{ availableAmount: 60n }]);
-      expect(sql.readSql()).toMatch(/pg_advisory_xact_lock[\s\S]+FROM platform.credit_account[\s\S]+FOR UPDATE[\s\S]+FROM platform.credit_grant[\s\S]+available_amount/u);
+      expect(sql.readSql()).toMatch(
+        /pg_advisory_xact_lock[\s\S]+FROM platform.credit_account[\s\S]+FROM platform.credit_grant[\s\S]+available_amount/u,
+      );
+      expect(sql.reads[1]?.statement).not.toMatch(
+        /FOR\s+(?:NO\s+KEY\s+)?UPDATE|FOR\s+(?:KEY\s+)?SHARE/iu,
+      );
+      expect(sql.reads[2]?.statement).not.toMatch(
+        /FOR\s+(?:NO\s+KEY\s+)?UPDATE|FOR\s+(?:KEY\s+)?SHARE/iu,
+      );
       expect(sql.readSql()).toContain("platform.valid_credit_scope_policy(grant_fact.scope_policy)");
       expect(sql.readSql()).toContain("grant_fact.scope_policy->'surfaceRefs' ? $5");
       expect(sql.readSql()).toContain("grant_fact.scope_policy->'capabilityKeys' ? $6");
@@ -174,14 +187,48 @@ describe("PostgresCreditAuthorityRepository", () => {
         segment: { aggregateVersion: 1n },
       });
       expect(sql.reads.map((read) => read.statement.match(/\/\* ([^*]+) \*\//u)?.[1])).toEqual([
+        undefined,
         "credit-segment-lineage-read",
         "credit-financial-allocation-lock",
         "credit-financial-root-lock",
         "credit-financial-hold-lock",
         "credit-segment-fresh-load",
       ]);
+      expect(sql.reads[0]?.statement).toContain("pg_advisory_xact_lock");
+      expect(sql.reads[0]?.values).toEqual([
+        "credit-segment|site-1|00000000-0000-7000-8000-000000000205",
+      ]);
+      expect(sql.reads[2]?.statement).not.toMatch(
+        /FOR\s+(?:NO\s+KEY\s+)?UPDATE|FOR\s+(?:KEY\s+)?SHARE/iu,
+      );
       expect(sql.reads.at(-1)?.statement).toContain("FOR UPDATE OF segment");
       expect(sql.reads.at(-1)?.statement).not.toContain("FOR UPDATE OF segment,allocation,root,hold");
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("serializes a producer Segment read without requiring row-lock privileges", async () => {
+    const sql = new RecordingSql();
+    sql.segmentRows = [segmentRow()];
+    const lease = issuePlatformTransaction(sql);
+    try {
+      await expect(postgresRepository().loadSegmentAllocationForUsageProducer(lease.transaction, {
+        siteId: "site-1",
+        authorizationSegmentRef: "00000000-0000-7000-8000-000000000205",
+      })).resolves.toMatchObject({
+        budgetAllocationRef: "00000000-0000-7000-8000-000000000203",
+        segment: { aggregateVersion: 1n },
+      });
+      expect(sql.reads).toHaveLength(2);
+      expect(sql.reads[0]?.statement).toContain("pg_advisory_xact_lock");
+      expect(sql.reads[0]?.values).toEqual([
+        "credit-segment|site-1|00000000-0000-7000-8000-000000000205",
+      ]);
+      expect(sql.reads[1]?.statement).toContain("credit-segment-fresh-load");
+      expect(sql.reads[1]?.statement).not.toMatch(
+        /FOR\s+(?:NO\s+KEY\s+)?UPDATE|FOR\s+(?:KEY\s+)?SHARE/iu,
+      );
     } finally {
       revokePlatformTransaction(lease);
     }
@@ -203,7 +250,9 @@ describe("PostgresCreditAuthorityRepository", () => {
       });
       const [allocationLock, rootLock, holdLock, freshLoad] = sql.reads;
       expect(allocationLock?.statement).toContain("credit-financial-allocation-lock");
-      expect(allocationLock?.statement).toContain("FOR UPDATE OF allocation");
+      expect(allocationLock?.statement).not.toMatch(
+        /FOR\s+(?:NO\s+KEY\s+)?UPDATE|FOR\s+(?:KEY\s+)?SHARE/iu,
+      );
       expect(allocationLock?.statement).toContain("ORDER BY allocation.budget_allocation_ref");
       expect(allocationLock?.statement).not.toMatch(/\bJOIN\b|current_revision|credit_budget_allocation_revision|receipt/iu);
       expect(rootLock?.statement).toContain("credit-financial-root-lock");
@@ -284,7 +333,9 @@ describe("PostgresCreditAuthorityRepository", () => {
       const [allocationLock, rootLock, holdLock, freshLoad] = sql.reads;
       expect(allocationLock?.statement).toContain("credit-financial-allocation-lock");
       expect(allocationLock?.statement).toContain("ORDER BY allocation.budget_allocation_ref");
-      expect(allocationLock?.statement).toContain("FOR UPDATE OF allocation");
+      expect(allocationLock?.statement).not.toMatch(
+        /FOR\s+(?:NO\s+KEY\s+)?UPDATE|FOR\s+(?:KEY\s+)?SHARE/iu,
+      );
       expect(allocationLock?.statement).not.toMatch(/\bJOIN\b|current_revision|credit_budget_allocation_revision|receipt/iu);
       expect(rootLock?.statement).toContain("credit-financial-root-lock");
       expect(holdLock?.statement).toContain("credit-financial-hold-lock");
@@ -469,6 +520,14 @@ function postgresRepository(): PostgresCreditAuthorityRepository {
   return new PostgresCreditAuthorityRepository({
     reference: () => `00000000-0000-7000-8000-${String(next++).padStart(12, "0")}`,
   });
+}
+
+function databaseJournalDigest(entries: readonly (readonly (string | number)[])[]): string {
+  const canonical = entries.flatMap((entry) => entry.map((field) => {
+    const value = String(field);
+    return `${Buffer.byteLength(value, "utf8")}:${value}`;
+  })).join("");
+  return createHash("sha256").update(canonical, "utf8").digest("hex");
 }
 
 function receiptRow(requestDigest: string) {

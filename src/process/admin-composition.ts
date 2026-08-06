@@ -6,23 +6,21 @@ import { TLSSocket } from "node:tls";
 import { connectNodeAdapter } from "@connectrpc/connect-node";
 import type { PlatformTransactionalDatabaseClient } from "../infrastructure/postgres/client.js";
 import { AdminIdentityService } from
-  "../interfaces/connect/generated-admin-identity/kokoro/platform/identity/v1/admin_identity_pb.js";
+  "../generated/proto/kokoro/platform/identity/v1/admin_identity_pb.js";
 import { AdminQueryService } from
-  "../interfaces/connect/generated-admin-query-v2/kokoro/platform/admin/v2/admin_query_pb.js";
+  "../generated/proto/kokoro/platform/admin/v2/admin_query_pb.js";
 import { AdminCommandService as AdminCommandDescriptor } from
-  "../interfaces/connect/generated-admin-v2/kokoro/platform/admin/v2/admin_command_pb.js";
+  "../generated/proto/kokoro/platform/admin/v2/admin_command_pb.js";
 import { SiteLifecycleService } from
-  "../interfaces/connect/generated-site-lifecycle/kokoro/platform/site/v1/site_lifecycle_pb.js";
-import { AdminCommerceService } from
-  "../interfaces/connect/generated-admin-commerce/kokoro/platform/commerce/v1/admin_commerce_pb.js";
+  "../generated/proto/kokoro/platform/site/v1/site_lifecycle_pb.js";
 import { AdminCreditService } from
-  "../interfaces/connect/generated-admin-credit/kokoro/platform/credit/v1/admin_credit_pb.js";
+  "../generated/proto/kokoro/platform/credit/v1/admin_credit_pb.js";
 import { SiteProvisioningService } from
-  "../interfaces/connect/generated-site-provisioning/kokoro/platform/site/v1/site_provisioning_pb.js";
+  "../generated/proto/kokoro/platform/site/v1/site_provisioning_pb.js";
 import { ModelControlService } from
-  "../interfaces/connect/generated-model-control/kokoro/platform/model/v1/model_control_pb.js";
+  "../generated/proto/kokoro/platform/model/v1/model_control_pb.js";
 import { ProductCatalogPublicationService } from
-  "../interfaces/connect/generated-product-catalog-publication/kokoro/platform/product/v1/product_catalog_publication_pb.js";
+  "../generated/proto/kokoro/platform/product/v1/product_catalog_publication_pb.js";
 import { PlatformUnitOfWork } from "../shared/unit-of-work/index.js";
 import { CommandReceiptRepository } from "../shared/outbox-inbox/receipt.js";
 import { OutboxRepository } from "../shared/outbox-inbox/outbox.js";
@@ -68,22 +66,15 @@ import { createSiteProvisioningConnectService } from
   "../modules/site/interfaces/connect/site-provisioning-service.js";
 import { createModelControlConnectService } from
   "../modules/model-control/interfaces/connect/model-control-service.js";
-import { createAdminCommerceConnectService } from
-  "../modules/commerce/interfaces/connect/admin-commerce-service.js";
-import { PostgresCommerceAdministrationReader } from
-  "../modules/commerce/infrastructure/postgres/commerce-administration-reader.js";
 import { createAdminCreditConnectService } from
   "../modules/credit/interfaces/connect/admin-credit-service.js";
 import { PostgresAdminCreditReader } from
   "../modules/credit/infrastructure/postgres/admin-credit-reader.js";
-import { PostgresCreditGrantProgramAdministrationReader } from
-  "../modules/commerce/infrastructure/postgres/credit-program-administration-reader.js";
 import { readBoundedPrivateFile, readBoundedRegularFile } from "./secret-files.js";
 import { createPlatformSiteAdminComposition } from "./site-admin-composition.js";
 import { createSessionAuthorizationEventSigner } from
   "../modules/authorization/infrastructure/jose/session-authorization-event-signer.js";
 import { loadAuthorizationEventKeyRing } from "./platform-public-composition.js";
-import { createCommerceAdministrationComposition } from "./commerce-admin-composition.js";
 import { createPlatformSiteProvisioningComposition } from
   "./site-provisioning-admin-composition.js";
 import {
@@ -211,18 +202,9 @@ export async function createAdminProductionComposition(input: Readonly<{
     reader: new PostgresAdminQueryReader(input.database),
     cursors,
   });
-  const commerceOwner = await createCommerceAdministrationComposition({
-    database: input.database, environment,
-  });
-  const commerceService = createAdminCommerceConnectService({
-    resolver, owner: commerceOwner.commerce,
-    reader: new PostgresCommerceAdministrationReader(input.database,
-      new PostgresCreditGrantProgramAdministrationReader(input.database)), cursors,
-    ...(input.clock === undefined ? {} : { clock: input.clock }),
-  });
   const creditService = createAdminCreditConnectService({
-    resolver, reader: new PostgresAdminCreditReader(input.database), cursors,
-    ...(input.clock === undefined ? {} : { clock: input.clock }),
+    resolver, reader: new PostgresAdminCreditReader(input.database),
+    cursors,
   });
   const unitOfWork = new PlatformUnitOfWork(input.database);
   const authorityRepository = new PostgresAdminAuthorityRepository();
@@ -303,7 +285,6 @@ export async function createAdminProductionComposition(input: Readonly<{
       router.service(SiteProvisioningService, siteProvisioningService);
       router.service(ModelControlService, modelControlService);
       router.service(ProductCatalogPublicationService, productCatalogService);
-      router.service(AdminCommerceService, commerceService);
       router.service(AdminCreditService, creditService);
     },
     connect: true,

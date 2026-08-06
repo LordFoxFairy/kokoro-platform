@@ -2,27 +2,27 @@ import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError, type HandlerContext, type ServiceImpl } from "@connectrpc/connect";
 import { KokoroErrorDetailSchema, RetryClass } from
-  "../../../../interfaces/connect/generated-product-catalog-publication/kokoro/common/v1/error_pb.js";
+  "../../../../generated/proto/kokoro/common/v1/error_pb.js";
 import {
   CommandDigestAlgorithmV2,
   CommandIdentityV2Schema,
   CommandReceiptStateV2,
   CommandReceiptV2Schema,
-} from "../../../../interfaces/connect/generated-product-catalog-publication/kokoro/common/v2/command_envelope_pb.js";
+} from "../../../../generated/proto/kokoro/common/v2/command_envelope_pb.js";
 import type { AuthenticatedOperatorCommandContext } from
-  "../../../../interfaces/connect/generated-product-catalog-publication/kokoro/platform/admin/v2/admin_shared_pb.js";
+  "../../../../generated/proto/kokoro/platform/admin/v2/admin_shared_pb.js";
 import {
   ProductCatalogPublicationService as ProductCatalogPublicationDescriptor,
-} from "../../../../interfaces/connect/generated-product-catalog-publication/kokoro/platform/product/v1/product_catalog_publication_pb.js";
+} from "../../../../generated/proto/kokoro/platform/product/v1/product_catalog_publication_pb.js";
 import {
   ImmutableContractRevisionBindingSchema,
   type ImmutableContractRevisionBinding,
-} from "../../../../interfaces/connect/generated-product-catalog-publication/kokoro/platform/publication/v1/publication_common_pb.js";
+} from "../../../../generated/proto/kokoro/platform/publication/v1/publication_common_pb.js";
 import {
   publishLaunchProductProfileRequestDigest,
   publishProductSurfaceCatalogRequestDigest,
   type VerifiedAuthenticatedAdminAxes,
-} from "../../../../interfaces/connect/generated-product-catalog-publication/command-envelope-digest.js";
+} from "../../../../generated/contracts/platform-product-catalog-publication@v1/digest.js";
 import { withCommandReceiptConflictMapping } from
   "../../../../interfaces/connect/command-receipt-conflict.js";
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";

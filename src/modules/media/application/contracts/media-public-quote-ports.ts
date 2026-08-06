@@ -1,7 +1,7 @@
 import type {
   MediaOperationQuote,
   MediaOperationQuoteRequest,
-} from "../../../../interfaces/http/generated/platform-public/types.gen.js";
+} from "../../../../generated/contracts/openapi/platform-public/types.gen.js";
 import type { PlatformTransaction } from
   "../../../../shared/unit-of-work/index.js";
 import type { ResolvedMediaPublicOwnerAuthority } from "./media-public-read-ports.js";

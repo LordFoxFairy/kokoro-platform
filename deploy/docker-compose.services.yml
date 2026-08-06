@@ -127,6 +127,21 @@ services:
       PLATFORM_DATABASE_EXPECTED_DATABASE: ${PLATFORM_DATABASE_EXPECTED_DATABASE:-kokoro_platform}
       PLATFORM_DATABASE_MIGRATOR_ROLE: ${PLATFORM_DATABASE_MIGRATOR_ROLE:-platform_migrator}
       PLATFORM_DATABASE_MODEL_GATEWAY_ROLE: ${PLATFORM_DATABASE_MODEL_GATEWAY_ROLE:-platform_model_gateway}
+      PLATFORM_MODEL_GATEWAY_PORT: ${PLATFORM_MODEL_GATEWAY_PORT:-4247}
+      PLATFORM_MODEL_GATEWAY_PROVIDER_TIMEOUT_MS: ${PLATFORM_MODEL_GATEWAY_PROVIDER_TIMEOUT_MS:-30000}
+      PLATFORM_MODEL_GATEWAY_AGENT_CALLER_SAN_URI: ${PLATFORM_MODEL_GATEWAY_AGENT_CALLER_SAN_URI:?required}
+      PLATFORM_MODEL_GATEWAY_TLS_KEY_FILE: /run/secrets/platform-model-gateway/server.key
+      PLATFORM_MODEL_GATEWAY_TLS_CERT_FILE: /run/secrets/platform-model-gateway/server.crt
+      PLATFORM_MODEL_GATEWAY_TLS_CLIENT_CA_FILE: /run/secrets/platform-model-gateway/client-ca.crt
+      PLATFORM_MODEL_GATEWAY_MTLS_PEERS_FILE: /run/secrets/platform-model-gateway/inbound-peers.json
+      PLATFORM_MODEL_GATEWAY_RESPONSE_KEY_RING_FILE: /run/secrets/platform-model-gateway/response-key-ring.json
+      PLATFORM_MODEL_GATEWAY_DIRECT_ENDPOINT: ${PLATFORM_MODEL_GATEWAY_DIRECT_ENDPOINT:?required}
+      PLATFORM_MODEL_GATEWAY_DIRECT_API_KEY_FILE: /run/secrets/platform-model-gateway/direct-api-key
+    volumes:
+      - type: bind
+        source: ${PLATFORM_MODEL_GATEWAY_SECRET_DIRECTORY:?required}
+        target: /run/secrets/platform-model-gateway
+        read_only: true
 
   platform-commerce-worker:
     <<: *platform-service
@@ -362,26 +377,36 @@ services:
       KOKORO_WORKSPACE_S3_ACCESS_KEY: ${KOKORO_WORKSPACE_S3_ACCESS_KEY:?required}
       KOKORO_WORKSPACE_S3_SECRET_KEY: ${KOKORO_WORKSPACE_S3_SECRET_KEY:?required}
       KOKORO_HUB_SECRET_MASTER_KEY: ${KOKORO_HUB_SECRET_MASTER_KEY:?required}
-      KOKORO_HUB_CONNECT_TRUST_ROOT: /run/secrets/hub-connect
-      KOKORO_HUB_CONNECT_TLS_KEY_FILE: /run/secrets/hub-connect/server.key
-      KOKORO_HUB_CONNECT_TLS_CERT_FILE: /run/secrets/hub-connect/server.crt
-      KOKORO_HUB_CONNECT_TLS_CLIENT_CA_FILE: /run/secrets/hub-connect/client-ca.crt
-      KOKORO_HUB_CONNECT_MTLS_PEERS_FILE: /run/secrets/hub-connect/inbound-peers.json
+      KOKORO_HUB_CONNECT_TRUST_ROOT: /run/secrets/hub-connect-inbound
+      KOKORO_HUB_CONNECT_TLS_KEY_FILE: /run/secrets/hub-connect-inbound/server.key
+      KOKORO_HUB_CONNECT_TLS_CERT_FILE: /run/secrets/hub-connect-inbound/server.crt
+      KOKORO_HUB_CONNECT_TLS_CLIENT_CA_FILE: /run/secrets/hub-connect-inbound/client-ca.crt
+      KOKORO_HUB_CONNECT_MTLS_PEERS_FILE: /run/secrets/hub-connect-inbound/inbound-peers.json
       KOKORO_HUB_CATALOG_PLATFORM_CALLER_SAN_URI: ${KOKORO_HUB_CATALOG_PLATFORM_CALLER_SAN_URI:-spiffe://kokoro.internal/platform}
       KOKORO_HUB_RUNTIME_AGENT_CALLER_SAN_URI: ${KOKORO_HUB_RUNTIME_AGENT_CALLER_SAN_URI:-spiffe://kokoro.internal/agent}
       KOKORO_HUB_CAPABILITY_SIGNING_KEY_REF: ${KOKORO_HUB_CAPABILITY_SIGNING_KEY_REF:?required}
-      KOKORO_HUB_CAPABILITY_SIGNING_KEY_FILE: /run/secrets/hub-connect/catalog-signing.key
+      KOKORO_HUB_CAPABILITY_SIGNING_TRUST_ROOT: /run/secrets/hub-capability-signing
+      KOKORO_HUB_CAPABILITY_SIGNING_KEY_FILE: /run/secrets/hub-capability-signing/catalog-signing.key
       KOKORO_HUB_PLATFORM_PROJECTION_BASE_URL: ${KOKORO_HUB_PLATFORM_PROJECTION_BASE_URL:-https://platform-admission:4244}
       KOKORO_HUB_PLATFORM_PROJECTION_SERVER_NAME: ${KOKORO_HUB_PLATFORM_PROJECTION_SERVER_NAME:?required}
-      KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_KEY_FILE: /run/secrets/hub-connect/platform-client.key
-      KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_CERT_FILE: /run/secrets/hub-connect/platform-client.crt
-      KOKORO_HUB_PLATFORM_PROJECTION_SERVER_CA_FILE: /run/secrets/hub-connect/platform-ca.crt
+      KOKORO_HUB_PLATFORM_PROJECTION_TRUST_ROOT: /run/secrets/hub-platform-projection
+      KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_KEY_FILE: /run/secrets/hub-platform-projection/platform-client.key
+      KOKORO_HUB_PLATFORM_PROJECTION_CLIENT_CERT_FILE: /run/secrets/hub-platform-projection/platform-client.crt
+      KOKORO_HUB_PLATFORM_PROJECTION_SERVER_CA_FILE: /run/secrets/hub-platform-projection/platform-ca.crt
     ports:
       - "4252:4252"
     volumes:
       - type: bind
-        source: ${KOKORO_HUB_CONNECT_SECRETS_DIRECTORY:?required}
-        target: /run/secrets/hub-connect
+        source: ${KOKORO_HUB_CONNECT_INBOUND_SECRETS_DIRECTORY:?required}
+        target: /run/secrets/hub-connect-inbound
+        read_only: true
+      - type: bind
+        source: ${KOKORO_HUB_CAPABILITY_SIGNING_SECRETS_DIRECTORY:?required}
+        target: /run/secrets/hub-capability-signing
+        read_only: true
+      - type: bind
+        source: ${KOKORO_HUB_PLATFORM_PROJECTION_SECRETS_DIRECTORY:?required}
+        target: /run/secrets/hub-platform-projection
         read_only: true
       - type: bind
         source: ${KOKORO_WORKSPACE_CONFIG_FILE:?required}

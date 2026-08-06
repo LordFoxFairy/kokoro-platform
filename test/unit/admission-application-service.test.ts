@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   CommandDigestAlgorithm,
   CommandIdentitySchema,
-} from "../../src/interfaces/connect/generated/kokoro/common/v1/receipt_pb.js";
+} from "../../src/generated/proto/kokoro/common/v1/receipt_pb.js";
 import {
   AdmissionOperation,
   FinalizeRunAuthorizationEffectSchema,
@@ -20,7 +20,7 @@ import {
   ReleaseRunAuthorizationEffectSchema,
   ReleaseRunAuthorizationRequestSchema,
   SafeAdmissionSnapshotSchema,
-} from "../../src/interfaces/connect/generated/kokoro/platform/admission/v1/admission_pb.js";
+} from "../../src/generated/proto/kokoro/platform/admission/v1/admission_pb.js";
 import type {
   AdmissionCommandJournal,
   AdmissionCommandKey,
@@ -118,6 +118,7 @@ function prepareRequest(commandId = "0198f279-7420-7a32-995f-7f4421eb6c42") {
     proposedRunId: "run-1",
     triggerMessageId: "message-1",
     triggerMessageContent: "hello",
+    sessionProjectionAuthorizationHandle: `session-projection-authorization:${"c".repeat(64)}`,
     modelOptionRevisionRef: "model-option-revision-1",
     clientIntent: { locale: "en-US" },
     executionContext: create(OpaqueExecutionContextIntentSchema, {
@@ -224,7 +225,11 @@ describe("Admission application provider", () => {
     expect(fixture.owner.prepareRun).toHaveBeenCalledWith(expect.objectContaining({
       caller,
       siteId: "site-1",
-      effect: request.effect,
+      effect: expect.objectContaining({
+        ...request.effect,
+        sessionProjectionAuthorizationHandle:
+          `session-projection-authorization:${"c".repeat(64)}`,
+      }),
     }));
   });
 

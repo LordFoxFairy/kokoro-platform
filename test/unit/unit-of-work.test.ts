@@ -4,6 +4,7 @@ import {
   type PlatformTransactionHost,
 } from "../../src/shared/unit-of-work/unit-of-work.js";
 import {
+  acquirePlatformSqlAdvisoryLock,
   issuePlatformTransaction,
   resolvePlatformTransaction,
   revokePlatformTransaction,
@@ -16,6 +17,18 @@ import {
 } from "../../src/shared/security-context/request-security-context.js";
 
 describe("PlatformUnitOfWork", () => {
+  it("acquires advisory locks without returning PostgreSQL void values to adapters", async () => {
+    const calls: { statement: string; values: readonly unknown[] }[] = [];
+    const sql: PlatformSqlTransaction = {
+      query: async (statement, values = []) => { calls.push({ statement, values }); return []; },
+      execute: async () => 0,
+    };
+    await acquirePlatformSqlAdvisoryLock(sql, "owner-lock-key");
+    expect(calls).toEqual([{ statement: expect.stringContaining(
+      'SELECT 1 AS "lockAcquired" FROM pg_catalog.pg_advisory_xact_lock',
+    ), values: ["owner-lock-key"] }]);
+  });
+
   it("exposes only an opaque transaction and revokes it after commit", async () => {
     let captured: PlatformTransaction | undefined;
     const sql: PlatformSqlTransaction = {

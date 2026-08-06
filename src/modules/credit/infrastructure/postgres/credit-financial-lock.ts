@@ -30,8 +30,7 @@ export async function lockCreditFinancialAuthority(
      WHERE allocation.site_ref=$1
        AND allocation.execution_budget_root_ref=$2::uuid
        AND allocation.budget_allocation_ref=ANY($3::uuid[])
-     ORDER BY allocation.budget_allocation_ref
-     FOR UPDATE OF allocation`,
+     ORDER BY allocation.budget_allocation_ref`,
     [input.siteId, input.executionBudgetRootRef, expectedAllocationRefs],
   );
   const lockedAllocationRefs = allocations.map((row) => exactString(row, "allocationRef"));

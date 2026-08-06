@@ -1,39 +1,17 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { AdmissionRetryClass } from "../../../../interfaces/connect/generated/kokoro/platform/admission/v1/admission_pb.js";
+import { AdmissionRetryClass } from "../../../../generated/proto/kokoro/platform/admission/v1/admission_pb.js";
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 import type {
   AdmissionCapabilityOwnerPort,
   AdmissionOwnerResolution,
   AdmissionRuntimePolicyOwnerPort,
 } from "../../application/platform-admission-owner-authority.js";
+import { admissionLaunchProfileSnapshotSchema } from
+  "../../domain/admission-launch-profile-publication.js";
 
 const reference = z.string().min(1).max(256).refine((value) => value.trim() === value);
 const digest = z.string().regex(/^[a-f0-9]{64}$/u);
-const permissionsSchema = z.object({
-  approval_tools: z.array(reference).max(256),
-  review_tools: z.array(reference).max(256),
-  subagent_create: z.enum(["deny", "ask", "allow"]),
-  filesystem: z.enum(["read_only", "workspace_write"]),
-}).strict();
-
-export const admissionLaunchProfileSnapshotSchema = z.object({
-  schemaVersion: z.literal(1),
-  siteId: reference,
-  siteReleaseRef: reference,
-  backend: z.enum(["state", "local_shell", "docker", "e2b", "custom"]),
-  permissions: permissionsSchema,
-  billing: z.object({
-    unit: reference,
-    liabilityMerchantAccountRef: reference,
-    ratingPolicyRevisionRef: reference,
-    rootCeiling: z.string().regex(/^[1-9][0-9]{0,38}$/u),
-    segmentMaximum: z.string().regex(/^[1-9][0-9]{0,38}$/u),
-    surfaceRef: reference,
-    capabilityKey: reference,
-  }).strict(),
-}).strict();
-
 const capabilityCatalogSchema = z.object({
   schemaVersion: z.literal(1),
   agentOptions: z.array(z.object({

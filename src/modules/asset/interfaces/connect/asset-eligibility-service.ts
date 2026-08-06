@@ -5,7 +5,7 @@ import {
   CheckActiveResponseSchema,
   ReadySessionAttachmentSchema,
   ResolveSessionAttachmentsResponseSchema,
-} from "../../../../interfaces/connect/generated-asset-eligibility/kokoro/platform/asset/v1/asset_eligibility_pb.js";
+} from "../../../../generated/proto/kokoro/platform/asset/v1/asset_eligibility_pb.js";
 import type { AdmissionCaller } from "../../../admission/application/admission-ports.js";
 import {
   AssetEligibilityApplicationService,

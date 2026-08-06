@@ -1,5 +1,6 @@
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
+import type { ScopedAuthorizationReservation } from "./scoped-session-authorization-port.js";
 import type {
   AuthenticatedUserSession,
   IssuedSessionAccessGrant,
@@ -74,6 +75,7 @@ export interface SessionAuthorizationRepository {
       resource: SessionGrantResource;
       issuer: string;
       keyRevision: string;
+      authorizationStreamSequence: string;
       notBefore: string;
       issuedAt: string;
       expiresAt: string;
@@ -101,29 +103,21 @@ export interface SessionAccessGrantSigner {
 }
 
 export interface SessionGrantDeliveryPublisher {
+  reserveGrantDelivery(
+    transaction: PlatformTransaction,
+    input: Readonly<{ siteRef: string }>,
+  ): Promise<ScopedAuthorizationReservation>;
+
   publishGrantDelivered(
     transaction: PlatformTransaction,
     input: Readonly<{
       claims: SessionAccessGrantClaims;
       claimsDigest: string;
+      reservation: ScopedAuthorizationReservation;
       changedAt: string;
       correlationId: string;
     }>,
   ): Promise<void>;
-}
-
-/** @deprecated Fresh production uses owner-scoped SiteCurrent publication. */
-export interface SessionAuthorizationPublisher extends SessionGrantDeliveryPublisher {
-  bumpAndPublishRevocationEpochChanged(
-    transaction: PlatformTransaction,
-    input: Readonly<{
-      siteRef: string;
-      expectedRevocationEpoch: string;
-      reason: string;
-      changedAt: string;
-      correlationId: string;
-    }>,
-  ): Promise<string>;
 }
 
 export interface SessionAuthorizationEventSigner {

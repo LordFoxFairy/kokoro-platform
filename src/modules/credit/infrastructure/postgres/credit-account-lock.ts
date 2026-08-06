@@ -1,5 +1,8 @@
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
-import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
+import {
+  acquirePlatformSqlAdvisoryLock,
+  resolvePlatformTransaction,
+} from "../../../../shared/unit-of-work/platform-transaction.js";
 
 export type CreditAccountAuthorityIdentity = Readonly<{
   siteId: string;
@@ -23,10 +26,7 @@ export async function lockCreditAccountAuthority(
   identity: CreditAccountAuthorityIdentity,
 ): Promise<LockedCreditAccount | null> {
   const sql = resolvePlatformTransaction(transaction);
-  await sql.query<Record<string, unknown>>(
-    `SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1,0))`,
-    [creditAccountAdvisoryKey(identity)],
-  );
+  await acquirePlatformSqlAdvisoryLock(sql, creditAccountAdvisoryKey(identity));
   const rows = await sql.query<Record<string, unknown> & {
     creditAccountId: string;
     state: LockedCreditAccount["state"];
@@ -34,8 +34,7 @@ export async function lockCreditAccountAuthority(
   }>(
     `SELECT credit_account_ref AS "creditAccountId",state,aggregate_version AS "aggregateVersion"
      FROM platform.credit_account
-     WHERE site_ref=$1 AND billing_account_ref=$2 AND unit=$3 AND liability_merchant_account_ref=$4
-     FOR UPDATE`,
+     WHERE site_ref=$1 AND billing_account_ref=$2 AND unit=$3 AND liability_merchant_account_ref=$4`,
     [identity.siteId, identity.billingAccountId, identity.unit, identity.liabilityMerchantAccountId],
   );
   if (rows.length === 0) return null;

@@ -11,7 +11,7 @@ import {
   RunCompletedEvidenceStatus,
   type DurableExecutionCanonicalPayloadV1,
   type DurableExecutionEvidence,
-} from "./generated-agent-evidence/kokoro/agent/execution/v1/agent_execution_evidence_pb.js";
+} from "../../generated/proto/kokoro/agent/execution/v1/agent_execution_evidence_pb.js";
 import type {
   AdmissionExecutionEvidence,
   AdmissionExecutionEvidenceOwnerPort,

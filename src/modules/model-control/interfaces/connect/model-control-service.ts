@@ -3,19 +3,19 @@ import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError, type HandlerContext, type ServiceImpl } from "@connectrpc/connect";
 import { KokoroErrorDetailSchema, RetryClass } from
-  "../../../../interfaces/connect/generated-model-control/kokoro/common/v1/error_pb.js";
+  "../../../../generated/proto/kokoro/common/v1/error_pb.js";
 import {
   CommandDigestAlgorithmV2,
   CommandIdentityV2Schema,
   CommandReceiptStateV2,
   CommandReceiptV2Schema,
 } from
-  "../../../../interfaces/connect/generated-model-control/kokoro/common/v2/command_envelope_pb.js";
+  "../../../../generated/proto/kokoro/common/v2/command_envelope_pb.js";
 import type {
   AuthenticatedOperatorCommandContext,
   AuthenticatedOperatorQueryContext,
 } from
-  "../../../../interfaces/connect/generated-model-control/kokoro/platform/admin/v2/admin_shared_pb.js";
+  "../../../../generated/proto/kokoro/platform/admin/v2/admin_shared_pb.js";
 import {
   AdminModelBindingSchema,
   AdminModelDefinitionSchema,
@@ -45,7 +45,7 @@ import {
   type ModelOptionDraft,
   type ProviderAvailability,
 } from
-  "../../../../interfaces/connect/generated-model-control/kokoro/platform/model/v1/model_control_pb.js";
+  "../../../../generated/proto/kokoro/platform/model/v1/model_control_pb.js";
 import {
   activateInventoryRequestDigest,
   changeSitePolicyRequestDigest,
@@ -53,12 +53,12 @@ import {
   materializeModelOptionsRequestDigest,
   publishSiteReleaseCatalogRequestDigest,
   type VerifiedAuthenticatedAdminAxes,
-} from "../../../../interfaces/connect/generated-model-control/command-envelope-digest.js";
+} from "../../../../generated/contracts/platform-model-control@v1/digest.js";
 import {
   MODEL_CONTROL_ADMIN_ERRORS,
   modelControlAdminErrorDetail,
   type ModelControlAdminErrorKind,
-} from "../../../../interfaces/connect/generated-model-control/model-control-errors.js";
+} from "../../../../generated/contracts/platform-model-control@v1/errors.js";
 import type { VerifiedRequestSecurityContext } from
   "../../../../shared/security-context/index.js";
 import type { ControlCommandReceiptRecord, ControlCommandReceiptTimestampReader } from

@@ -32,15 +32,18 @@ Protobuf/Connect contracts: Admin Identity/Query/Commerce/Credit/Site Provisioni
 publication/runtime, and Agent Model Gateway. The legacy Admin Auth provider remains implemented without a current official Web consumer. Same-Platform bounded contexts never self-RPC; application ports and one scoped
 transaction coordinate local owners. Root `src/index.ts` exposes only the Platform composition surface, and
 `deploy/docker/Dockerfile` builds the closed runtime artifact. `platform-hub-connect` selects the private Hub
-Connect entrypoint independently from the `@kokoro/hub` HTTP process.
+Connect entrypoint independently from the `@kokoro/hub` HTTP process. Root-generated contracts,
+protobuf modules and JSON-schema validators live once under `src/generated`; Platform-root Hub Connect
+adapters consume that tree while Hub retains its business owners and package-local lifecycle helpers.
 
 Product Catalog publication owns global immutable Product/Surface and product-level LaunchProfile
 revisions. Its provider code is mounted but remains contract-only and fail-closed because the current
 Root wire supplies only immutable bindings, not authenticated canonical document bytes. It must not
 receive runtime traffic until the Root-owned signed bundle resolver and compatibility evidence exist.
-Its checked-in vendor contains the exact committed Root JSON Schema and Proto source blobs plus
-executable source/artifact provenance; owner-scoped append-only attestations, not the shared mutable
-command receipt alone, authorize replay. Publication `uint64` values use exact `NUMERIC(20,0)` storage.
+Its canonical Root JSON Schema and Proto outputs come from the same repository-level generated tree and
+provenance as every other provider; no package-local vendor or generator is retained. Owner-scoped
+append-only attestations, not the shared mutable command receipt alone, authorize replay. Publication
+`uint64` values use exact `NUMERIC(20,0)` storage.
 
 Artifact metadata, capability issuance and revocation stay on the generated JSON control plane. Capability redemption uses a
 dedicated non-JSON streaming handler and independently selectable `platform-artifact-data-plane` process. That process pins the

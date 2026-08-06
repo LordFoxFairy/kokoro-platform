@@ -1,0 +1,2223 @@
+{
+  "boundaries": [
+    {
+      "audience": "session-presentation-consumer",
+      "consumers": [{"boundary": "service.session", "repository": "kokoro-session"}],
+      "deadlineMs": 5000,
+      "failureOwner": "kokoro-agent",
+      "id": "agent-presentation",
+      "lifecycle": "contract-only",
+      "operations": [
+        {"effect": false, "id": "CheckActive", "receipt": null, "retryClass": "after_delay", "scope": "namespace", "siteBinding": "not-applicable", "transport": "connect-rpc", "trustedCallers": [{"role": "session-presentation-consumer", "audience": "agent.presentation.v1"}]},
+        {"effect": false, "id": "PullRecords", "receipt": null, "retryClass": "same_identity", "scope": "namespace", "siteBinding": "not-applicable", "transport": "connect-rpc", "trustedCallers": [{"role": "session-presentation-consumer", "audience": "agent.presentation.v1"}]},
+        {"effect": true, "id": "AcknowledgeAdmissions", "receipt": {"kind": "state-read", "recoveryOperation": "GetDeliveryStatus", "ref": "kokoro.agent.presentation.v1.DeliveryStatus"}, "retryClass": "reconcile_receipt", "scope": "namespace", "siteBinding": "not-applicable", "transport": "connect-rpc", "trustedCallers": [{"role": "session-presentation-consumer", "audience": "agent.presentation.v1"}]},
+        {"effect": true, "id": "QuarantineSubmission", "receipt": {"kind": "state-read", "recoveryOperation": "GetDeliveryStatus", "ref": "kokoro.agent.presentation.v1.DeliveryStatus"}, "retryClass": "reconcile_receipt", "scope": "namespace", "siteBinding": "not-applicable", "transport": "connect-rpc", "trustedCallers": [{"role": "session-presentation-consumer", "audience": "agent.presentation.v1"}]},
+        {"effect": false, "id": "GetDeliveryStatus", "receipt": null, "retryClass": "after_delay", "scope": "namespace", "siteBinding": "not-applicable", "transport": "connect-rpc", "trustedCallers": [{"role": "session-presentation-consumer", "audience": "agent.presentation.v1"}]}
+      ],
+      "protocol": "connect-rpc",
+      "provider": {"boundary": "service.agent", "repository": "kokoro-agent"},
+      "scope": "namespace",
+      "sourceStatus": "machine-readable",
+      "sources": [{"kind": "proto", "path": "contract/proto/kokoro/agent/presentation/v1/presentation.proto", "select": {"service": "PresentationService"}}],
+      "transportSource": null,
+      "transports": ["connect-rpc"],
+      "trustPlane": "mtls-internal-control",
+      "version": 1
+    },
+    {
+      "audience": "agent-runtime-workload",
+      "consumers": [{"boundary": "service.agent", "repository": "kokoro-agent"}],
+      "deadlineMs": 30000,
+      "failureOwner": "kokoro-platform",
+      "id": "platform-media-runtime",
+      "lifecycle": "contract-only",
+      "operations": [
+        {"effect": true, "id": "CreateAgentImageOperation", "receipt": {"kind": "state-read", "recoveryOperation": "RecoverMediaOperationByCommand", "ref": "kokoro.platform.media.v1.MediaCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc"},
+        {"effect": true, "id": "CancelAgentMediaOperation", "receipt": {"kind": "state-read", "recoveryOperation": "RecoverMediaOperationByCommand", "ref": "kokoro.platform.media.v1.MediaCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc"},
+        {"effect": false, "id": "RecoverMediaOperationByCommand", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetAgentMediaOperation", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc"}
+      ],
+      "protocol": "connect-rpc",
+      "provider": {"boundary": "service.platform", "repository": "kokoro-platform"},
+      "scope": "site",
+      "sourceStatus": "machine-readable",
+      "sources": [{"kind": "proto", "path": "contract/proto/kokoro/platform/media/v1/media_runtime.proto", "select": {"service": "MediaRuntimeService"}}],
+      "transportSource": null,
+      "transports": ["connect-rpc"],
+      "trustPlane": "internal-control",
+      "version": 1
+    },
+    {
+      "audience": "platform-media-worker",
+      "consumers": [{"boundary": "service.platform", "repository": "kokoro-platform"}],
+      "deadlineMs": 30000,
+      "failureOwner": "kokoro-platform",
+      "id": "model-image-effect",
+      "lifecycle": "contract-only",
+      "operations": [
+        {"effect": true, "id": "CreateImageEffect", "receipt": {"kind": "state-read", "recoveryOperation": "RecoverImageEffectByCommand", "ref": "kokoro.platform.model.image.v1.ImageEffectCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc"},
+        {"effect": false, "id": "RecoverImageEffectByCommand", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetImageEffectByCommand", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetImageEffectEvidence", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc"},
+        {"effect": true, "id": "IssueImageEffectOutputAccess", "receipt": {"kind": "state-read", "recoveryOperation": "RecoverImageEffectOutputAccessByCommand", "ref": "kokoro.platform.model.image.v1.ImageEffectCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc"},
+        {"effect": false, "id": "RecoverImageEffectOutputAccessByCommand", "receipt": null, "retryClass": "same_identity", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc"},
+        {"effect": true, "id": "RequestCancelImageEffect", "receipt": {"kind": "state-read", "recoveryOperation": "RecoverImageEffectByCommand", "ref": "kokoro.platform.model.image.v1.ImageEffectCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc"},
+        {"effect": true, "id": "AttachNextAttemptAuthorization", "receipt": {"kind": "state-read", "recoveryOperation": "RecoverImageEffectByCommand", "ref": "kokoro.platform.model.image.v1.ImageEffectCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc"},
+        {"effect": false, "id": "ReadImageEffectOutput", "receipt": null, "retryClass": "same_identity", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc"}
+      ],
+      "protocol": "connect-rpc",
+      "provider": {"boundary": "service.platform", "repository": "kokoro-platform"},
+      "scope": "site",
+      "sourceStatus": "machine-readable",
+      "sources": [{"kind": "proto", "path": "contract/proto/kokoro/platform/model/image/v1/image_effect.proto", "select": {"service": "ImageEffectV1Service"}}],
+      "transportSource": null,
+      "transports": ["connect-rpc"],
+      "trustPlane": "internal-control",
+      "version": 1
+    },
+    {
+      "audience": "platform-admission-media-credit-workloads",
+      "consumers": [{"boundary": "service.platform", "repository": "kokoro-platform"}],
+      "deadlineMs": 5000,
+      "failureOwner": "kokoro-session",
+      "id": "session-media-projection",
+      "lifecycle": "contract-only",
+      "operations": [
+        {"effect": true, "id": "IssueMediaProjectionReservation", "receipt": {"kind": "command-receipt", "recoveryOperation": "RecoverProjectionCommand", "ref": "kokoro.session.media.v1.ProjectionCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc", "trustedCallers": [{"role": "platform-admission", "audience": "session.media-projection.reservation"}]},
+        {"effect": true, "id": "BindMediaProjectionTarget", "receipt": {"kind": "command-receipt", "recoveryOperation": "RecoverProjectionCommand", "ref": "kokoro.session.media.v1.ProjectionCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc", "trustedCallers": [{"role": "platform-media", "audience": "session.media-projection.media"}]},
+        {"effect": true, "id": "RecoverMediaProjectionActivation", "receipt": {"kind": "state-read", "ref": "kokoro.session.media.v1.MediaProjectionActivationReceipt"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc", "trustedCallers": [{"role": "platform-media", "audience": "session.media-projection.media"}]},
+        {"effect": true, "id": "CreateReplacementMediaProjectionBinding", "receipt": {"kind": "command-receipt", "recoveryOperation": "RecoverProjectionCommand", "ref": "kokoro.session.media.v1.ProjectionCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc", "trustedCallers": [{"role": "platform-media", "audience": "session.media-projection.media"}]},
+        {"effect": true, "id": "RefreshMediaProjectionAccess", "receipt": {"kind": "command-receipt", "recoveryOperation": "RecoverProjectionCommand", "ref": "kokoro.session.media.v1.ProjectionCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc", "trustedCallers": [{"role": "platform-media", "audience": "session.media-projection.media"}]},
+        {"effect": false, "id": "GetMediaProjectionBinding", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc", "trustedCallers": [{"role": "platform-media", "audience": "session.media-projection.media"}]},
+        {"effect": true, "id": "RefreshCreditCostProjectionAccess", "receipt": {"kind": "command-receipt", "recoveryOperation": "RecoverProjectionCommand", "ref": "kokoro.session.media.v1.ProjectionCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc", "trustedCallers": [{"role": "platform-credit", "audience": "session.media-projection.credit"}]},
+        {"effect": false, "id": "GetCreditCostProjectionBinding", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc", "trustedCallers": [{"role": "platform-credit", "audience": "session.media-projection.credit"}]},
+        {"effect": false, "id": "RecoverProjectionCommand", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc", "trustedCallers": [{"role": "platform-admission", "audience": "session.media-projection.reservation"}, {"role": "platform-media", "audience": "session.media-projection.media"}, {"role": "platform-credit", "audience": "session.media-projection.credit"}]}
+      ],
+      "protocol": "connect-rpc",
+      "provider": {"boundary": "service.session", "repository": "kokoro-session"},
+      "scope": "site",
+      "sourceStatus": "machine-readable",
+      "sources": [{"kind": "proto", "path": "contract/proto/kokoro/session/media/v1/media_projection.proto", "select": {"service": "SessionMediaProjectionService"}}],
+      "transportSource": null,
+      "transports": ["connect-rpc"],
+      "trustPlane": "internal-control",
+      "version": 1
+    },
+    {
+      "audience": "platform-media-and-credit-projection-pumps",
+      "consumers": [{"boundary": "service.platform", "repository": "kokoro-platform"}],
+      "deadlineMs": 5000,
+      "failureOwner": "kokoro-session",
+      "id": "session-media-projection-ingest",
+      "lifecycle": "contract-only",
+      "operations": [
+        {"effect": true, "id": "ApplyMediaProjectionEvent", "receipt": {"kind": "durable-event", "ref": "kokoro.session.media.v1.ProjectionIngestReceipt"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc", "trustedCallers": [{"role": "platform-media", "audience": "session.media-projection.media"}]},
+        {"effect": true, "id": "ApplyCreditCostProjectionEvent", "receipt": {"kind": "durable-event", "ref": "kokoro.session.media.v1.ProjectionIngestReceipt"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc", "trustedCallers": [{"role": "platform-credit", "audience": "session.media-projection.credit"}]}
+      ],
+      "protocol": "connect-rpc",
+      "provider": {"boundary": "service.session", "repository": "kokoro-session"},
+      "scope": "site",
+      "sourceStatus": "machine-readable",
+      "sources": [{"kind": "proto", "path": "contract/proto/kokoro/session/media/v1/media_projection_ingest.proto", "select": {"service": "SessionMediaProjectionIngestService"}}],
+      "transportSource": null,
+      "transports": ["connect-rpc"],
+      "trustPlane": "internal-control",
+      "version": 1
+    },
+    {
+      "audience": "session-media-projection-consumer",
+      "consumers": [{"boundary": "service.session", "repository": "kokoro-session"}],
+      "deadlineMs": 30000,
+      "failureOwner": "kokoro-platform",
+      "id": "media-session-projection-events",
+      "lifecycle": "contract-only",
+      "operations": [
+        {"effect": true, "id": "MediaProjectionBindingCommitted", "receipt": {"kind": "durable-event", "ref": "kokoro.session.media.v1.MediaProjectionActivationReceipt"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "capability-binding", "transport": "durable-event"},
+        {"effect": true, "id": "MediaOperationProjectionChanged", "receipt": {"kind": "durable-event", "ref": "kokoro.session.media.v1.ProjectionIngestReceipt"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "capability-binding", "transport": "durable-event"},
+        {"effect": true, "id": "MediaCandidateProjectionChanged", "receipt": {"kind": "durable-event", "ref": "kokoro.session.media.v1.ProjectionIngestReceipt"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "capability-binding", "transport": "durable-event"},
+        {"effect": true, "id": "MediaArtifactProjectionChanged", "receipt": {"kind": "durable-event", "ref": "kokoro.session.media.v1.ProjectionIngestReceipt"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "capability-binding", "transport": "durable-event"}
+      ],
+      "protocol": "durable-event",
+      "provider": {"boundary": "service.platform", "repository": "kokoro-platform"},
+      "scope": "site",
+      "sourceStatus": "machine-readable",
+      "sources": [{"kind": "spec-yaml", "path": "contract/spec/media-projection.yaml", "select": {"section": "media_projection_events", "member": "scalar"}}],
+      "transportSource": null,
+      "transports": ["durable-event"],
+      "trustPlane": "internal-control",
+      "version": 1
+    },
+    {
+      "audience": "session-credit-projection-consumer",
+      "consumers": [{"boundary": "service.session", "repository": "kokoro-session"}],
+      "deadlineMs": 30000,
+      "failureOwner": "kokoro-platform",
+      "id": "credit-session-cost-projection-events",
+      "lifecycle": "contract-only",
+      "operations": [
+        {"effect": true, "id": "CreditCostProjectionChanged", "receipt": {"kind": "durable-event", "ref": "kokoro.session.media.v1.ProjectionIngestReceipt"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "capability-binding", "transport": "durable-event"}
+      ],
+      "protocol": "durable-event",
+      "provider": {"boundary": "service.platform", "repository": "kokoro-platform"},
+      "scope": "site",
+      "sourceStatus": "machine-readable",
+      "sources": [{"kind": "spec-yaml", "path": "contract/spec/media-projection.yaml", "select": {"section": "credit_cost_projection_events", "member": "scalar"}}],
+      "transportSource": null,
+      "transports": ["durable-event"],
+      "trustPlane": "internal-control",
+      "version": 1
+    },
+    {
+      "audience": "session-media-projection-recovery-workload",
+      "consumers": [{"boundary": "service.session", "repository": "kokoro-session"}],
+      "deadlineMs": 10000,
+      "failureOwner": "kokoro-platform",
+      "id": "platform-media-projection-recovery",
+      "lifecycle": "contract-only",
+      "operations": [
+        {"effect": false, "id": "GetProjectionHead", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc"},
+        {"effect": false, "id": "PullProjectionEvents", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc"},
+        {"effect": true, "id": "RefreshProjectionRecoveryAccess", "receipt": {"kind": "command-receipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc"}
+      ],
+      "protocol": "connect-rpc",
+      "provider": {"boundary": "service.platform", "repository": "kokoro-platform"},
+      "scope": "site",
+      "sourceStatus": "machine-readable",
+      "sources": [{"kind": "proto", "path": "contract/proto/kokoro/platform/media/v1/media_projection_recovery.proto", "select": {"service": "MediaProjectionRecoveryService"}}],
+      "transportSource": null,
+      "transports": ["connect-rpc"],
+      "trustPlane": "internal-control",
+      "version": 1
+    },
+    {
+      "audience": "session-credit-cost-projection-recovery-workload",
+      "consumers": [{"boundary": "service.session", "repository": "kokoro-session"}],
+      "deadlineMs": 10000,
+      "failureOwner": "kokoro-platform",
+      "id": "platform-credit-cost-projection-recovery",
+      "lifecycle": "contract-only",
+      "operations": [
+        {"effect": false, "id": "GetProjectionHead", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc"},
+        {"effect": false, "id": "PullProjectionEvents", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc"},
+        {"effect": true, "id": "RefreshProjectionRecoveryAccess", "receipt": {"kind": "command-receipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "capability-binding", "transport": "connect-rpc"}
+      ],
+      "protocol": "connect-rpc",
+      "provider": {"boundary": "service.platform", "repository": "kokoro-platform"},
+      "scope": "site",
+      "sourceStatus": "machine-readable",
+      "sources": [{"kind": "proto", "path": "contract/proto/kokoro/platform/credit/v1/cost_projection_recovery.proto", "select": {"service": "CreditCostProjectionRecoveryService"}}],
+      "transportSource": null,
+      "transports": ["connect-rpc"],
+      "trustPlane": "internal-control",
+      "version": 1
+    },
+    {
+      "audience": "internal-reconciliation-workload",
+      "consumers": [
+        {
+          "boundary": "service.session",
+          "repository": "kokoro-session"
+        },
+        {
+          "boundary": "service.platform",
+          "repository": "kokoro-platform"
+        }
+      ],
+      "deadlineMs": 5000,
+      "failureOwner": "kokoro-agent",
+      "id": "agent-execution-evidence",
+      "lifecycle": "contract-only",
+      "operations": [
+        {
+          "effect": false,
+          "id": "PullDurableExecutionEvidence",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "connect-rpc"
+        },
+        {
+          "effect": false,
+          "id": "GetDurableExecutionEvidence",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "connect-rpc"
+        },
+        {
+          "effect": false,
+          "id": "GetRunDurableCheckpoint",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "connect-rpc"
+        },
+        {
+          "effect": false,
+          "id": "PullDurableOutputRecords",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "connect-rpc"
+        }
+      ],
+      "protocol": "connect-rpc",
+      "provider": {
+        "boundary": "service.agent",
+        "repository": "kokoro-agent"
+      },
+      "scope": "namespace",
+      "sourceStatus": "machine-readable",
+      "sources": [
+        {
+          "kind": "proto",
+          "path": "contract/proto/kokoro/agent/execution/v2/agent_execution_evidence.proto",
+          "select": {
+            "service": "AgentExecutionEvidenceService"
+          }
+        }
+      ],
+      "transportSource": null,
+      "transports": [
+        "connect-rpc"
+      ],
+      "trustPlane": "internal-control",
+      "version": 2
+    },
+    {
+      "audience": "session-control-reconciliation-workload",
+      "consumers": [
+        {
+          "boundary": "service.session",
+          "repository": "kokoro-session"
+        }
+      ],
+      "deadlineMs": 5000,
+      "failureOwner": "kokoro-agent",
+      "id": "session-agent-control",
+      "lifecycle": "contract-only",
+      "operations": [
+        {
+          "effect": true,
+          "id": "RunResumeV2",
+          "receipt": {
+            "kind": "durable-event",
+            "recoveryOperation": "GetRunResumeReceiptEvents",
+            "ref": "kokoro.agent.control.v2.RunResumeReceiptEventV2"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run-control-v2",
+          "trustedCallers": [
+            {
+              "audience": "agent.run-resume-control",
+              "role": "session-control-dispatcher"
+            }
+          ]
+        },
+        {
+          "effect": false,
+          "id": "RunResumeReceiptEventV2",
+          "receipt": null,
+          "retryClass": "same_identity",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run-control-receipts-v2"
+        },
+        {
+          "effect": false,
+          "id": "GetRunResumeReceiptEvents",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "connect-rpc",
+          "trustedCallers": [
+            {
+              "audience": "agent.run-resume-recovery",
+              "role": "session-control-reconciler"
+            }
+          ]
+        }
+      ],
+      "protocol": "durable-control+connect-rpc",
+      "provider": {
+        "boundary": "service.agent",
+        "repository": "kokoro-agent"
+      },
+      "scope": "namespace",
+      "sourceStatus": "machine-readable",
+      "sources": [
+        {
+          "kind": "spec-yaml",
+          "path": "contract/spec/session-agent-control-v2.yaml",
+          "select": {
+            "member": "scalar",
+            "section": "durable_control_messages"
+          }
+        },
+        {
+          "kind": "proto",
+          "path": "contract/proto/kokoro/agent/control/v2/session_agent_control.proto",
+          "select": {
+            "service": "SessionAgentControlRecoveryService"
+          }
+        }
+      ],
+      "transportSource": null,
+      "transports": [
+        "run-control-v2",
+        "run-control-receipts-v2",
+        "connect-rpc"
+      ],
+      "trustPlane": "internal-control",
+      "version": 2
+    },
+    {
+      "audience": "platform-admission-workload",
+      "consumers": [
+        {
+          "boundary": "service.platform",
+          "repository": "kokoro-platform"
+        }
+      ],
+      "deadlineMs": 5000,
+      "failureOwner": "kokoro-session",
+      "id": "session-admission-owner",
+      "lifecycle": "contract-only",
+      "operations": [
+        {
+          "effect": false,
+          "id": "VerifyPrepareOwner",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "site",
+          "siteBinding": "request-field",
+          "transport": "connect-rpc",
+          "trustedCallers": [
+            {
+              "role": "platform-admission",
+              "audience": "session.admission-owner"
+            }
+          ]
+        },
+        {
+          "effect": false,
+          "id": "VerifyFinalizeOwner",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "site",
+          "siteBinding": "request-field",
+          "transport": "connect-rpc",
+          "trustedCallers": [
+            {
+              "role": "platform-admission",
+              "audience": "session.admission-owner"
+            }
+          ]
+        }
+      ],
+      "protocol": "connect-rpc",
+      "provider": {
+        "boundary": "service.session",
+        "repository": "kokoro-session"
+      },
+      "scope": "site",
+      "sourceStatus": "machine-readable",
+      "sources": [
+        {
+          "kind": "proto",
+          "path": "contract/proto/kokoro/session/admission/v1/session_admission_owner.proto",
+          "select": {
+            "service": "SessionAdmissionOwnerService"
+          }
+        }
+      ],
+      "transportSource": null,
+      "transports": [
+        "connect-rpc"
+      ],
+      "trustPlane": "internal-control",
+      "version": 1
+    },
+    {
+      "audience": "internal-workload",
+      "consumers": [
+        {
+          "boundary": "service.session",
+          "repository": "kokoro-session"
+        }
+      ],
+      "deadlineMs": 30000,
+      "failureOwner": "kokoro-platform",
+      "id": "platform-session-authorization",
+      "lifecycle": "contract-only",
+      "operations": [
+        {
+          "effect": false,
+          "id": "PullAuthorizationEvents",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "platform",
+          "siteBinding": "not-applicable",
+          "transport": "connect-rpc"
+        },
+        {
+          "effect": false,
+          "id": "GetAuthorizationSnapshotPage",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "platform",
+          "siteBinding": "not-applicable",
+          "transport": "connect-rpc"
+        },
+        {
+          "effect": false,
+          "id": "GetAuthorizationVerificationKeys",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "platform",
+          "siteBinding": "not-applicable",
+          "transport": "connect-rpc"
+        }
+      ],
+      "protocol": "connect-rpc",
+      "provider": {
+        "boundary": "service.platform",
+        "repository": "kokoro-platform"
+      },
+      "scope": "platform",
+      "sourceStatus": "machine-readable",
+      "sources": [
+        {
+          "kind": "proto",
+          "path": "contract/proto/kokoro/platform/authorization/v2/scoped_session_authorization.proto",
+          "select": {
+            "service": "ScopedSessionAuthorizationService"
+          }
+        },
+        {
+          "kind": "spec-yaml",
+          "path": "contract/registry/platform-session-authorization-v2.yaml",
+          "select": {
+            "member": "scalar",
+            "section": "operations"
+          }
+        }
+      ],
+      "transportSource": null,
+      "transports": [
+        "connect-rpc"
+      ],
+      "trustPlane": "internal-service",
+      "version": 2
+    },
+    {
+      "audience": "platform-admission-workload",
+      "consumers": [
+        {
+          "boundary": "service.platform",
+          "repository": "kokoro-platform"
+        }
+      ],
+      "deadlineMs": 5000,
+      "failureOwner": "kokoro-session",
+      "id": "session-dispatch-owner-evidence",
+      "lifecycle": "contract-only",
+      "operations": [
+        {
+          "effect": false,
+          "id": "GetDispatchOwnerEvidence",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "site",
+          "siteBinding": "request-field",
+          "trustedCallers": [
+            {
+              "audience": "session.dispatch-owner-evidence",
+              "role": "platform-admission"
+            }
+          ],
+          "transport": "connect-rpc"
+        }
+      ],
+      "protocol": "connect-rpc",
+      "provider": {
+        "boundary": "service.session",
+        "repository": "kokoro-session"
+      },
+      "scope": "site",
+      "sourceStatus": "machine-readable",
+      "sources": [
+        {
+          "kind": "proto",
+          "path": "contract/proto/kokoro/session/dispatch/v1/dispatch_owner_evidence.proto",
+          "select": {
+            "service": "DispatchOwnerEvidenceService"
+          }
+        }
+      ],
+      "transportSource": null,
+      "transports": [
+        "connect-rpc"
+      ],
+      "trustPlane": "internal-control",
+      "version": 1
+    },
+    {
+      "audience": "internal-workload",
+      "consumers": [
+        {
+          "boundary": "service.agent",
+          "repository": "kokoro-agent"
+        }
+      ],
+      "deadlineMs": 5000,
+      "failureOwner": "kokoro-platform",
+      "id": "hub-runtime",
+      "lifecycle": "active",
+      "operations": [
+        {
+          "effect": false,
+          "id": "ResolveExecutionAssembly",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "connect-rpc"
+        },
+        {
+          "effect": false,
+          "id": "FetchSkillArtifact",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "connect-rpc"
+        }
+      ],
+      "protocol": "connect-rpc",
+      "provider": {
+        "boundary": "platform.hub",
+        "repository": "kokoro-platform"
+      },
+      "scope": "namespace",
+      "sourceStatus": "machine-readable",
+      "sources": [
+        {
+          "kind": "proto",
+          "path": "contract/proto/kokoro/platform/capability/v1/capability_catalog.proto",
+          "select": {
+            "service": "HubRuntimeService"
+          }
+        }
+      ],
+      "transportSource": null,
+      "transports": [
+        "connect-rpc"
+      ],
+      "trustPlane": "internal-service",
+      "version": 1
+    },
+    {
+      "audience": "internal-control-workload",
+      "consumers": [
+        {
+          "boundary": "service.platform",
+          "repository": "kokoro-platform"
+        }
+      ],
+      "deadlineMs": 5000,
+      "failureOwner": "kokoro-platform",
+      "id": "hub-capability-catalog",
+      "lifecycle": "contract-only",
+      "operations": [
+        {
+          "effect": true,
+          "id": "FreezeCatalog",
+          "receipt": {
+            "kind": "command-receipt",
+            "recoveryOperation": "GetCatalogPublication",
+            "ref": "kokoro.common.v1.CommandReceipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "request-field",
+          "transport": "connect-rpc"
+        },
+        {
+          "effect": false,
+          "id": "GetCatalogPublication",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "site",
+          "siteBinding": "request-field",
+          "transport": "connect-rpc"
+        }
+      ],
+      "protocol": "connect-rpc",
+      "provider": {
+        "boundary": "platform.hub",
+        "repository": "kokoro-platform"
+      },
+      "scope": "site",
+      "sourceStatus": "machine-readable",
+      "sources": [
+        {
+          "kind": "proto",
+          "path": "contract/proto/kokoro/platform/capability/v1/capability_catalog.proto",
+          "select": {
+            "service": "HubCatalogService"
+          }
+        }
+      ],
+      "transportSource": null,
+      "transports": [
+        "connect-rpc"
+      ],
+      "trustPlane": "internal-control",
+      "version": 1
+    },
+    {
+      "audience": "internal-control-workload",
+      "consumers": [
+        {
+          "boundary": "platform.hub",
+          "repository": "kokoro-platform"
+        }
+      ],
+      "deadlineMs": 5000,
+      "failureOwner": "kokoro-platform",
+      "id": "platform-capability-projection",
+      "lifecycle": "contract-only",
+      "operations": [
+        {
+          "effect": true,
+          "id": "ProjectCatalog",
+          "receipt": {
+            "kind": "command-receipt",
+            "recoveryOperation": "GetProjectionReceipt",
+            "ref": "kokoro.common.v1.CommandReceipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "request-field",
+          "transport": "connect-rpc"
+        },
+        {
+          "effect": false,
+          "id": "GetProjectionReceipt",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "site",
+          "siteBinding": "request-field",
+          "transport": "connect-rpc"
+        }
+      ],
+      "protocol": "connect-rpc",
+      "provider": {
+        "boundary": "service.platform",
+        "repository": "kokoro-platform"
+      },
+      "scope": "site",
+      "sourceStatus": "machine-readable",
+      "sources": [
+        {
+          "kind": "proto",
+          "path": "contract/proto/kokoro/platform/capability/v1/capability_catalog.proto",
+          "select": {
+            "service": "CapabilityCatalogProjectionService"
+          }
+        }
+      ],
+      "transportSource": null,
+      "transports": [
+        "connect-rpc"
+      ],
+      "trustPlane": "internal-control",
+      "version": 1
+    },
+    {
+      "audience": "internal-workload",
+      "consumers": [
+        {
+          "boundary": "service.agent",
+          "repository": "kokoro-agent"
+        }
+      ],
+      "deadlineMs": 120000,
+      "failureOwner": "kokoro-platform",
+      "id": "model-gateway",
+      "lifecycle": "active",
+      "operations": [
+        {
+          "effect": true,
+          "id": "InvokeModel",
+          "receipt": {
+            "kind": "idempotency-key",
+            "ref": "kokoro.platform.model.v1.InvokeModelResponse.invocation_ref"
+          },
+          "retryClass": "same_identity",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "connect-rpc"
+        },
+        {
+          "effect": true,
+          "id": "StreamModel",
+          "receipt": {
+            "kind": "idempotency-key",
+            "ref": "kokoro.platform.model.v1.StreamModelResponse.invocation_ref"
+          },
+          "retryClass": "same_identity",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "connect-rpc"
+        }
+      ],
+      "protocol": "connect-rpc",
+      "provider": {
+        "boundary": "service.platform",
+        "repository": "kokoro-platform"
+      },
+      "scope": "namespace",
+      "sourceStatus": "machine-readable",
+      "sources": [
+        {
+          "kind": "proto",
+          "path": "contract/proto/kokoro/platform/model/v1/model_gateway.proto",
+          "select": {
+            "service": "ModelGatewayService"
+          }
+        }
+      ],
+      "transportSource": null,
+      "transports": [
+        "connect-rpc"
+      ],
+      "trustPlane": "internal-control",
+      "version": 1
+    },
+    {
+      "audience": "operator",
+      "consumers": [{"boundary": "web.admin", "repository": "kokoro-web"}],
+      "deadlineMs": null,
+      "failureOwner": "kokoro-platform",
+      "id": "platform-admin-credit",
+      "lifecycle": "contract-only",
+      "operations": [
+        {"effect": false, "id": "GetSiteCreditSummary", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListCreditAccounts", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetCreditAccount", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListCreditGrants", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListCreditHolds", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListCreditHoldAllocations", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListCreditJournalTransactions", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListCreditJournalEntries", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListRatedUsage", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListRatedUsageSourceAllocations", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "RequestCreditReconciliationResolution", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetCreditReconciliationResolution", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "DecideCreditReconciliationResolution", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetCreditReconciliationResolution", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetCreditReconciliationResolution", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"}
+      ],
+      "protocol": "connect-rpc",
+      "provider": {"boundary": "service.platform", "repository": "kokoro-platform"},
+      "scope": "site",
+      "sourceStatus": "machine-readable",
+      "sources": [{"kind": "proto", "path": "contract/proto/kokoro/platform/credit/v1/admin_credit.proto", "select": {"service": "AdminCreditService"}}],
+      "transportSource": null,
+      "transports": ["connect-rpc"],
+      "trustPlane": "privileged-control",
+      "version": 1
+    },
+    {
+      "audience": "site-product-bff",
+      "consumers": [
+        {
+          "boundary": "service.web",
+          "repository": "kokoro-web"
+        }
+      ],
+      "deadlineMs": null,
+      "failureOwner": "kokoro-platform",
+      "id": "platform-public",
+      "lifecycle": "contract-only",
+      "operations": [
+        {"effect": true, "id": "exchangeProductContext", "receipt": {"kind": "http-receipt-body", "ref": "#/components/schemas/ProductContextExchangeResponse"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "issueSessionAccessGrant", "receipt": {"kind": "http-receipt-body", "ref": "#/components/schemas/SessionAccessGrantResponse"}, "retryClass": "never", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "beginRegistration", "receipt": {"kind": "http-receipt-body", "ref": "#/components/schemas/EmailVerificationTransactionResponse"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "completeEmailVerification", "receipt": {"kind": "state-read", "recoveryOperation": "getPublicCommandReceipt", "ref": "getPublicCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "resendEmailVerification", "receipt": {"kind": "http-receipt-body", "ref": "#/components/schemas/EmailVerificationTransactionResponse"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "createIdentitySession", "receipt": {"kind": "state-read", "recoveryOperation": "getPublicCommandReceipt", "ref": "getPublicCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "completeSessionMfa", "receipt": {"kind": "state-read", "recoveryOperation": "getPublicCommandReceipt", "ref": "getPublicCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "refreshIdentitySession", "receipt": {"kind": "state-read", "recoveryOperation": "getPublicCommandReceipt", "ref": "getPublicCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "listIdentitySessions", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "revokeIdentitySessions", "receipt": {"kind": "http-receipt-body", "ref": "#/components/schemas/CommandReceiptResponse"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "beginPasswordReset", "receipt": {"kind": "http-receipt-body", "ref": "#/components/schemas/PasswordResetTransactionResponse"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "completePasswordReset", "receipt": {"kind": "state-read", "recoveryOperation": "getPublicCommandReceipt", "ref": "getPublicCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "changePassword", "receipt": {"kind": "state-read", "recoveryOperation": "getPublicCommandReceipt", "ref": "getPublicCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "beginEmailChange", "receipt": {"kind": "http-receipt-body", "ref": "#/components/schemas/EmailChangeTransactionResponse"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "completeEmailChange", "receipt": {"kind": "state-read", "recoveryOperation": "getPublicCommandReceipt", "ref": "getPublicCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "beginTotpEnrollment", "receipt": {"kind": "state-read", "recoveryOperation": "getPublicCommandReceipt", "ref": "getPublicCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "confirmTotpEnrollment", "receipt": {"kind": "state-read", "recoveryOperation": "getPublicCommandReceipt", "ref": "getPublicCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "disableTotp", "receipt": {"kind": "http-receipt-body", "ref": "#/components/schemas/CommandReceiptResponse"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "regenerateRecoveryCodes", "receipt": {"kind": "state-read", "recoveryOperation": "getPublicCommandReceipt", "ref": "getPublicCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "beginAccountRecovery", "receipt": {"kind": "http-receipt-body", "ref": "#/components/schemas/AccountRecoveryTransactionResponse"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "completeAccountRecovery", "receipt": {"kind": "state-read", "recoveryOperation": "getPublicCommandReceipt", "ref": "getPublicCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "reauthenticateIdentitySession", "receipt": {"kind": "state-read", "recoveryOperation": "getPublicCommandReceipt", "ref": "getPublicCommandReceipt"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "getPersonalContext", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "previewRedemption", "receipt": {"kind": "http-receipt-body", "ref": "#/components/schemas/RedemptionPreviewResponse"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "confirmRedemption", "receipt": {"kind": "state-read", "recoveryOperation": "recoverRedemptionCommand", "ref": "recoverRedemptionCommand"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "recoverRedemptionCommand", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "getRedemptionReceipt", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "listAccountProducts", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "getCreditSummary", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "getCreditGrant", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "getUsageDetail", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "createAssetUploadIntent", "receipt": {"kind": "state-read", "recoveryOperation": "recoverAssetUploadCommand", "ref": "recoverAssetUploadCommand"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "completeAssetUpload", "receipt": {"kind": "state-read", "recoveryOperation": "recoverAssetUploadCommand", "ref": "recoverAssetUploadCommand"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "getAssetUploadStatus", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "recoverAssetUploadCommand", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "getTrustedAssetGrant", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "listMediaOperationDefinitions", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "getMediaOperationDefinition", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "listMediaOperationModelOptions", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "quoteMediaOperation", "receipt": {"kind": "http-receipt-body", "ref": "#/components/schemas/MediaOperationQuoteResponse"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "submitMediaOperation", "receipt": {"kind": "state-read", "recoveryOperation": "recoverMediaOperationCommand", "ref": "recoverMediaOperationCommand"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "listMediaOperations", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "getMediaOperation", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "cancelMediaOperation", "receipt": {"kind": "state-read", "recoveryOperation": "recoverMediaOperationCommand", "ref": "recoverMediaOperationCommand"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "recoverMediaOperationCommand", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "listArtifacts", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "getArtifact", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "listArtifactVersions", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "getArtifactVersion", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "issueArtifactDeliveryAuthorization", "receipt": {"kind": "http-receipt-body", "ref": "#/components/schemas/ArtifactDeliveryAuthorizationResponse"}, "retryClass": "never", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "redeemArtifactDeliveryAuthorization", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "revokeArtifactDeliveryAuthorization", "receipt": {"kind": "http-receipt-body", "ref": "#/components/schemas/ArtifactDeliveryRevocationResponse"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "getMemorySettings", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "updateMemorySettings", "receipt": {"kind": "state-read", "recoveryOperation": "recoverMemoryCommand", "ref": "recoverMemoryCommand"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "listMemoryEntries", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "getMemoryEntry", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "listMemoryEntryHistory", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "rememberMemoryEntry", "receipt": {"kind": "state-read", "recoveryOperation": "recoverMemoryCommand", "ref": "recoverMemoryCommand"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "correctMemoryEntry", "receipt": {"kind": "state-read", "recoveryOperation": "recoverMemoryCommand", "ref": "recoverMemoryCommand"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "restoreMemoryEntryRevision", "receipt": {"kind": "state-read", "recoveryOperation": "recoverMemoryCommand", "ref": "recoverMemoryCommand"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "prioritizeMemoryEntry", "receipt": {"kind": "state-read", "recoveryOperation": "recoverMemoryCommand", "ref": "recoverMemoryCommand"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "deprioritizeMemoryEntry", "receipt": {"kind": "state-read", "recoveryOperation": "recoverMemoryCommand", "ref": "recoverMemoryCommand"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "forgetMemoryEntry", "receipt": {"kind": "state-read", "recoveryOperation": "recoverMemoryCommand", "ref": "recoverMemoryCommand"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "resetMemorySpace", "receipt": {"kind": "state-read", "recoveryOperation": "recoverMemoryCommand", "ref": "recoverMemoryCommand"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "requestMemoryExport", "receipt": {"kind": "state-read", "recoveryOperation": "recoverMemoryCommand", "ref": "recoverMemoryCommand"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "getMemoryExport", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": true, "id": "requestMemoryImport", "receipt": {"kind": "state-read", "recoveryOperation": "recoverMemoryCommand", "ref": "recoverMemoryCommand"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "getMemoryImport", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "recoverMemoryCommand", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"},
+        {"effect": false, "id": "getPublicCommandReceipt", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "workload-binding", "transport": "http-json"}
+      ],
+      "protocol": "openapi-http-json",
+      "provider": {
+        "boundary": "service.platform",
+        "repository": "kokoro-platform"
+      },
+      "scope": "site",
+      "sourceStatus": "machine-readable",
+      "sources": [
+        {
+          "kind": "openapi",
+          "path": "contract/openapi/platform-public-v1.yaml",
+          "select": {"member": "operation-id"}
+        }
+      ],
+      "transportSource": null,
+      "transports": ["http-json"],
+      "trustPlane": "site-bff",
+      "version": 1
+    },
+    {
+      "audience": "browser-upload",
+      "consumers": [
+        {
+          "boundary": "service.web",
+          "repository": "kokoro-web"
+        }
+      ],
+      "deadlineMs": null,
+      "failureOwner": "kokoro-platform",
+      "id": "platform-asset-data-plane",
+      "lifecycle": "contract-only",
+      "operations": [
+        {"effect": false, "id": "preflightInitiateAssetMultipartUpload", "receipt": null, "retryClass": "never", "scope": "platform", "siteBinding": "not-applicable", "transport": "http-json"},
+        {"effect": true, "id": "initiateAssetMultipartUpload", "receipt": {"kind": "http-receipt-body", "ref": "#/components/schemas/MultipartUploadStateResponse"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "capability-binding", "transport": "http-json"},
+        {"effect": false, "id": "preflightPutAssetMultipartPart", "receipt": null, "retryClass": "never", "scope": "platform", "siteBinding": "not-applicable", "transport": "http-json"},
+        {"effect": true, "id": "putAssetMultipartPart", "receipt": {"kind": "http-receipt-body", "ref": "#/components/schemas/MultipartPartResponse"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "capability-binding", "transport": "http-json"},
+        {"effect": false, "id": "preflightCompleteAssetMultipartUpload", "receipt": null, "retryClass": "never", "scope": "platform", "siteBinding": "not-applicable", "transport": "http-json"},
+        {"effect": true, "id": "completeAssetMultipartUpload", "receipt": {"kind": "state-read", "recoveryOperation": "getAssetMultipartUploadStatus", "ref": "getAssetMultipartUploadStatus"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "capability-binding", "transport": "http-json"},
+        {"effect": false, "id": "preflightAbortAssetMultipartUpload", "receipt": null, "retryClass": "never", "scope": "platform", "siteBinding": "not-applicable", "transport": "http-json"},
+        {"effect": true, "id": "abortAssetMultipartUpload", "receipt": {"kind": "state-read", "recoveryOperation": "getAssetMultipartUploadStatus", "ref": "getAssetMultipartUploadStatus"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "capability-binding", "transport": "http-json"},
+        {"effect": false, "id": "preflightGetAssetMultipartUploadStatus", "receipt": null, "retryClass": "never", "scope": "platform", "siteBinding": "not-applicable", "transport": "http-json"},
+        {"effect": false, "id": "getAssetMultipartUploadStatus", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "capability-binding", "transport": "http-json"}
+      ],
+      "protocol": "openapi-http-json",
+      "provider": {
+        "boundary": "service.platform",
+        "repository": "kokoro-platform"
+      },
+      "scope": "site",
+      "sourceStatus": "machine-readable",
+      "sources": [
+        {
+          "kind": "openapi",
+          "path": "contract/openapi/asset-data-plane-v1.yaml",
+          "select": {"member": "operation-id"}
+        }
+      ],
+      "transportSource": null,
+      "transports": ["http-json"],
+      "trustPlane": "capability-data-plane",
+      "version": 1
+    },
+    {
+      "audience": "operator",
+      "consumers": [{"boundary": "web.admin", "repository": "kokoro-web"}],
+      "deadlineMs": null,
+      "failureOwner": "kokoro-platform",
+      "id": "platform-admin-identity",
+      "lifecycle": "contract-only",
+      "operations": [
+        {"effect": true, "id": "BeginOperatorLogin", "receipt": {"kind": "command-receipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "same_identity", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": true, "id": "ExchangeOidcSession", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetOperatorSessionDelivery", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetOperatorSessionDelivery", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": true, "id": "BeginStepUp", "receipt": {"kind": "command-receipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "same_identity", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": true, "id": "CompleteStepUp", "receipt": {"kind": "command-receipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "same_identity", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": true, "id": "SignOut", "receipt": {"kind": "command-receipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "same_identity", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"}
+      ],
+      "protocol": "connect-rpc",
+      "provider": {"boundary": "service.platform", "repository": "kokoro-platform"},
+      "scope": "platform",
+      "sourceStatus": "machine-readable",
+      "sources": [{"kind": "proto", "path": "contract/proto/kokoro/platform/identity/v1/admin_identity.proto", "select": {"service": "AdminIdentityService"}}],
+      "transportSource": null,
+      "transports": ["connect-rpc"],
+      "trustPlane": "privileged-control",
+      "version": 1
+    },
+    {
+      "audience": "operator",
+      "consumers": [{"boundary": "web.admin", "repository": "kokoro-web"}],
+      "deadlineMs": null,
+      "failureOwner": "kokoro-platform",
+      "id": "platform-admin-query",
+      "lifecycle": "contract-only",
+      "operations": [
+        {"effect": false, "id": "GetSite", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListSites", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetUserWithinSite", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetAuditWithinScope", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetCurrentOperator", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetOperator", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListOperators", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListPendingApprovals", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"}
+      ],
+      "protocol": "connect-rpc",
+      "provider": {"boundary": "service.platform", "repository": "kokoro-platform"},
+      "scope": "platform",
+      "sourceStatus": "machine-readable",
+      "sources": [{"kind": "proto", "path": "contract/proto/kokoro/platform/admin/v2/admin_query.proto", "select": {"service": "AdminQueryService"}}],
+      "transportSource": null,
+      "transports": ["connect-rpc"],
+      "trustPlane": "privileged-control",
+      "version": 2
+    },
+    {
+      "audience": "operator",
+      "consumers": [{"boundary": "web.admin", "repository": "kokoro-web"}],
+      "deadlineMs": null,
+      "failureOwner": "kokoro-platform",
+      "id": "platform-admin-commerce",
+      "lifecycle": "contract-only",
+      "operations": [
+        {"effect": true, "id": "PublishCreditProgramRevision", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetGlobalCommerceCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListCreditProgramRevisions", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetCreditProgramRevision", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": true, "id": "PublishPlanRevision", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetGlobalCommerceCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListPlanRevisions", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetPlanRevision", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": true, "id": "PublishOfferRevision", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetGlobalCommerceCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListOfferRevisions", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetOfferRevision", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": true, "id": "PublishOfferPriceRevision", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetGlobalCommerceCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListOfferPriceRevisions", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetOfferPriceRevision", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": true, "id": "PublishFulfillmentProgramRevision", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetGlobalCommerceCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListFulfillmentProgramRevisions", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetFulfillmentProgramRevision", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": true, "id": "PublishRedemptionProgramRevision", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetGlobalCommerceCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListRedemptionProgramRevisions", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetRedemptionProgramRevision", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": true, "id": "RequestSiteCommerceAssignmentPromotion", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetSiteCommerceCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "DecideSiteCommerceAssignmentPromotion", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetSiteCommerceCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListSiteCommerceAssignments", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetSiteCommerceAssignment", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "RequestCodeBatchIssuance", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetSiteCommerceCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "DecideCodeBatchIssuance", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetSiteCommerceCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "RequestCodeBatchTransition", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetSiteCommerceCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "DecideCodeBatchTransition", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetSiteCommerceCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "EmergencySuspendCodeBatch", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetSiteCommerceCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "BeginCodeBatchDelivery", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetSiteCommerceCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "ReadCodeDeliveryRange", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetSiteCommerceCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "AcknowledgeCodeDeliveryRange", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetSiteCommerceCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetCodeDeliverySession", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListCodeBatches", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetCodeBatch", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "RequestSourceCorrection", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetSiteCommerceCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "DecideSourceCorrection", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetSiteCommerceCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListSourceCorrections", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetSourceCorrection", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListCommerceReconciliations", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetCommerceReconciliation", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "RequestCommerceReconciliationResolution", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetSiteCommerceCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "DecideCommerceReconciliationResolution", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetSiteCommerceCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetCommerceApproval", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetCommerceExecution", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetGlobalCommerceCommandReceipt", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetSiteCommerceCommandReceipt", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"}
+      ],
+      "protocol": "connect-rpc",
+      "provider": {"boundary": "service.platform", "repository": "kokoro-platform"},
+      "scope": "site",
+      "sourceStatus": "machine-readable",
+      "sources": [{"kind": "proto", "path": "contract/proto/kokoro/platform/commerce/v1/admin_commerce.proto", "select": {"service": "AdminCommerceService"}}],
+      "transportSource": null,
+      "transports": ["connect-rpc"],
+      "trustPlane": "privileged-control",
+      "version": 1
+    },
+    {
+      "audience": "operator",
+      "consumers": [{"boundary": "web.admin", "repository": "kokoro-web"}],
+      "deadlineMs": null,
+      "failureOwner": "kokoro-platform",
+      "id": "platform-admin-command",
+      "lifecycle": "contract-only",
+      "operations": [
+        {"effect": true, "id": "SubmitCommand", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": true, "id": "DecideApproval", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetReceipt", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"}
+      ],
+      "protocol": "connect-rpc",
+      "provider": {"boundary": "service.platform", "repository": "kokoro-platform"},
+      "scope": "platform",
+      "sourceStatus": "machine-readable",
+      "sources": [{"kind": "proto", "path": "contract/proto/kokoro/platform/admin/v2/admin_command.proto", "select": {"service": "AdminCommandService"}}],
+      "transportSource": null,
+      "transports": ["connect-rpc"],
+      "trustPlane": "privileged-control",
+      "version": 2
+    },
+    {
+      "audience": "operator",
+      "consumers": [{"boundary": "web.admin", "repository": "kokoro-web"}],
+      "deadlineMs": null,
+      "failureOwner": "kokoro-platform",
+      "id": "platform-site-lifecycle",
+      "lifecycle": "contract-only",
+      "operations": [
+        {"effect": true, "id": "RequestActivationApproval", "receipt": {"kind": "command-receipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "ApproveAndActivate", "receipt": {"kind": "command-receipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"}
+      ],
+      "protocol": "connect-rpc",
+      "provider": {"boundary": "service.platform", "repository": "kokoro-platform"},
+      "scope": "platform",
+      "sourceStatus": "machine-readable",
+      "sources": [{"kind": "proto", "path": "contract/proto/kokoro/platform/site/v1/site_lifecycle.proto", "select": {"service": "SiteLifecycleService"}}],
+      "transportSource": null,
+      "transports": ["connect-rpc"],
+      "trustPlane": "privileged-control",
+      "version": 1
+    },
+    {
+      "audience": "operator",
+      "consumers": [{"boundary": "web.admin", "repository": "kokoro-web"}],
+      "deadlineMs": null,
+      "failureOwner": "kokoro-platform",
+      "id": "platform-site-provisioning",
+      "lifecycle": "contract-only",
+      "operations": [
+        {"effect": true, "id": "RegisterSite", "receipt": {"kind": "command-receipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "same_identity", "scope": "platform", "siteBinding": "request-field", "transport": "connect-rpc"}
+      ],
+      "protocol": "connect-rpc",
+      "provider": {"boundary": "service.platform", "repository": "kokoro-platform"},
+      "scope": "platform",
+      "sourceStatus": "machine-readable",
+      "sources": [{"kind": "proto", "path": "contract/proto/kokoro/platform/site/v1/site_provisioning.proto", "select": {"service": "SiteProvisioningService"}}],
+      "transportSource": null,
+      "transports": ["connect-rpc"],
+      "trustPlane": "privileged-control",
+      "version": 1
+    },
+    {
+      "audience": "operator",
+      "consumers": [{"boundary": "web.admin", "repository": "kokoro-web"}],
+      "deadlineMs": null,
+      "failureOwner": "kokoro-platform",
+      "id": "platform-product-catalog-publication",
+      "lifecycle": "contract-only",
+      "operations": [
+        {"effect": true, "id": "PublishProductSurfaceCatalog", "receipt": {"kind": "command-receipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "same_identity", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": true, "id": "PublishLaunchProductProfile", "receipt": {"kind": "command-receipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "same_identity", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"}
+      ],
+      "protocol": "connect-rpc",
+      "provider": {"boundary": "service.platform", "repository": "kokoro-platform"},
+      "scope": "platform",
+      "sourceStatus": "machine-readable",
+      "sources": [{"kind": "proto", "path": "contract/proto/kokoro/platform/product/v1/product_catalog_publication.proto", "select": {"service": "ProductCatalogPublicationService"}}],
+      "transportSource": null,
+      "transports": ["connect-rpc"],
+      "trustPlane": "privileged-control",
+      "version": 1
+    },
+    {
+      "audience": "operator",
+      "consumers": [{"boundary": "web.admin", "repository": "kokoro-web"}],
+      "deadlineMs": null,
+      "failureOwner": "kokoro-platform",
+      "id": "platform-site-publication",
+      "lifecycle": "contract-only",
+      "operations": [
+        {"effect": true, "id": "AuthorizeSiteReleaseCandidate", "receipt": {"kind": "command-receipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "RevokeSiteReleaseCandidate", "receipt": {"kind": "command-receipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "PublishSurfaceInventory", "receipt": {"kind": "command-receipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "PublishWebBuildMaterialBundle", "receipt": {"kind": "command-receipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "IssueWebBuildIntent", "receipt": {"kind": "command-receipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "PublishReleaseCertification", "receipt": {"kind": "command-receipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "PublishSiteRelease", "receipt": {"kind": "command-receipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"}
+      ],
+      "protocol": "connect-rpc",
+      "provider": {"boundary": "service.platform", "repository": "kokoro-platform"},
+      "scope": "site",
+      "sourceStatus": "machine-readable",
+      "sources": [{"kind": "proto", "path": "contract/proto/kokoro/platform/site/v1/site_publication.proto", "select": {"service": "SitePublicationService"}}],
+      "transportSource": null,
+      "transports": ["connect-rpc"],
+      "trustPlane": "privileged-control",
+      "version": 1
+    },
+    {
+      "audience": "kokoro.site-release-evidence-admission.v1",
+      "consumers": [{"boundary": "web.release-attestor", "repository": "kokoro-web"}],
+      "deadlineMs": null,
+      "failureOwner": "kokoro-platform",
+      "id": "platform-site-evidence-admission",
+      "lifecycle": "contract-only",
+      "operations": [
+        {"effect": true, "id": "RecordReleaseEvidence", "receipt": {"kind": "command-receipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "same_identity", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"}
+      ],
+      "protocol": "connect-rpc",
+      "provider": {"boundary": "service.platform", "repository": "kokoro-platform"},
+      "scope": "site",
+      "sourceStatus": "machine-readable",
+      "sources": [{"kind": "proto", "path": "contract/proto/kokoro/platform/site/v1/site_publication.proto", "select": {"service": "SiteEvidenceAdmissionService"}}],
+      "transportSource": null,
+      "transports": ["connect-rpc"],
+      "trustPlane": "internal-control",
+      "version": 1
+    },
+    {
+      "audience": "operator",
+      "consumers": [{"boundary": "web.admin", "repository": "kokoro-web"}],
+      "deadlineMs": null,
+      "failureOwner": "kokoro-platform",
+      "id": "platform-model-control",
+      "lifecycle": "contract-only",
+      "operations": [
+        {"effect": false, "id": "ListInventoryRevisions", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetInventoryRevision", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListInventoryProviders", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListInventoryModels", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListInventoryBindings", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListInventoryProductRoutes", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListModelOptions", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListSiteModelPolicies", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "ListSiteReleaseCatalogs", "receipt": null, "retryClass": "after_delay", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": false, "id": "GetCommandReceipt", "receipt": null, "retryClass": "after_delay", "scope": "platform", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "ImportInventory", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": true, "id": "ActivateInventory", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": true, "id": "ChangeSitePolicy", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"},
+        {"effect": true, "id": "MaterializeModelOptions", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "platform", "siteBinding": "not-applicable", "transport": "connect-rpc"},
+        {"effect": true, "id": "PublishSiteReleaseCatalog", "receipt": {"kind": "command-receipt", "recoveryOperation": "GetCommandReceipt", "ref": "kokoro.common.v2.CommandReceiptV2"}, "retryClass": "reconcile_receipt", "scope": "site", "siteBinding": "request-field", "transport": "connect-rpc"}
+      ],
+      "protocol": "connect-rpc",
+      "provider": {"boundary": "service.platform", "repository": "kokoro-platform"},
+      "scope": "platform",
+      "sourceStatus": "machine-readable",
+      "sources": [{"kind": "proto", "path": "contract/proto/kokoro/platform/model/v1/model_control.proto", "select": {"service": "ModelControlService"}}],
+      "transportSource": null,
+      "transports": ["connect-rpc"],
+      "trustPlane": "privileged-control",
+      "version": 1
+    },
+    {
+      "audience": "internal-workload",
+      "consumers": [
+        {
+          "boundary": "service.session",
+          "repository": "kokoro-session"
+        }
+      ],
+      "deadlineMs": null,
+      "failureOwner": "kokoro-platform",
+      "id": "platform-admission",
+      "lifecycle": "active",
+      "operations": [
+        {
+          "effect": true,
+          "id": "PrepareRun",
+          "receipt": {
+            "kind": "command-receipt",
+            "recoveryOperation": "GetCommandReceipt",
+            "ref": "kokoro.common.v1.CommandReceipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "request-field",
+          "transport": "connect-rpc"
+        },
+        {
+          "effect": true,
+          "id": "FinalizeRunAuthorization",
+          "receipt": {
+            "kind": "command-receipt",
+            "recoveryOperation": "GetCommandReceipt",
+            "ref": "kokoro.common.v1.CommandReceipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "request-field",
+          "transport": "connect-rpc"
+        },
+        {
+          "effect": true,
+          "id": "ReleaseRunAuthorization",
+          "receipt": {
+            "kind": "command-receipt",
+            "recoveryOperation": "GetCommandReceipt",
+            "ref": "kokoro.common.v1.CommandReceipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "request-field",
+          "transport": "connect-rpc"
+        },
+        {
+          "effect": true,
+          "id": "ReconcileRunAuthorization",
+          "receipt": {
+            "kind": "command-receipt",
+            "recoveryOperation": "GetCommandReceipt",
+            "ref": "kokoro.common.v1.CommandReceipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "request-field",
+          "transport": "connect-rpc"
+        },
+        {
+          "effect": false,
+          "id": "GetCommandReceipt",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "site",
+          "siteBinding": "request-field",
+          "transport": "connect-rpc"
+        }
+      ],
+      "protocol": "connect-rpc",
+      "provider": {
+        "boundary": "service.platform",
+        "repository": "kokoro-platform"
+      },
+      "scope": "site",
+      "sourceStatus": "machine-readable",
+      "sources": [
+        {
+          "kind": "proto",
+          "path": "contract/proto/kokoro/platform/admission/v1/admission.proto",
+          "select": {
+            "service": "AdmissionService"
+          }
+        }
+      ],
+      "transportSource": null,
+      "transports": [
+        "connect-rpc"
+      ],
+      "trustPlane": "internal-control",
+      "version": 1
+    },
+    {
+      "audience": "internal-workload",
+      "consumers": [
+        {
+          "boundary": "service.session",
+          "repository": "kokoro-session"
+        }
+      ],
+      "deadlineMs": null,
+      "failureOwner": "kokoro-platform",
+      "id": "platform-asset-eligibility",
+      "lifecycle": "active",
+      "operations": [
+        {
+          "effect": false,
+          "id": "CheckActive",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "platform",
+          "siteBinding": "not-applicable",
+          "transport": "connect-rpc"
+        },
+        {
+          "effect": false,
+          "id": "ResolveSessionAttachments",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "site",
+          "siteBinding": "request-field",
+          "transport": "connect-rpc"
+        }
+      ],
+      "protocol": "connect-rpc",
+      "provider": {
+        "boundary": "service.platform",
+        "repository": "kokoro-platform"
+      },
+      "scope": "site",
+      "sourceStatus": "machine-readable",
+      "sources": [
+        {
+          "kind": "proto",
+          "path": "contract/proto/kokoro/platform/asset/v1/asset_eligibility.proto",
+          "select": {
+            "service": "AssetEligibilityService"
+          }
+        }
+      ],
+      "transportSource": null,
+      "transports": [
+        "connect-rpc"
+      ],
+      "trustPlane": "internal-control",
+      "version": 1
+    },
+    {
+      "audience": "internal-workload",
+      "consumers": [
+        {
+          "boundary": "service.session",
+          "repository": "kokoro-session"
+        }
+      ],
+      "deadlineMs": null,
+      "failureOwner": "kokoro-platform",
+      "id": "platform-runtime",
+      "lifecycle": "active",
+      "operations": [
+        {
+          "effect": true,
+          "id": "usage_hold",
+          "receipt": {
+            "kind": "idempotency-key",
+            "ref": "idempotencyKey"
+          },
+          "retryClass": "same_identity",
+          "scope": "site",
+          "siteBinding": "request-field",
+          "transport": "http-json"
+        },
+        {
+          "effect": true,
+          "id": "usage_settle",
+          "receipt": {
+            "kind": "idempotency-key",
+            "ref": "idempotencyKey"
+          },
+          "retryClass": "same_identity",
+          "scope": "site",
+          "siteBinding": "request-field",
+          "transport": "http-json"
+        },
+        {
+          "effect": true,
+          "id": "release_credit",
+          "receipt": {
+            "kind": "idempotency-key",
+            "ref": "idempotencyKey"
+          },
+          "retryClass": "same_identity",
+          "scope": "site",
+          "siteBinding": "request-field",
+          "transport": "http-json"
+        },
+        {
+          "effect": false,
+          "id": "resolve_model_bindings",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "site",
+          "siteBinding": "request-field",
+          "transport": "http-json"
+        },
+        {
+          "effect": false,
+          "id": "list_model_labels",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "site",
+          "siteBinding": "request-field",
+          "transport": "http-json"
+        }
+      ],
+      "protocol": "http-json",
+      "provider": {
+        "boundary": "service.platform",
+        "repository": "kokoro-platform"
+      },
+      "scope": "site",
+      "sourceStatus": "machine-readable",
+      "sources": [
+        {
+          "kind": "spec-yaml",
+          "path": "contract/spec/platform-runtime.yaml",
+          "select": {
+            "case": "snake",
+            "field": "name",
+            "match": "^(.+?)(?:Request|Query)$",
+            "member": "field",
+            "section": "objects"
+          }
+        }
+      ],
+      "transportSource": null,
+      "transports": [
+        "http-json"
+      ],
+      "trustPlane": "internal-service",
+      "version": 1
+    },
+    {
+      "audience": "agent-runtime",
+      "consumers": [
+        {
+          "boundary": "service.session",
+          "repository": "kokoro-session"
+        }
+      ],
+      "deadlineMs": null,
+      "failureOwner": "kokoro-agent",
+      "id": "session-agent-execution",
+      "lifecycle": "active",
+      "operations": [
+        {
+          "effect": true,
+          "id": "run.request",
+          "receipt": {
+            "kind": "durable-event",
+            "ref": "run.started"
+          },
+          "retryClass": "same_identity",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "requests"
+        },
+        {
+          "effect": true,
+          "id": "run.resume",
+          "receipt": {
+            "kind": "durable-event",
+            "ref": "run.control.receipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_control"
+        },
+        {
+          "effect": true,
+          "id": "run.cancel",
+          "receipt": {
+            "kind": "durable-event",
+            "ref": "run.control.receipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_control"
+        },
+        {
+          "effect": true,
+          "id": "run.steer",
+          "receipt": {
+            "kind": "idempotency-key",
+            "ref": "message_id"
+          },
+          "retryClass": "same_identity",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_control"
+        },
+        {
+          "effect": false,
+          "id": "run.started",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_events"
+        },
+        {
+          "effect": false,
+          "id": "thinking.delta",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_events"
+        },
+        {
+          "effect": false,
+          "id": "message.delta",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_events"
+        },
+        {
+          "effect": false,
+          "id": "message.completed",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_events"
+        },
+        {
+          "effect": false,
+          "id": "tool.invoked",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_events"
+        },
+        {
+          "effect": false,
+          "id": "tool.output.delta",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_events"
+        },
+        {
+          "effect": false,
+          "id": "tool.awaiting_approval",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_events"
+        },
+        {
+          "effect": false,
+          "id": "tool.returned",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_events"
+        },
+        {
+          "effect": false,
+          "id": "todo.updated",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_events"
+        },
+        {
+          "effect": false,
+          "id": "plan.proposed",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_events"
+        },
+        {
+          "effect": false,
+          "id": "subagent.started",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_events"
+        },
+        {
+          "effect": false,
+          "id": "subagent.finished",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_events"
+        },
+        {
+          "effect": false,
+          "id": "subagent.thinking.delta",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_events"
+        },
+        {
+          "effect": false,
+          "id": "subagent.text.delta",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_events"
+        },
+        {
+          "effect": false,
+          "id": "subagent.text.completed",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_events"
+        },
+        {
+          "effect": false,
+          "id": "subagent.tool.invoked",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_events"
+        },
+        {
+          "effect": false,
+          "id": "subagent.tool.returned",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_events"
+        },
+        {
+          "effect": false,
+          "id": "delivery.created",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_events"
+        },
+        {
+          "effect": false,
+          "id": "run.control.receipt",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_events"
+        },
+        {
+          "effect": false,
+          "id": "run.owner.completed",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_events"
+        },
+        {
+          "effect": false,
+          "id": "run.completed",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_events"
+        },
+        {
+          "effect": false,
+          "id": "run.failed",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "namespace",
+          "siteBinding": "not-applicable",
+          "transport": "run_events"
+        }
+      ],
+      "protocol": "redis-stream",
+      "provider": {
+        "boundary": "service.agent",
+        "repository": "kokoro-agent"
+      },
+      "scope": "namespace",
+      "sourceStatus": "machine-readable",
+      "sources": [
+        {
+          "kind": "spec-yaml",
+          "path": "contract/spec/control.yaml",
+          "select": {
+            "field": "kind",
+            "member": "field",
+            "section": "messages"
+          }
+        },
+        {
+          "kind": "spec-yaml",
+          "path": "contract/spec/events.yaml",
+          "select": {
+            "field": "kind",
+            "member": "field",
+            "section": "raw_kinds"
+          }
+        }
+      ],
+      "transportSource": {
+        "kind": "spec-yaml",
+        "path": "contract/spec/streams.yaml",
+        "select": {
+          "member": "mapping-key",
+          "section": "streams"
+        }
+      },
+      "transports": [
+        "requests",
+        "run_control",
+        "run_events"
+      ],
+      "trustPlane": "internal-durable",
+      "version": 1
+    },
+    {
+      "audience": "browser-user",
+      "consumers": [
+        {
+          "boundary": "service.web",
+          "repository": "kokoro-web"
+        }
+      ],
+      "deadlineMs": null,
+      "failureOwner": "kokoro-session",
+      "id": "session-browser",
+      "lifecycle": "active",
+      "operations": [
+        {
+          "effect": true,
+          "id": "create_session",
+          "receipt": {
+            "kind": "state-read",
+            "recoveryOperation": "get_command_receipt",
+            "ref": "get_command_receipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-json"
+        },
+        {
+          "effect": false,
+          "id": "list_sessions",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-json"
+        },
+        {
+          "effect": false,
+          "id": "snapshot",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-json"
+        },
+        {
+          "effect": false,
+          "id": "stream",
+          "receipt": null,
+          "retryClass": "same_identity",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-sse"
+        },
+        {
+          "effect": true,
+          "id": "submit_message",
+          "receipt": {
+            "kind": "state-read",
+            "recoveryOperation": "get_command_receipt",
+            "ref": "get_command_receipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-json"
+        },
+        {
+          "effect": true,
+          "id": "edit_message",
+          "receipt": {
+            "kind": "state-read",
+            "recoveryOperation": "get_command_receipt",
+            "ref": "get_command_receipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-json"
+        },
+        {
+          "effect": true,
+          "id": "regenerate_message",
+          "receipt": {
+            "kind": "state-read",
+            "recoveryOperation": "get_command_receipt",
+            "ref": "get_command_receipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-json"
+        },
+        {
+          "effect": true,
+          "id": "fork_branch",
+          "receipt": {
+            "kind": "state-read",
+            "recoveryOperation": "get_command_receipt",
+            "ref": "get_command_receipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-json"
+        },
+        {
+          "effect": true,
+          "id": "activate_branch",
+          "receipt": {
+            "kind": "state-read",
+            "recoveryOperation": "get_command_receipt",
+            "ref": "get_command_receipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-json"
+        },
+        {
+          "effect": true,
+          "id": "cancel_run",
+          "receipt": {
+            "kind": "state-read",
+            "recoveryOperation": "get_command_receipt",
+            "ref": "get_command_receipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-json"
+        },
+        {
+          "effect": true,
+          "id": "decide_action",
+          "receipt": {
+            "kind": "state-read",
+            "recoveryOperation": "get_command_receipt",
+            "ref": "get_command_receipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-json"
+        },
+        {
+          "effect": true,
+          "id": "decide_plan",
+          "receipt": {
+            "kind": "state-read",
+            "recoveryOperation": "get_command_receipt",
+            "ref": "get_command_receipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-json"
+        },
+        {
+          "effect": false,
+          "id": "get_command_receipt",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-json"
+        },
+        {
+          "effect": true,
+          "id": "update_session",
+          "receipt": {
+            "kind": "state-read",
+            "recoveryOperation": "get_command_receipt",
+            "ref": "get_command_receipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-json"
+        },
+        {
+          "effect": true,
+          "id": "archive_session",
+          "receipt": {
+            "kind": "state-read",
+            "recoveryOperation": "get_command_receipt",
+            "ref": "get_command_receipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-json"
+        },
+        {
+          "effect": true,
+          "id": "restore_session",
+          "receipt": {
+            "kind": "state-read",
+            "recoveryOperation": "get_command_receipt",
+            "ref": "get_command_receipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-json"
+        },
+        {
+          "effect": true,
+          "id": "trash_session",
+          "receipt": {
+            "kind": "state-read",
+            "recoveryOperation": "get_command_receipt",
+            "ref": "get_command_receipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-json"
+        },
+        {
+          "effect": true,
+          "id": "put_preference",
+          "receipt": {
+            "kind": "state-read",
+            "recoveryOperation": "get_command_receipt",
+            "ref": "get_command_receipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-json"
+        },
+        {
+          "effect": false,
+          "id": "list_folders",
+          "receipt": null,
+          "retryClass": "after_delay",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-json"
+        },
+        {
+          "effect": true,
+          "id": "create_folder",
+          "receipt": {
+            "kind": "state-read",
+            "recoveryOperation": "get_command_receipt",
+            "ref": "get_command_receipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-json"
+        },
+        {
+          "effect": true,
+          "id": "update_folder",
+          "receipt": {
+            "kind": "state-read",
+            "recoveryOperation": "get_command_receipt",
+            "ref": "get_command_receipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-json"
+        },
+        {
+          "effect": true,
+          "id": "delete_folder",
+          "receipt": {
+            "kind": "state-read",
+            "recoveryOperation": "get_command_receipt",
+            "ref": "get_command_receipt"
+          },
+          "retryClass": "reconcile_receipt",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-json"
+        },
+        {
+          "effect": false,
+          "id": "session.updated",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-sse"
+        },
+        {
+          "effect": false,
+          "id": "branch.created",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-sse"
+        },
+        {
+          "effect": false,
+          "id": "branch.activated",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-sse"
+        },
+        {
+          "effect": false,
+          "id": "message.created",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-sse"
+        },
+        {
+          "effect": false,
+          "id": "message.part.updated",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-sse"
+        },
+        {
+          "effect": false,
+          "id": "run.launch.updated",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-sse"
+        },
+        {
+          "effect": false,
+          "id": "run.view.updated",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-sse"
+        },
+        {
+          "effect": false,
+          "id": "run.control.updated",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-sse"
+        },
+        {
+          "effect": false,
+          "id": "run.cost.updated",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-sse"
+        },
+        {
+          "effect": false,
+          "id": "command.receipt.updated",
+          "receipt": null,
+          "retryClass": "never",
+          "scope": "site",
+          "siteBinding": "workload-binding",
+          "transport": "http-sse"
+        }
+      ],
+      "protocol": "http-json-sse",
+      "provider": {
+        "boundary": "service.session",
+        "repository": "kokoro-session"
+      },
+      "scope": "site",
+      "sourceStatus": "machine-readable",
+      "sources": [
+        {
+          "kind": "spec-yaml",
+          "path": "contract/spec/http.yaml",
+          "select": {
+            "member": "mapping-key",
+            "section": "endpoints"
+          }
+        },
+        {
+          "kind": "spec-yaml",
+          "path": "contract/spec/events.yaml",
+          "select": {
+            "member": "scalar",
+            "section": "browser_order"
+          }
+        }
+      ],
+      "transportSource": null,
+      "transports": [
+        "http-json",
+        "http-sse"
+      ],
+      "trustPlane": "site-bff",
+      "version": 1
+    }
+  ],
+  "owners": [
+    "@LordFoxFairy"
+  ],
+  "schemaVersion": 1
+}

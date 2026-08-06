@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const migration = readFileSync(
@@ -9,6 +9,13 @@ const programCatalogMigration = readFileSync(
   new URL("../../prisma/migrations/20260816_commerce_credit_program_catalog_owner/migration.sql", import.meta.url),
   "utf8",
 );
+const creditTriggerAuthorityRepairUrl = new URL(
+  "../../prisma/migrations/20260821_credit_journal_trigger_authority/migration.sql",
+  import.meta.url,
+);
+const creditTriggerAuthorityRepair = existsSync(creditTriggerAuthorityRepairUrl)
+  ? readFileSync(creditTriggerAuthorityRepairUrl, "utf8")
+  : "";
 const identityMigration = readFileSync(
   new URL("../../prisma/migrations/20260729_identity_core/migration.sql", import.meta.url),
   "utf8",
@@ -144,6 +151,15 @@ describe("Wave 2A Commerce authority schema", () => {
     expect(migration).toContain("REFERENCES platform.outbox_event(event_id)");
   });
 
+  it("closes the committed-output EXISTS predicate before entering the trigger branch", () => {
+    const trigger = migration.slice(
+      migration.indexOf("CREATE FUNCTION platform.assert_commerce_fulfillment_committed()"),
+      migration.indexOf("CREATE FUNCTION platform.guard_commerce_code_transition()"),
+    );
+    expect(trigger).toContain("      )\n    )\n  THEN");
+    expect(trigger).not.toContain("      )\n    )\n  ) THEN");
+  });
+
   it("keeps Term and Entitlement issuance immutable and records revocation facts", () => {
     expect(migration).toContain("CREATE TABLE platform.commerce_subscription_term_revocation (");
     expect(migration).toContain("CREATE TABLE platform.commerce_entitlement_revocation (");
@@ -168,6 +184,34 @@ describe("Wave 2A Commerce authority schema", () => {
     expect(migration).toContain("JOIN platform.credit_grant hold_grant");
     expect(migration).not.toContain("JOIN platform.credit_grant grant_fact");
     expect(migration).not.toMatch(/available_delta|held_delta|consumed_delta/iu);
+  });
+
+  it("runs cross-owner journal conservation under the migration owner without widening Admission", () => {
+    for (const functionName of [
+      "assert_credit_journal_transaction_balanced",
+      "assert_credit_journal_cross_fact_conservation",
+      "assert_credit_budget_allocation_conservation",
+      "assert_credit_allocation_origin_and_root",
+      "assert_credit_allocation_receipt_conservation",
+      "assert_credit_hold_fully_allocated",
+      "assert_credit_hold_terminal_segments_closed",
+      "assert_credit_authorization_segment_capacity",
+    ]) {
+      expect(creditTriggerAuthorityRepair).toContain(
+        `ALTER FUNCTION platform.${functionName}() SECURITY DEFINER`,
+      );
+      expect(creditTriggerAuthorityRepair).toContain(
+        `ALTER FUNCTION platform.${functionName}() SET search_path TO pg_catalog, platform`,
+      );
+      expect(creditTriggerAuthorityRepair).toContain(
+        `REVOKE ALL ON FUNCTION platform.${functionName}() FROM PUBLIC`,
+      );
+    }
+    const admissionPrivileges = migrator.slice(
+      migrator.indexOf("} else if (role === admissionRole)"),
+      migrator.indexOf("} else if (role === authorizationRole)"),
+    );
+    expect(admissionPrivileges).not.toContain("commerce_credit_program_revision");
   });
 
   it("fails closed on malformed Grant scope policy and binds the admitted scope to the budget root", () => {

@@ -2,6 +2,7 @@ import { authorizationDigest } from "../../application/contracts/authorization-d
 import type { SessionAuthorizationRepository } from "../../application/contracts/session-authorization-ports.js";
 import {
   SESSION_ACCESS_AUDIENCES,
+  assertPositiveUint64,
   SessionAuthorizationError,
   type PersonalContextSnapshot,
   type ProductContextSnapshot,
@@ -166,8 +167,7 @@ export class PostgresSessionAuthorizationRepository implements SessionAuthorizat
          AND identity_session.session_epoch=$4 AND subject.state='active'
          AND subject.subject_generation=$6 AND subject.restriction_epoch=$7
          AND membership.state='active' AND project.state='active'
-       ORDER BY membership.is_default DESC, project.project_ref
-       FOR SHARE OF identity_session,subject,membership,project`,
+       ORDER BY membership.is_default DESC, project.project_ref`,
       [input.workload.siteProjectBindingRef, input.workload.siteRef, input.session.identitySessionRef,
         BigInt(input.session.identitySessionEpoch), input.now, BigInt(input.session.subjectGeneration),
         BigInt(input.session.restrictionEpoch)],
@@ -208,6 +208,7 @@ export class PostgresSessionAuthorizationRepository implements SessionAuthorizat
   }
 
   async prepareSessionAccessGrant(transaction: Parameters<SessionAuthorizationRepository["prepareSessionAccessGrant"]>[0], input: Parameters<SessionAuthorizationRepository["prepareSessionAccessGrant"]>[1]): Promise<Readonly<{ claims: SessionAccessGrantClaims; claimsDigest: string }>> {
+    assertPositiveUint64(input.authorizationStreamSequence);
     const sql = resolvePlatformTransaction(transaction);
     const rows = await sql.query<GrantAuthorityRow>(GRANT_AUTHORITY_SQL, [
       input.workload.siteProjectBindingRef,
@@ -262,6 +263,7 @@ export class PostgresSessionAuthorizationRepository implements SessionAuthorizat
         credentialEpoch: positive(row.credentialEpoch),
         policyEpoch: positive(row.policyEpoch),
         revocationEpoch: positive(row.revocationEpoch),
+        authorizationStreamSequence: input.authorizationStreamSequence,
         resource: input.resource,
         issuedAt: input.issuedAt,
         expiresAt: input.expiresAt,
@@ -329,8 +331,7 @@ const PRODUCT_AUTHORITY_SQL = `
   JOIN platform.authorization_site site ON site.site_ref=binding.site_ref
   JOIN platform.authorization_site_release release
     ON release.release_ref=binding.release_ref AND release.site_ref=binding.site_ref
-  WHERE binding.binding_ref=$1 AND binding.workload_identity_id=$2
-  FOR UPDATE OF binding,site,release`;
+  WHERE binding.binding_ref=$1 AND binding.workload_identity_id=$2`;
 
 const GRANT_AUTHORITY_SQL = `
   SELECT binding.binding_ref AS "bindingRef", binding.workload_identity_id AS "workloadIdentityId",
@@ -372,8 +373,7 @@ const GRANT_AUTHORITY_SQL = `
   JOIN platform.authorization_project_membership membership
     ON membership.project_ref=project.project_ref AND membership.subject_ref=subject.subject_ref
   WHERE binding.binding_ref=$1 AND binding.workload_identity_id=$2
-    AND context.expires_at>$6::timestamptz
-  FOR UPDATE OF binding,site,release,context,identity_session,subject,project,membership`;
+    AND context.expires_at>$6::timestamptz`;
 
 function productAuthorityMatches(row: ProductAuthorityRow, workload: Parameters<SessionAuthorizationRepository["resolveProductContext"]>[1]["workload"]): boolean {
   return row.bindingRef === workload.siteProjectBindingRef &&

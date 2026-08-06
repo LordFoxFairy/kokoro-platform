@@ -3,7 +3,7 @@ import type { VerifiedRequestSecurityContext } from "../../shared/security-conte
 import {
   PLATFORM_PUBLIC_OPERATIONS,
   type PlatformPublicOperationId,
-} from "./generated/platform-public/operations.gen.js";
+} from "../../generated/contracts/openapi/platform-public/operations.gen.js";
 
 type RuntimeSchemaOutput<Schema> = Schema extends { parse(value: unknown): infer Output }
   ? Output

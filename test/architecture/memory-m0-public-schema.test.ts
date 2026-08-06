@@ -238,6 +238,20 @@ describe("Memory M0.1 public database authority", () => {
     expect(migrator).toContain("PLATFORM_MEMORY_ROLE_IDENTITY_PREFLIGHT_FAILED");
   });
 
+  it("binds migration policies and Memory database access to the configured migrator", () => {
+    const executeIndex = migrator.indexOf("const exitCode = await execute");
+    const rebindIndex = migrator.indexOf("await rebindPlatformMigratorPolicies");
+    const memoryAuthorityIndex = migrator.indexOf("await configureMemoryRoleAuthority");
+    expect(rebindIndex).toBeGreaterThan(executeIndex);
+    expect(memoryAuthorityIndex).toBeGreaterThan(rebindIndex);
+    expect(migrator).toContain("legacy_role.oid=ANY(policy.polroles)");
+    expect(migrator).toContain("policyRoleCount !== 1");
+    expect(migrator).toContain("ALTER POLICY ${quoteCatalogIdentifier(policy.policyName)} ON");
+    expect(migrator).toContain(
+      "`GRANT CONNECT ON DATABASE ${quoteRoleIdentifier(databaseName)} TO ${role}`",
+    );
+  });
+
   it("audits exact direct and effective feature-off authority across non-system schemas", () => {
     for (const marker of [
       "memoryRoleDatabaseAuthority",

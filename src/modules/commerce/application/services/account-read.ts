@@ -3,7 +3,7 @@ import type {
   CreditGrantResponse,
   CreditSummaryResponse,
   UsageDetailResponse,
-} from "../../../../interfaces/http/generated/platform-public/types.gen.js";
+} from "../../../../generated/contracts/openapi/platform-public/types.gen.js";
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
 import type { PlatformUnitOfWork } from "../../../../shared/unit-of-work/unit-of-work.js";
 import type { CommerceReadAuthorizer } from "../command-authorization.js";

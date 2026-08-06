@@ -2,7 +2,7 @@ import { createHash, createPublicKey, verify } from "node:crypto";
 import { canonicalJson, verifyCanonicalDocument } from
   "../../../product-catalog/domain/canonical-product-document.js";
 import { validateReleaseCertificationShape } from
-  "../../../../interfaces/json-schema/generated-site-publication/site-publication-schema-validator.js";
+  "../../../../generated/schema/site-publication/validator.js";
 import type {
   SitePublicationDocumentResolver,
   SiteReleaseCertificationAdmissionPort,

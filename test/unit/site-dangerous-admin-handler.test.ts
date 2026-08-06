@@ -33,6 +33,7 @@ describe("Site dangerous-effect administration", () => {
       siteRef: "site_01",
       candidateReleaseRef: "release_02",
       expectedActiveReleaseRef: "release_01",
+      activationFactsDigest: `sha256:${"f".repeat(64)}`,
       audience: "site-product",
       sessionContractRevision: "browser-v3",
       reason: "launch approved",

@@ -7,7 +7,7 @@ import type {
   CreditUnitSummary,
   ProjectionFreshness,
   UsageDetailResponse,
-} from "../../../../interfaces/http/generated/platform-public/types.gen.js";
+} from "../../../../generated/contracts/openapi/platform-public/types.gen.js";
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 import type { AccountReadIdentity, AccountReadRepository } from
   "../../../commerce/application/contracts/account-read-repository.js";
@@ -40,7 +40,7 @@ type ProductRow = Record<string, unknown> & FreshRow & {
 
 export class PostgresAccountReadRepository implements AccountReadRepository {
   async getCreditGrant(transaction: Parameters<AccountReadRepository["getCreditGrant"]>[0], input: Parameters<AccountReadRepository["getCreditGrant"]>[1]): Promise<CreditGrantResponse | null> {
-    const rows = await resolvePlatformTransaction(transaction).query<GrantRow>(`${GRANT_READ_SQL} AND grant.credit_grant_id=$4::uuid`,
+    const rows = await resolvePlatformTransaction(transaction).query<GrantRow>(`${GRANT_READ_SQL} AND grant_fact.credit_grant_id=$4::uuid`,
       [input.siteId, input.subjectId, input.subjectGeneration, input.grantId]);
     const row = rows[0];
     return row === undefined ? null : Object.freeze({ freshness: freshness(row), grant: grantDetail(row) });
@@ -131,9 +131,9 @@ export class PostgresAccountReadRepository implements AccountReadRepository {
               fulfillment.source_type AS "sourceType",fulfillment.source_id AS "sourceId",fulfillment.acquired_at AS "acquiredAt",
               fulfillment.acquired_at AS "effectiveAt",
               CASE WHEN product.kind='subscription' THEN max(term.ends_at)
-                   WHEN bool_or(grant.expires_at IS NULL) THEN NULL ELSE max(grant.expires_at) END AS "expiresAt",
+                   WHEN bool_or(grant_fact.expires_at IS NULL) THEN NULL ELSE max(grant_fact.expires_at) END AS "expiresAt",
               redemption.state AS "sourceState",
-              COALESCE(jsonb_agg(DISTINCT grant.credit_grant_id::text) FILTER (WHERE grant.credit_grant_id IS NOT NULL),'[]'::jsonb) AS "creditGrantRefs",
+              COALESCE(jsonb_agg(DISTINCT grant_fact.credit_grant_id::text) FILTER (WHERE grant_fact.credit_grant_id IS NOT NULL),'[]'::jsonb) AS "creditGrantRefs",
               COALESCE(jsonb_agg(DISTINCT jsonb_build_object('entitlementGrantRef',entitlement.entitlement_grant_ref::text,
                 'capabilityKey',entitlement.capability_key,'safeLabel',entitlement.safe_label,
                 'expiresAt',entitlement.expires_at,'state',CASE WHEN revocation.entitlement_grant_ref IS NOT NULL THEN 'revoked'
@@ -145,9 +145,9 @@ export class PostgresAccountReadRepository implements AccountReadRepository {
        LEFT JOIN platform.commerce_catalog_plan_version plan ON plan.plan_version_ref=version.plan_version_ref AND plan.site_ref=version.site_ref
        LEFT JOIN platform.commerce_fulfillment_actual_output actual
          ON actual.fulfillment_id=fulfillment.fulfillment_id
-       LEFT JOIN platform.credit_grant grant
-         ON actual.output_kind='credit_grant' AND grant.site_ref=fulfillment.site_ref
-        AND grant.credit_grant_id::text=actual.output_ref
+       LEFT JOIN platform.credit_grant grant_fact
+         ON actual.output_kind='credit_grant' AND grant_fact.site_ref=fulfillment.site_ref
+        AND grant_fact.credit_grant_id::text=actual.output_ref
        LEFT JOIN platform.commerce_entitlement_grant entitlement
          ON actual.output_kind='entitlement_grant' AND entitlement.site_ref=fulfillment.site_ref
         AND entitlement.entitlement_grant_ref::text=actual.output_ref
@@ -178,14 +178,14 @@ const GRANT_READ_SQL = `WITH ${ACCOUNT_CTE},ledger AS (
     COALESCE(sum(CASE WHEN entry.account_type IN ('expired','revoked') THEN CASE entry.entry_side WHEN 'credit' THEN entry.amount ELSE -entry.amount END ELSE 0 END),0)::text AS "expiredOrReversed"
   FROM platform.credit_journal_entry entry WHERE entry.site_ref=$1 GROUP BY entry.credit_grant_id
 )
-SELECT clock_timestamp() AS "asOf",txid_current()::text AS revision,grant.credit_grant_id::text AS "grantId",grant.unit,
-       grant.ux_bucket_class AS "bucketClass",grant.credit_program_revision_ref AS "creditProgramRevisionRef",
-       grant.original_amount::text AS "originalAmount",COALESCE(ledger.available,'0') AS available,
+SELECT clock_timestamp() AS "asOf",txid_current()::text AS revision,grant_fact.credit_grant_id::text AS "grantId",grant_fact.unit,
+       grant_fact.ux_bucket_class AS "bucketClass",grant_fact.credit_program_revision_ref AS "creditProgramRevisionRef",
+       grant_fact.original_amount::text AS "originalAmount",COALESCE(ledger.available,'0') AS available,
        COALESCE(ledger.held,'0') AS held,COALESCE(ledger.consumed,'0') AS consumed,
-       COALESCE(ledger."expiredOrReversed",'0') AS "expiredOrReversed",grant.effective_at AS "effectiveAt",
-       grant.expires_at AS "expiresAt",grant.issued_at AS "issuedAt",grant.source_type AS "sourceType",grant.source_ref AS "sourceRef"
-FROM platform.credit_grant grant JOIN account ON account.billing_account_ref=grant.billing_account_ref
-LEFT JOIN ledger ON ledger.credit_grant_id=grant.credit_grant_id WHERE grant.site_ref=$1`;
+       COALESCE(ledger."expiredOrReversed",'0') AS "expiredOrReversed",grant_fact.effective_at AS "effectiveAt",
+       grant_fact.expires_at AS "expiresAt",grant_fact.issued_at AS "issuedAt",grant_fact.source_type AS "sourceType",grant_fact.source_ref AS "sourceRef"
+FROM platform.credit_grant grant_fact JOIN account ON account.billing_account_ref=grant_fact.billing_account_ref
+LEFT JOIN ledger ON ledger.credit_grant_id=grant_fact.credit_grant_id WHERE grant_fact.site_ref=$1`;
 
 function grantDetail(row: GrantRow) {
   const { available, expiredOrReversed } = presentedGrantAmounts(row); const held = amount(row.held);

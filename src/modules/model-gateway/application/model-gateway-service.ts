@@ -51,6 +51,8 @@ export type ModelInvocationAuthorization = Readonly<{
   executionManifestRef: string;
   authorizationSegmentRef: string;
   authorizedGatewayModel: string;
+  providerModel: string;
+  adapterKind: "litellm" | "direct";
   expiresAt: string;
 }>;
 
@@ -95,7 +97,36 @@ export interface PreparedModelProviderRequest {
 }
 
 export interface ModelGatewayProviderPort {
-  prepare(request: ModelGatewayRequest): PreparedModelProviderRequest;
+  prepare(
+    request: ModelGatewayRequest,
+    authorization: ModelInvocationAuthorization,
+  ): PreparedModelProviderRequest;
+}
+
+export class ModelGatewayProviderRouter implements ModelGatewayProviderPort {
+  readonly #adapters: Readonly<Partial<Record<
+    ModelInvocationAuthorization["adapterKind"],
+    ModelGatewayProviderPort
+  >>>;
+
+  constructor(adapters: Readonly<Partial<Record<
+    ModelInvocationAuthorization["adapterKind"],
+    ModelGatewayProviderPort
+  >>>) {
+    this.#adapters = Object.freeze({ ...adapters });
+  }
+
+  prepare(
+    request: ModelGatewayRequest,
+    authorization: ModelInvocationAuthorization,
+  ): PreparedModelProviderRequest {
+    if (request.model !== authorization.authorizedGatewayModel) {
+      throw new Error("MODEL_GATEWAY_AUTHORIZATION_ROUTE_MISMATCH");
+    }
+    const adapter = this.#adapters[authorization.adapterKind];
+    if (adapter === undefined) throw new Error("MODEL_GATEWAY_PROVIDER_ADAPTER_UNAVAILABLE");
+    return adapter.prepare(request, authorization);
+  }
 }
 
 export type ModelGatewayInvocationState =
@@ -184,6 +215,10 @@ export type ModelGatewayStreamFrame = Readonly<{
   previousFrameDigest: string;
   frameDigest: string;
   payload: ModelGatewayStreamPayload;
+}>;
+
+type ModelGatewayStreamAttachment = Readonly<{
+  attachedToExistingInvocation: boolean;
 }>;
 
 export interface ModelGatewayStreamingRepository {
@@ -349,15 +384,34 @@ export class ModelGatewayService {
     afterSequence: bigint;
     signal: AbortSignal;
   }>): AsyncIterable<ModelGatewayStreamFrame> {
+    yield* this.#streamWithAttachment(input);
+  }
+
+  async *#streamWithAttachment(
+    input: Readonly<{
+      modelAuthorizationHandle: string;
+      logicalCallRef: string;
+      attemptRef: string;
+      producerContext: string;
+      producerGeneration: bigint;
+      request: ModelGatewayRequest;
+      afterSequence: bigint;
+      signal: AbortSignal;
+    }>,
+    observeAttachment?: (attachment: ModelGatewayStreamAttachment) => void,
+  ): AsyncIterable<ModelGatewayStreamFrame> {
     validateInvocationInput(input);
     if (input.afterSequence < 0n) throw new Error("MODEL_GATEWAY_STREAM_CURSOR_INVALID");
     const streaming = this.dependencies.streamingRepository;
-    const preparedProvider = this.dependencies.provider.prepare(input.request);
-    validatePreparedProviderRequest(preparedProvider);
     const prepared = await this.dependencies.unitOfWork.execute({
       operation: "prepare",
       modelAuthorizationHandle: input.modelAuthorizationHandle,
     }, async (transaction, authorization) => {
+      const preparedProvider = this.dependencies.provider.prepare(
+        input.request,
+        authorization,
+      );
+      validatePreparedProviderRequest(preparedProvider);
       assertAuthorization(authorization, input, preparedProvider.gatewayModel, this.#now());
       const prior = await this.dependencies.repository.lockInvocation(transaction, {
         logicalCallRef: input.logicalCallRef,
@@ -369,7 +423,7 @@ export class ModelGatewayService {
             prior.requestDigest !== preparedProvider.requestDigest) {
           throw new Error("MODEL_GATEWAY_INVOCATION_IDENTITY_CONFLICT");
         }
-        return Object.freeze({ kind: "existing" as const, record: prior });
+        return Object.freeze({ kind: "existing" as const, record: prior, preparedProvider });
       }
       await streaming.reserveCapacity(transaction, {
         maximumActive: this.#maximumActive,
@@ -421,8 +475,11 @@ export class ModelGatewayService {
         updatedAt: now,
       });
       await streaming.persistAccepted(transaction, record, input.request);
-      return Object.freeze({ kind: "created" as const, record });
+      return Object.freeze({ kind: "created" as const, record, preparedProvider });
     });
+    observeAttachment?.(Object.freeze({
+      attachedToExistingInvocation: prepared.kind === "existing",
+    }));
 
     let record = prepared.record;
     if (record.state === "dispatching" &&
@@ -444,7 +501,7 @@ export class ModelGatewayService {
       });
       if (claimed !== null) {
         record = claimed;
-        this.#startDispatch(record, preparedProvider);
+        this.#startDispatch(record, prepared.preparedProvider);
       }
     }
 
@@ -547,7 +604,7 @@ export class ModelGatewayService {
       }
       if (record.state !== "queued") return null;
       const request = await this.dependencies.streamingRepository.loadRequest(transaction, record);
-      return Object.freeze({ kind: "queued" as const, record, request });
+      return Object.freeze({ kind: "queued" as const, record, request, authorization });
     });
     if (loaded === null) return;
     if (loaded.kind === "expired") {
@@ -559,7 +616,7 @@ export class ModelGatewayService {
       )}`, true);
       return;
     }
-    const prepared = this.dependencies.provider.prepare(loaded.request);
+    const prepared = this.dependencies.provider.prepare(loaded.request, loaded.authorization);
     validatePreparedProviderRequest(prepared);
     if (prepared.requestDigest !== loaded.record.requestDigest) {
       throw new Error("MODEL_GATEWAY_PERSISTED_REQUEST_DIGEST_INVALID");
@@ -588,7 +645,11 @@ export class ModelGatewayService {
     signal: AbortSignal;
   }>): Promise<ModelGatewayInvocationResult> {
     let accepted = false;
-    for await (const frame of this.stream({ ...input, afterSequence: 0n })) {
+    let attachedToExistingInvocation = false;
+    for await (const frame of this.#streamWithAttachment(
+      { ...input, afterSequence: 0n },
+      (attachment) => { attachedToExistingInvocation = attachment.attachedToExistingInvocation; },
+    )) {
       if (frame.payload.kind === "accepted") {
         accepted = true;
         continue;
@@ -599,7 +660,7 @@ export class ModelGatewayService {
           invocationRef: frame.invocationRef,
           attemptRef: frame.attemptRef,
           responseBody: new Uint8Array(frame.payload.responseBody),
-          replayed: false,
+          replayed: attachedToExistingInvocation,
         });
       }
       if (frame.payload.kind === "outcome_unknown") {
@@ -607,7 +668,7 @@ export class ModelGatewayService {
           kind: "outcome_unknown" as const,
           invocationRef: frame.invocationRef,
           attemptRef: frame.attemptRef,
-          replayed: false,
+          replayed: attachedToExistingInvocation,
         });
       }
     }

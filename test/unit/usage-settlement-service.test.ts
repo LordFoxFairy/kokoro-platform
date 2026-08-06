@@ -24,6 +24,7 @@ describe("UsageSettlementService", () => {
     try {
       await expect(usageService(mediaRepository).prepareAttempt(lease.transaction, input))
         .resolves.toMatchObject({ kind: "accepted" });
+      expect(mediaRepository.usageContextAuthorities).toEqual(["producer"]);
       await expect(usageService(legacyRepository).prepareAttempt(lease.transaction, {
         ...input,
         producerKind: "job_runtime" as never,
@@ -87,6 +88,7 @@ describe("UsageSettlementService", () => {
           sourceDigest: "d".repeat(64),
         },
       })).resolves.toMatchObject({ kind: "accepted", value: { evidenceRef: "evidence-2", revision: 2n } });
+      expect(repository.usageContextAuthorities).toEqual(["producer", "producer"]);
       expect(repository.savedEvidence?.evidence.correctionOfEvidenceRef).toBe("evidence-1");
     } finally {
       revokePlatformTransaction(lease);
@@ -136,6 +138,7 @@ describe("UsageSettlementService", () => {
         unassignedStock: 86n, committedStock: 0n, capturedCumulative: 14n,
       });
       expect(repository.savedSettlement?.segment).toMatchObject({ state: "settled", aggregateVersion: 4n });
+      expect(repository.usageContextAuthorities).toEqual(["settlement_owner"]);
     } finally {
       revokePlatformTransaction(lease);
     }
@@ -274,9 +277,13 @@ class RecordingUsageRepository {
   attemptIntent: Record<string, unknown> | null = attemptIntent();
   savedAttemptIntent: Record<string, unknown> | null = null;
   openAttemptCount = 0n;
+  usageContextAuthorities: unknown[] = [];
 
   async findCommandReceipt() { return this.receipt; }
-  async lockUsageContext() { return this.context; }
+  async lockUsageContext(_transaction: unknown, input: { authority?: unknown }) {
+    this.usageContextAuthorities.push(input.authority);
+    return this.context;
+  }
   async loadCommittedAttemptMaximum() { return 0n; }
   async lockLatestAttemptEvidence() { return this.latestEvidence; }
   async persistAttemptUsage(_transaction: unknown,

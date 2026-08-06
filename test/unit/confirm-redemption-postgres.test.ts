@@ -132,6 +132,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
 
   it("issues CreditGrant and a balanced double-entry Journal under the standard account authority lock", async () => {
     const statements: string[] = [];
+    const queries: Array<{ statement: string; values: readonly unknown[] }> = [];
     const executions: Array<{ statement: string; values: readonly unknown[] }> = [];
     const output = creditOutput();
     const preview = validPreviewRow([output], {
@@ -143,8 +144,9 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       entitlements: [], legalTermRefs: ["terms-v1"],
     });
     const lease = issuePlatformTransaction({
-      query: async (statement) => {
+      query: async (statement, values = []) => {
         statements.push(statement);
+        queries.push({ statement, values });
         if (statement.includes("FROM platform.commerce_redemption_preview preview")) return [preview] as never;
         if (statement.includes("FROM platform.commerce_redemption_program_availability")) return [programRow(preview)] as never;
         if (statement.includes("FROM platform.commerce_code_batch")) return [{ state: "active", startsAt: null,
@@ -175,7 +177,19 @@ describe("PostgresRedemptionConfirmationRepository", () => {
         kind: "credit_grant", outputLineId: "credits", templateRevisionRef: "credit-v1",
       }] } });
       const joined = statements.join("\n");
-      expect(joined).toMatch(/pg_advisory_xact_lock[\s\S]+FROM platform\.credit_account[\s\S]+FOR UPDATE/u);
+      const accountLockIndex = queries.findIndex(({ statement }) =>
+        statement.includes("pg_catalog.pg_advisory_xact_lock"));
+      const accountReadIndex = queries.findIndex(({ statement }) =>
+        statement.includes("FROM platform.credit_account"));
+      expect(accountLockIndex).toBeGreaterThanOrEqual(0);
+      expect(accountReadIndex).toBe(accountLockIndex + 1);
+      expect(queries[accountLockIndex]?.values).toEqual([
+        "credit-account|site-1|billing-1|credit|merchant-1",
+      ]);
+      expect(queries[accountReadIndex]).toMatchObject({
+        values: ["site-1", "billing-1", "credit", "merchant-1"],
+      });
+      expect(queries[accountReadIndex]?.statement).not.toContain("FOR UPDATE");
       expect(joined).toContain("INSERT INTO platform.credit_account");
       expect(joined).toContain("INSERT INTO platform.credit_grant");
       expect(joined).toContain("INSERT INTO platform.credit_journal_transaction");

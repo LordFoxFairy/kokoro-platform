@@ -7,7 +7,7 @@ import {
   CommandIdentityV2Schema,
   CommandReceiptStateV2,
   OperatorAssuranceLevel,
-} from "../../src/interfaces/connect/generated-admin-v2/kokoro/common/v2/command_envelope_pb.js";
+} from "../../src/generated/proto/kokoro/common/v2/command_envelope_pb.js";
 import {
   ApprovalDecision,
   ApprovalDecisionState,
@@ -19,19 +19,19 @@ import {
   SubmitCommandEffectSchema,
   SubmitCommandRequestSchema,
   SubmitCommandState,
-} from "../../src/interfaces/connect/generated-admin-v2/kokoro/platform/admin/v2/admin_command_pb.js";
+} from "../../src/generated/proto/kokoro/platform/admin/v2/admin_command_pb.js";
 import {
   AuthenticatedOperatorCommandContextSchema,
   AuthenticatedOperatorQueryContextSchema,
   GlobalScopeSchema,
   OperatorScopeSchema,
   SecurityEpochsSchema,
-} from "../../src/interfaces/connect/generated-admin-v2/kokoro/platform/admin/v2/admin_shared_pb.js";
+} from "../../src/generated/proto/kokoro/platform/admin/v2/admin_shared_pb.js";
 import {
   decideApprovalRequestDigest,
   submitCommandRequestDigest,
   type VerifiedAuthenticatedAdminAxes,
-} from "../../src/interfaces/connect/generated-admin-v2/command-envelope-digest.js";
+} from "../../src/generated/contracts/platform-admin-command@v2/digest.js";
 import { createAdminCommandConnectService } from
   "../../src/modules/admin-control/interfaces/connect/admin-command-service.js";
 import type { VerifiedRequestSecurityContext } from

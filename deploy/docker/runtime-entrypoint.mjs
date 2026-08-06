@@ -4,7 +4,7 @@ import { URL } from "node:url";
 const serviceEntries = Object.freeze({
   "@kokoro/hub": { module: "../../kokoro-hub/dist/interfaces/http/main.js" },
   "platform-hub-connect": {
-    module: "../../kokoro-hub/dist/interfaces/connect/main.js",
+    module: "../../dist/src/process/hub-connect.js",
     start: "runHubConnectMain",
   },
   "platform-api": { module: "../../dist/src/process/api.js", start: "runPlatformApiMain" },

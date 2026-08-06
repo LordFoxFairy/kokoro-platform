@@ -5,7 +5,7 @@ import {
   ClientRunIntentSchema,
   OpaqueExecutionContextIntentSchema,
   PrepareRunEffectSchema,
-} from "../../src/interfaces/connect/generated/kokoro/platform/admission/v1/admission_pb.js";
+} from "../../src/generated/proto/kokoro/platform/admission/v1/admission_pb.js";
 import type { AdmissionLifecycleOwnerPort } from "../../src/modules/admission/application/platform-admission-owner-authority.js";
 import { PostgresAdmissionLifecycleOwner } from "../../src/modules/admission/infrastructure/postgres/admission-lifecycle-owner.js";
 import {
@@ -18,12 +18,14 @@ class LifecycleSql implements PlatformSqlTransaction {
   binding?: Record<string, unknown>;
   manifest?: Record<string, unknown>;
   projectionState: "active" | "revoked" | "expired" = "active";
+  readonly readStatements: string[] = [];
   readonly writeValues: unknown[][] = [];
   readonly writeStatements: string[] = [];
 
   async query<Row extends Record<string, unknown>>(
     statement: string,
   ): Promise<readonly Row[]> {
+    this.readStatements.push(statement);
     if (statement.includes("FROM platform.admission_session_execution_binding")) {
       return this.binding === undefined ? [] : [this.binding as Row];
     }
@@ -95,6 +97,11 @@ const prepareInput: Parameters<AdmissionLifecycleOwnerPort["prepare"]>[1] = {
   authorizationSegmentRef: "segment-1",
   segmentVersion: 1n,
   expiresAt: "2026-07-29T12:04:00.000Z",
+  modelRoute: {
+    adapterKind: "litellm",
+    gatewayModel: "claude-code",
+    providerModel: "provider-claude-v1",
+  },
   ownerFacts: {
     kind: "run.request",
     run_id: "run-1",
@@ -152,9 +159,16 @@ describe("Postgres Admission lifecycle owner", () => {
         prepareInput.manifestRef,
         "segment-1",
         "claude-code",
+        "provider-claude-v1",
         "litellm",
         prepareInput.expiresAt,
       ]);
+      expect(sql.readStatements[0]).toContain("admission_session_execution_binding");
+      expect(sql.readStatements[0]).not.toMatch(
+        /FOR\s+(?:NO\s+KEY\s+)?UPDATE|FOR\s+(?:KEY\s+)?SHARE/iu,
+      );
+      expect(sql.readStatements[1]).toContain("admission_execution_manifest");
+      expect(sql.readStatements[1]).toContain("FOR UPDATE");
     } finally {
       revokePlatformTransaction(lease);
     }

@@ -85,8 +85,10 @@ export function publishCertifiedSiteRelease(
     [input.featurePolicyRevision, "SITE_FEATURE_POLICY_REVISION_INVALID"],
     [input.modelOptionCatalogRef, "SITE_MODEL_CATALOG_REF_INVALID"],
     [input.agentCatalogRef, "SITE_AGENT_CATALOG_REF_INVALID"],
-    [input.identityAuthStrengthPolicyRevision, "SITE_AUTH_POLICY_REVISION_INVALID"],
   ] as const) identifier(value, code);
+  if (!/^[A-Za-z0-9_.-]{1,128}$/u.test(input.identityAuthStrengthPolicyRevision)) {
+    throw new Error("SITE_AUTH_POLICY_REVISION_INVALID");
+  }
   digest(input.webArtifactDigest);
   digest(input.releaseManifestDigest);
   digest(input.certificationDigest);
