@@ -24,6 +24,7 @@ interface AdmissionCommandRow extends Record<string, unknown> {
   readonly state: "processing" | "completed";
   readonly leaseToken: string | null;
   readonly leaseExpired: boolean;
+  readonly leaseExpiresAt: string | null;
   readonly responsePayload: Uint8Array | null;
   readonly responseDigest: string | null;
   readonly recordedAt: string;
@@ -69,7 +70,7 @@ export class PostgresAdmissionCommandJournal implements AdmissionCommandJournal 
       if (row.state === "completed") return replay(row);
       if (row.leaseToken === leaseToken) return Object.freeze({ kind: "started", leaseToken });
       if (!row.leaseExpired) {
-        return Object.freeze({ kind: "pending", recordedAt: row.recordedAt });
+        return pending(row);
       }
       const updated = await sql.execute(
         `UPDATE platform.admission_command
@@ -84,7 +85,7 @@ export class PostgresAdmissionCommandJournal implements AdmissionCommandJournal 
       assertSameCommand(row, command);
       return row.state === "completed"
         ? replay(row)
-        : Object.freeze({ kind: "pending", recordedAt: row.recordedAt });
+        : pending(row);
     });
   }
 
@@ -123,6 +124,33 @@ export class PostgresAdmissionCommandJournal implements AdmissionCommandJournal 
     });
   }
 
+  async defer(command: AdmissionCommandKey, leaseToken: string, retryAt: string): Promise<string> {
+    const now = this.#now();
+    const retryAtMilliseconds = Date.parse(retryAt);
+    if (!Number.isFinite(retryAtMilliseconds)) throw new Error("ADMISSION_RETRY_AT_INVALID");
+    const requestedAt = new Date(Math.max(Date.parse(now), retryAtMilliseconds)).toISOString();
+    return this.#database.internalTransaction("admission.command", async (transaction) => {
+      const sql = await scoped(transaction, command);
+      const updated = await sql.execute(
+        `UPDATE platform.admission_command
+         SET lease_expires_at=LEAST(lease_expires_at,$1::timestamptz),
+             updated_at=$2::timestamptz
+         WHERE site_id=$3 AND operation=$4 AND command_id=$5
+           AND request_digest=$6 AND state='processing' AND lease_token=$7::uuid
+           AND lease_expires_at > $2::timestamptz`,
+        [requestedAt, now, command.siteId, command.operation, command.commandId,
+          command.requestDigest, leaseToken],
+      );
+      const row = await findByIdempotency(transaction, command);
+      assertSameCommand(row, command);
+      if (
+        updated === 1 && row.state === "processing" && row.leaseToken === leaseToken &&
+        row.leaseExpiresAt !== null
+      ) return row.leaseExpiresAt;
+      throw new Error("ADMISSION_COMMAND_LEASE_LOST");
+    });
+  }
+
   async lookup(query: AdmissionReceiptLookup): Promise<AdmissionJournalLookup> {
     return this.#database.internalTransaction("admission.command", async (transaction) => {
       const sql = await scoped(transaction, query);
@@ -140,6 +168,7 @@ export class PostgresAdmissionCommandJournal implements AdmissionCommandJournal 
         kind: "pending",
         idempotencyKey: row.idempotencyKey,
         recordedAt: row.recordedAt,
+        retryAt: requiredLeaseExpiresAt(row),
       });
       const restored = replay(row);
       return Object.freeze({ kind: "found", response: restored.response });
@@ -200,6 +229,25 @@ function replay(row: AdmissionCommandRow): Readonly<{ kind: "replay"; response: 
   return Object.freeze({ kind: "replay", response: new Uint8Array(row.responsePayload) });
 }
 
+function pending(row: AdmissionCommandRow): Readonly<{
+  kind: "pending";
+  recordedAt: string;
+  retryAt: string;
+}> {
+  return Object.freeze({
+    kind: "pending",
+    recordedAt: row.recordedAt,
+    retryAt: requiredLeaseExpiresAt(row),
+  });
+}
+
+function requiredLeaseExpiresAt(row: AdmissionCommandRow): string {
+  if (row.state !== "processing" || row.leaseExpiresAt === null) {
+    throw new Error("ADMISSION_COMMAND_JOURNAL_CORRUPT");
+  }
+  return row.leaseExpiresAt;
+}
+
 function sha256(value: Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -208,6 +256,9 @@ const SELECT_ROW = `SELECT site_id AS "siteId", operation, command_id AS "comman
   environment, region, caller_identity AS "callerIdentity",
   idempotency_key AS "idempotencyKey", request_digest AS "requestDigest", state,
   lease_token::text AS "leaseToken", lease_expires_at <= now() AS "leaseExpired",
+  CASE WHEN lease_expires_at IS NULL THEN NULL
+    ELSE to_char(lease_expires_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+  END AS "leaseExpiresAt",
   response_payload AS "responsePayload", response_digest AS "responseDigest",
   to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "recordedAt"
   FROM platform.admission_command`;

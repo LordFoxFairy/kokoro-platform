@@ -10,6 +10,7 @@ import {
   AdmissionOperation,
   FinalizeRunAuthorizationEffectSchema,
   FinalizeRunAuthorizationRequestSchema,
+  FinalizeRunAuthorizationResponseSchema,
   GetCommandReceiptRequestSchema,
   OpaqueExecutionContextIntentSchema,
   PrepareRunEffectSchema,
@@ -60,7 +61,14 @@ const ownerFacts: VerifiedGaRunRequestOwnerFacts = {
 };
 
 class MemoryJournal implements AdmissionCommandJournal {
-  readonly records = new Map<string, { command: AdmissionCommandKey; response?: Uint8Array }>();
+  readonly records = new Map<string, {
+    command: AdmissionCommandKey;
+    recordedAt: string;
+    leaseExpiresAt: number;
+    response?: Uint8Array;
+  }>();
+
+  constructor(private readonly clock: () => Date = () => now) {}
 
   async begin(command: AdmissionCommandKey) {
     const key = `${command.siteId}:${command.operation}:${command.idempotencyKey}`;
@@ -69,12 +77,36 @@ class MemoryJournal implements AdmissionCommandJournal {
       if (prior.command.commandId !== command.commandId || prior.command.requestDigest !== command.requestDigest) {
         throw new Error("ADMISSION_COMMAND_CONFLICT");
       }
-      return prior.response === undefined
-        ? { kind: "pending" as const, recordedAt: now.toISOString() }
-        : { kind: "replay" as const, response: new Uint8Array(prior.response) };
+      if (prior.response !== undefined) {
+        return { kind: "replay" as const, response: new Uint8Array(prior.response) };
+      }
+      if (prior.leaseExpiresAt > this.clock().getTime()) {
+        return {
+          kind: "pending" as const,
+          recordedAt: prior.recordedAt,
+          retryAt: new Date(prior.leaseExpiresAt).toISOString(),
+        };
+      }
+      prior.leaseExpiresAt = this.clock().getTime() + 30_000;
+      return { kind: "started" as const, leaseToken: "lease-1" };
     }
-    this.records.set(key, { command });
+    this.records.set(key, {
+      command,
+      recordedAt: this.clock().toISOString(),
+      leaseExpiresAt: this.clock().getTime() + 30_000,
+    });
     return { kind: "started" as const, leaseToken: "lease-1" };
+  }
+
+  async defer(command: AdmissionCommandKey, _leaseToken: string, retryAt: string) {
+    const key = `${command.siteId}:${command.operation}:${command.idempotencyKey}`;
+    const prior = this.records.get(key);
+    if (prior === undefined) throw new Error("missing");
+    prior.leaseExpiresAt = Math.min(
+      prior.leaseExpiresAt,
+      Math.max(this.clock().getTime(), Date.parse(retryAt)),
+    );
+    return new Date(prior.leaseExpiresAt).toISOString();
   }
 
   async complete(command: AdmissionCommandKey, _leaseToken: string, response: Uint8Array) {
@@ -92,7 +124,12 @@ class MemoryJournal implements AdmissionCommandJournal {
       command.identity === query.identity);
     if (record === undefined) return { kind: "not_found" };
     if (record.response === undefined) {
-      return { kind: "pending", idempotencyKey: record.command.idempotencyKey, recordedAt: now.toISOString() };
+      return {
+        kind: "pending",
+        idempotencyKey: record.command.idempotencyKey,
+        recordedAt: record.recordedAt,
+        retryAt: new Date(record.leaseExpiresAt).toISOString(),
+      };
     }
     return { kind: "found", response: new Uint8Array(record.response) };
   }
@@ -187,7 +224,11 @@ function authority(authorizationExpiresAt = "2026-07-29T12:02:00.000Z"): Admissi
   };
 }
 
-function service(owner = authority(), journal = new MemoryJournal()) {
+function service(
+  owner = authority(),
+  journal = new MemoryJournal(),
+  clock: () => Date = () => now,
+) {
   return {
     owner,
     journal,
@@ -197,9 +238,9 @@ function service(owner = authority(), journal = new MemoryJournal()) {
       gaRunRequestDraftFactory: new GaRunRequestDraftFactory({
         sealer: { seal: async (input) => sealed(input) },
         expectedAudience: "kokoro-session-dispatch",
-        clock: () => now,
+        clock,
       }),
-      clock: () => now,
+      clock,
     }),
   };
 }
@@ -366,5 +407,90 @@ describe("Admission application provider", () => {
     expect(finalized.result.case).toBe("committed");
     expect(released.result.case).toBe("released");
     expect(reconciled.result.case).toBe("settled");
+  });
+
+  it("retries an explicit owner pending decision without freezing it as the command result", async () => {
+    let currentTime = now;
+    const owner = authority();
+    owner.finalizeRunAuthorization = vi.fn()
+      .mockResolvedValueOnce({
+        kind: "pending" as const,
+        pending: { retryAfter: timestampFromDate(new Date("2026-07-29T12:00:01.000Z")) },
+      })
+      .mockImplementation(async ({ effect }) => ({
+        kind: "committed" as const,
+        committed: {
+          authorizationSegmentRef: effect.authorizationSegmentRef,
+          segmentVersion: effect.expectedSegmentVersion + 1n,
+          committedAt: timestampFromDate(now),
+        },
+      }));
+    const journal = new MemoryJournal(() => currentTime);
+    const fixture = service(owner, journal, () => currentTime);
+    const effect = create(FinalizeRunAuthorizationEffectSchema, {
+      manifestRef: "manifest-1",
+      manifestDigest: "b".repeat(64),
+      authorizationSegmentRef: "segment-1",
+      expectedSegmentVersion: 1n,
+      launchId: "launch-1",
+      sessionIntentReceiptRef: "intent-receipt-1",
+    });
+    const request = create(FinalizeRunAuthorizationRequestSchema, {
+      siteId: "site-1",
+      effect,
+      command: wireCommand(FinalizeRunAuthorizationEffectSchema, effect, "finalize-retry-1"),
+    });
+
+    const pending = await fixture.service.finalizeRunAuthorization(request, caller);
+    const beforeRetry = await fixture.service.finalizeRunAuthorization(request, caller);
+    currentTime = new Date("2026-07-29T12:00:01.000Z");
+    const committed = await fixture.service.finalizeRunAuthorization(request, caller);
+    const replay = await fixture.service.finalizeRunAuthorization(request, caller);
+
+    expect(pending.result.case).toBe("pending");
+    expect(beforeRetry.result.case).toBe("pending");
+    if (pending.result.case !== "pending" || beforeRetry.result.case !== "pending") {
+      throw new Error("expected pending responses");
+    }
+    expect(pending.result.value.retryAfter).toEqual(
+      timestampFromDate(new Date("2026-07-29T12:00:01.000Z")),
+    );
+    expect(beforeRetry.result.value.retryAfter).toEqual(pending.result.value.retryAfter);
+    expect(committed.result.case).toBe("committed");
+    expect(toBinary(FinalizeRunAuthorizationResponseSchema, replay)).toEqual(
+      toBinary(FinalizeRunAuthorizationResponseSchema, committed),
+    );
+    expect(owner.finalizeRunAuthorization).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns the journal-capped retry authority instead of an unbounded owner hint", async () => {
+    const owner = authority();
+    owner.finalizeRunAuthorization = vi.fn(async () => ({
+      kind: "pending" as const,
+      pending: { retryAfter: timestampFromDate(new Date("2099-01-01T00:00:00.000Z")) },
+    }));
+    const fixture = service(owner, new MemoryJournal(() => now), () => now);
+    const effect = create(FinalizeRunAuthorizationEffectSchema, {
+      manifestRef: "manifest-1",
+      manifestDigest: "b".repeat(64),
+      authorizationSegmentRef: "segment-1",
+      expectedSegmentVersion: 1n,
+      launchId: "launch-1",
+      sessionIntentReceiptRef: "intent-receipt-1",
+    });
+    const response = await fixture.service.finalizeRunAuthorization(
+      create(FinalizeRunAuthorizationRequestSchema, {
+        siteId: "site-1",
+        effect,
+        command: wireCommand(FinalizeRunAuthorizationEffectSchema, effect, "finalize-capped-1"),
+      }),
+      caller,
+    );
+
+    expect(response.result.case).toBe("pending");
+    if (response.result.case !== "pending") throw new Error("expected pending response");
+    expect(response.result.value.retryAfter).toEqual(
+      timestampFromDate(new Date("2026-07-29T12:00:30.000Z")),
+    );
   });
 });

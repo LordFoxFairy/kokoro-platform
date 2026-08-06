@@ -23,6 +23,7 @@ const command: AdmissionCommandKey = {
 
 interface Row {
   command: AdmissionCommandKey;
+  recordedAt: string;
   state: "processing" | "completed";
   leaseToken: string | null;
   leaseExpiresAt: string | null;
@@ -33,6 +34,7 @@ interface Row {
 class FakeAdmissionDatabase implements PlatformSqlTransaction {
   row?: Row;
   scope?: { siteId: string; identity: string };
+  clock = now;
 
   async internalTransaction<Result>(
     operation: PlatformInternalOperation,
@@ -54,7 +56,6 @@ class FakeAdmissionDatabase implements PlatformSqlTransaction {
     if (!statement.includes("FROM platform.admission_command")) throw new Error("unexpected query");
     const row = this.row;
     if (row === undefined || this.scope?.siteId !== row.command.siteId || this.scope.identity !== row.command.identity) return [];
-    const recordedAt = now.toISOString();
     return [{
       siteId: row.command.siteId,
       operation: row.command.operation,
@@ -66,10 +67,11 @@ class FakeAdmissionDatabase implements PlatformSqlTransaction {
       requestDigest: row.command.requestDigest,
       state: row.state,
       leaseToken: row.leaseToken,
-      leaseExpired: row.leaseExpiresAt !== null && Date.parse(row.leaseExpiresAt) <= now.getTime(),
+      leaseExpired: row.leaseExpiresAt !== null && Date.parse(row.leaseExpiresAt) <= this.clock.getTime(),
       responsePayload: row.responsePayload,
       responseDigest: row.responseDigest,
-      recordedAt,
+      recordedAt: row.recordedAt,
+      leaseExpiresAt: row.leaseExpiresAt,
     } as unknown as Result];
   }
 
@@ -82,12 +84,20 @@ class FakeAdmissionDatabase implements PlatformSqlTransaction {
           commandId: String(values[2]), environment: String(values[3]), region: String(values[4]),
           identity: String(values[5]), idempotencyKey: String(values[6]), requestDigest: String(values[7]),
         },
+        recordedAt: this.clock.toISOString(),
         state: "processing",
         leaseToken: String(values[8]),
         leaseExpiresAt: String(values[9]),
         responsePayload: null,
         responseDigest: null,
       };
+      return 1;
+    }
+    if (statement.includes("SET lease_expires_at=LEAST")) {
+      if (this.row?.state !== "processing" || this.row.leaseToken !== values[6]) return 0;
+      const current = Date.parse(this.row.leaseExpiresAt ?? "");
+      const requested = Date.parse(String(values[0]));
+      this.row.leaseExpiresAt = new Date(Math.min(current, requested)).toISOString();
       return 1;
     }
     if (statement.includes("SET state='completed'")) {
@@ -139,5 +149,77 @@ describe("Postgres Admission command journal", () => {
     await expect(journal.begin({ ...command, requestDigest: "b".repeat(64) })).rejects.toThrow(
       "ADMISSION_COMMAND_CONFLICT",
     );
+  });
+
+  it("reclaims an explicit pending decision only at retry time and fences the stale lease", async () => {
+    const database = new FakeAdmissionDatabase();
+    const journal = new PostgresAdmissionCommandJournal(database, { clock: () => database.clock });
+    const first = await journal.begin(command);
+    expect(first.kind).toBe("started");
+
+    const retryAt = "2026-07-29T12:00:01.000Z";
+    expect(await journal.defer(
+      command,
+      first.kind === "started" ? first.leaseToken : "invalid",
+      retryAt,
+    )).toBe(retryAt);
+    expect(await journal.begin(command)).toEqual({
+      kind: "pending",
+      recordedAt: now.toISOString(),
+      retryAt,
+    });
+    expect(await journal.lookup(command)).toEqual({
+      kind: "pending",
+      idempotencyKey: command.idempotencyKey,
+      recordedAt: now.toISOString(),
+      retryAt,
+    });
+    database.clock = new Date(retryAt);
+    const second = await journal.begin(command);
+
+    expect(second.kind).toBe("started");
+    await expect(journal.defer(
+      command,
+      first.kind === "started" ? first.leaseToken : "invalid",
+      "2026-07-29T12:00:02.000Z",
+    )).rejects.toThrow("ADMISSION_COMMAND_LEASE_LOST");
+    await expect(journal.complete(
+      command,
+      first.kind === "started" ? first.leaseToken : "invalid",
+      new Uint8Array([1]),
+    )).rejects.toThrow("ADMISSION_COMMAND_LEASE_LOST");
+    const terminal = new Uint8Array([9, 8, 7]);
+    await journal.complete(
+      command,
+      second.kind === "started" ? second.leaseToken : "invalid",
+      terminal,
+    );
+    expect(await journal.begin(command)).toEqual({ kind: "replay", response: terminal });
+    expect(await journal.lookup(command)).toEqual({ kind: "found", response: terminal });
+  });
+
+  it("caps owner retry hints at the original command lease and exposes that authority", async () => {
+    const database = new FakeAdmissionDatabase();
+    const journal = new PostgresAdmissionCommandJournal(database, {
+      clock: () => database.clock,
+      leaseMs: 30_000,
+    });
+    const first = await journal.begin(command);
+    expect(first.kind).toBe("started");
+
+    const effectiveRetryAt = await journal.defer(
+      command,
+      first.kind === "started" ? first.leaseToken : "invalid",
+      "2099-01-01T00:00:00.000Z",
+    );
+
+    expect(effectiveRetryAt).toBe("2026-07-29T12:00:30.000Z");
+    expect(await journal.begin(command)).toEqual({
+      kind: "pending",
+      recordedAt: now.toISOString(),
+      retryAt: effectiveRetryAt,
+    });
+    database.clock = new Date(effectiveRetryAt);
+    expect((await journal.begin(command)).kind).toBe("started");
   });
 });

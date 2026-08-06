@@ -113,7 +113,9 @@ export class AdmissionApplicationService {
       return restore(PrepareRunResponseSchema, started.response, command);
     }
     if (started.kind === "pending") {
-      return preparePending(command, started.recordedAt);
+      return preparePending(command, started.recordedAt, {
+        retryAfter: retryTimestamp(started.retryAt),
+      });
     }
     let response: PrepareRunResponse;
     try {
@@ -128,6 +130,15 @@ export class AdmissionApplicationService {
       assertValidProto(PrepareRunResponseSchema, response, "ADMISSION_PREPARE_RESPONSE_INVALID");
     } catch {
       response = prepareUnknown(command, this.#now());
+    }
+    if (response.result.case === "pending") {
+      const effectiveRetryAt = await this.#journal.defer(
+        command.key,
+        started.leaseToken,
+        pendingRetryAt(response.result.value),
+      );
+      response.result.value.retryAfter = retryTimestamp(effectiveRetryAt);
+      return response;
     }
     return restore(
       PrepareRunResponseSchema,
@@ -155,7 +166,9 @@ export class AdmissionApplicationService {
     if (started.kind === "replay") {
       return restore(FinalizeRunAuthorizationResponseSchema, started.response, command);
     }
-    if (started.kind === "pending") return finalizePending(command, started.recordedAt);
+    if (started.kind === "pending") return finalizePending(command, started.recordedAt, {
+      retryAfter: retryTimestamp(started.retryAt),
+    });
     let response: FinalizeRunAuthorizationResponse;
     try {
       response = finalizeResponse(
@@ -172,6 +185,15 @@ export class AdmissionApplicationService {
       assertValidProto(FinalizeRunAuthorizationResponseSchema, response, "ADMISSION_FINALIZE_RESPONSE_INVALID");
     } catch {
       response = finalizeUnknown(command, this.#now());
+    }
+    if (response.result.case === "pending") {
+      const effectiveRetryAt = await this.#journal.defer(
+        command.key,
+        started.leaseToken,
+        pendingRetryAt(response.result.value),
+      );
+      response.result.value.retryAfter = retryTimestamp(effectiveRetryAt);
+      return response;
     }
     return restore(
       FinalizeRunAuthorizationResponseSchema,
@@ -199,7 +221,9 @@ export class AdmissionApplicationService {
     if (started.kind === "replay") {
       return restore(ReleaseRunAuthorizationResponseSchema, started.response, command);
     }
-    if (started.kind === "pending") return releasePending(command, started.recordedAt);
+    if (started.kind === "pending") return releasePending(command, started.recordedAt, {
+      retryAfter: retryTimestamp(started.retryAt),
+    });
     let response: ReleaseRunAuthorizationResponse;
     try {
       response = releaseResponse(
@@ -216,6 +240,15 @@ export class AdmissionApplicationService {
       assertValidProto(ReleaseRunAuthorizationResponseSchema, response, "ADMISSION_RELEASE_RESPONSE_INVALID");
     } catch {
       response = releaseUnknown(command, this.#now());
+    }
+    if (response.result.case === "pending") {
+      const effectiveRetryAt = await this.#journal.defer(
+        command.key,
+        started.leaseToken,
+        pendingRetryAt(response.result.value),
+      );
+      response.result.value.retryAfter = retryTimestamp(effectiveRetryAt);
+      return response;
     }
     return restore(
       ReleaseRunAuthorizationResponseSchema,
@@ -243,7 +276,9 @@ export class AdmissionApplicationService {
     if (started.kind === "replay") {
       return restore(ReconcileRunAuthorizationResponseSchema, started.response, command);
     }
-    if (started.kind === "pending") return reconcilePending(command, started.recordedAt);
+    if (started.kind === "pending") return reconcilePending(command, started.recordedAt, {
+      retryAfter: retryTimestamp(started.retryAt),
+    });
     let response: ReconcileRunAuthorizationResponse;
     try {
       response = reconcileResponse(
@@ -260,6 +295,15 @@ export class AdmissionApplicationService {
       assertValidProto(ReconcileRunAuthorizationResponseSchema, response, "ADMISSION_RECONCILE_RESPONSE_INVALID");
     } catch {
       response = reconcileUnknown(command, this.#now());
+    }
+    if (response.result.case === "pending") {
+      const effectiveRetryAt = await this.#journal.defer(
+        command.key,
+        started.leaseToken,
+        pendingRetryAt(response.result.value),
+      );
+      response.result.value.retryAfter = retryTimestamp(effectiveRetryAt);
+      return response;
     }
     return restore(
       ReconcileRunAuthorizationResponseSchema,
@@ -296,7 +340,13 @@ export class AdmissionApplicationService {
     }
     const response = found.kind === "found"
       ? restoreForLookup(operation, found.response, query)
-      : pendingForLookup(operation, query, found.idempotencyKey, found.recordedAt);
+      : pendingForLookup(
+        operation,
+        query,
+        found.idempotencyKey,
+        found.recordedAt,
+        found.retryAt,
+      );
     return receiptEnvelope(operation, response);
   }
 
@@ -475,6 +525,19 @@ function timestampMilliseconds(value: Readonly<{ seconds: bigint; nanos: number 
     !Number.isInteger(value.nanos) || value.nanos < 0 || value.nanos > 999_999_999
   ) throw new Error("ADMISSION_TIMESTAMP_INVALID");
   return Number(value.seconds) * 1_000 + Math.floor(value.nanos / 1_000_000);
+}
+
+function pendingRetryAt(value: Readonly<{
+  retryAfter?: Readonly<{ seconds: bigint; nanos: number }> | undefined;
+}>): string {
+  if (value.retryAfter === undefined) throw new Error("ADMISSION_PENDING_RETRY_AT_REQUIRED");
+  return new Date(timestampMilliseconds(value.retryAfter)).toISOString();
+}
+
+function retryTimestamp(value: string): ReturnType<typeof timestampFromDate> {
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds)) throw new Error("ADMISSION_RETRY_AT_INVALID");
+  return timestampFromDate(new Date(milliseconds));
 }
 
 function preparePending(
@@ -716,6 +779,7 @@ function pendingForLookup(
   query: AdmissionCaller & Readonly<{ siteId: string; commandId: string; requestDigest: string }>,
   idempotencyKey: string,
   recordedAt: string,
+  retryAt: string,
 ) {
   const identity = create(CommandIdentitySchema, {
     commandId: query.commandId,
@@ -724,10 +788,11 @@ function pendingForLookup(
     requestDigest: query.requestDigest,
   });
   const base: ReceiptCommand = { identity, key: { ...query, operation, idempotencyKey } };
-  if (operation === "prepare_run") return preparePending(base, recordedAt);
-  if (operation === "finalize_run_authorization") return finalizePending(base, recordedAt);
-  if (operation === "release_run_authorization") return releasePending(base, recordedAt);
-  return reconcilePending(base, recordedAt);
+  const value = { retryAfter: retryTimestamp(retryAt) };
+  if (operation === "prepare_run") return preparePending(base, recordedAt, value);
+  if (operation === "finalize_run_authorization") return finalizePending(base, recordedAt, value);
+  if (operation === "release_run_authorization") return releasePending(base, recordedAt, value);
+  return reconcilePending(base, recordedAt, value);
 }
 
 function receiptEnvelope(

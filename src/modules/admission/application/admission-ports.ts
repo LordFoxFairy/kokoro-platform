@@ -45,7 +45,7 @@ export interface AdmissionReceiptLookup extends AdmissionCaller {
 
 export type AdmissionJournalBegin =
   | Readonly<{ kind: "started"; leaseToken: string }>
-  | Readonly<{ kind: "pending"; recordedAt: string }>
+  | Readonly<{ kind: "pending"; recordedAt: string; retryAt: string }>
   | Readonly<{ kind: "replay"; response: Uint8Array }>;
 
 export type AdmissionJournalLookup =
@@ -54,12 +54,14 @@ export type AdmissionJournalLookup =
       kind: "pending";
       idempotencyKey: string;
       recordedAt: string;
+      retryAt: string;
     }>
   | Readonly<{ kind: "found"; response: Uint8Array }>;
 
 /** Durable receipt storage. Implementations must fence completion with leaseToken. */
 export interface AdmissionCommandJournal {
   begin(command: AdmissionCommandKey): Promise<AdmissionJournalBegin>;
+  defer(command: AdmissionCommandKey, leaseToken: string, retryAt: string): Promise<string>;
   complete(
     command: AdmissionCommandKey,
     leaseToken: string,
