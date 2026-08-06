@@ -146,6 +146,107 @@ describe("PostgresSessionAuthorizationRepository", () => {
     expect(statement).toContain("platform.authorization_product_context");
     expect(statement).not.toMatch(/FOR\s+(?:NO\s+KEY\s+)?UPDATE|FOR\s+(?:KEY\s+)?SHARE/iu);
   });
+
+  it.each([
+    {
+      authority: "requested lifetime",
+      contextExpiresAt: "2026-08-05T12:10:00.000Z",
+      sessionExpiresAt: "2026-08-05T13:00:00.000Z",
+      expectedExpiresAt: "2026-08-05T12:05:00.000Z",
+    },
+    {
+      authority: "ProductContext",
+      contextExpiresAt: "2026-08-05T12:04:00.000Z",
+      sessionExpiresAt: "2026-08-05T13:00:00.000Z",
+      expectedExpiresAt: "2026-08-05T12:04:00.000Z",
+    },
+    {
+      authority: "identity session",
+      contextExpiresAt: "2026-08-05T12:10:00.000Z",
+      sessionExpiresAt: "2026-08-05T12:03:00.000Z",
+      expectedExpiresAt: "2026-08-05T12:03:00.000Z",
+    },
+  ])("caps a SessionAccessGrant to its $authority", async ({
+    contextExpiresAt,
+    sessionExpiresAt,
+    expectedExpiresAt,
+  }) => {
+    let persistedValues: readonly unknown[] = [];
+    const lease = issuePlatformTransaction({
+      query: async <Row extends Record<string, unknown>>() => [{
+        bindingRef: workload.siteProjectBindingRef,
+        workloadIdentityId: workload.workloadIdentityId,
+        deploymentRef: workload.deploymentRef,
+        siteRef: workload.siteRef,
+        siteReleaseRef: workload.siteReleaseRef,
+        environment: workload.environment,
+        region: workload.region,
+        audience: workload.audience,
+        sessionContractRevision: workload.sessionContractRevision,
+        bindingEpoch: 1n,
+        bindingState: "active",
+        siteState: "active",
+        siteSecurityEpoch: 1n,
+        policyEpoch: 1n,
+        revocationEpoch: 1n,
+        releaseState: "active",
+        webArtifactDigest: workload.webArtifactDigest,
+        enabledSurfaceIds: [],
+        featurePolicyRevision: "feature-policy-a",
+        modelOptionCatalogRef: "model-catalog-a",
+        agentCatalogRef: "agent-catalog-a",
+        localePolicy: { defaultLocale: "en", allowedLocales: ["en"] },
+        productContextRef: "product-context-a",
+        contextExpiresAt: new Date(contextExpiresAt),
+        contextSnapshotDigest: "d".repeat(64),
+        contextPolicyEpoch: 1n,
+        contextRevocationEpoch: 1n,
+        subjectRef: session.subjectRef,
+        subjectState: "active",
+        subjectGeneration: 1n,
+        restrictionEpoch: 1n,
+        identitySessionRef: session.identitySessionRef,
+        sessionState: "active",
+        identitySessionEpoch: 1n,
+        credentialEpoch: 1n,
+        sessionExpiresAt: new Date(sessionExpiresAt),
+        projectRef: "project-a",
+        projectState: "active",
+        membershipState: "active",
+        membershipEpoch: 1n,
+        authorizationEpoch: 1n,
+      } as unknown as Row],
+      execute: async (_statement, values = []) => {
+        persistedValues = values;
+        return 1;
+      },
+    });
+    try {
+      const prepared = await new PostgresSessionAuthorizationRepository().prepareSessionAccessGrant(
+        lease.transaction,
+        {
+          grantRef: "00000000-0000-4000-8000-000000000001",
+          workload,
+          session,
+          productContextRef: "product-context-a",
+          projectRef: "project-a",
+          purpose: "write",
+          resource: Object.freeze({ kind: "session", sessionRef: "session-a" }),
+          issuer: "kokoro-platform",
+          keyRevision: "key-a",
+          authorizationStreamSequence: "1",
+          notBefore: "2026-08-05T11:59:55.000Z",
+          issuedAt: "2026-08-05T12:00:00.000Z",
+          expiresAt: "2026-08-05T12:05:00.000Z",
+        },
+      );
+
+      expect(prepared.claims.binding.expiresAt).toBe(expectedExpiresAt);
+      expect(persistedValues.at(-1)).toBe(expectedExpiresAt);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
 });
 
 async function captureRejectedQuery(

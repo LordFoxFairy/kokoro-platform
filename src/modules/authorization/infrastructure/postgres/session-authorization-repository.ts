@@ -241,6 +241,11 @@ export class PostgresSessionAuthorizationRepository implements SessionAuthorizat
       positive(row.restrictionEpoch) !== input.session.restrictionEpoch ||
       positive(row.credentialEpoch) !== input.session.credentialEpoch
     ) throw new SessionAuthorizationError("AUTHORIZATION_STALE");
+    const effectiveExpiresAt = new Date(Math.min(
+      Date.parse(input.expiresAt),
+      row.contextExpiresAt.getTime(),
+      row.sessionExpiresAt.getTime(),
+    )).toISOString();
     const claims: SessionAccessGrantClaims = Object.freeze({
       grantRef: input.grantRef,
       binding: Object.freeze({
@@ -271,7 +276,7 @@ export class PostgresSessionAuthorizationRepository implements SessionAuthorizat
         authorizationStreamSequence: input.authorizationStreamSequence,
         resource: input.resource,
         issuedAt: input.issuedAt,
-        expiresAt: input.expiresAt,
+        expiresAt: effectiveExpiresAt,
       }),
       authorization: Object.freeze({
         purpose: input.purpose,
@@ -293,7 +298,7 @@ export class PostgresSessionAuthorizationRepository implements SessionAuthorizat
         claimsDigest, input.keyRevision, row.policyEpoch, row.revocationEpoch,
         row.siteSecurityEpoch,row.subjectGeneration,row.identitySessionEpoch,row.membershipEpoch,
         row.authorizationEpoch,row.restrictionEpoch,row.credentialEpoch,
-        input.issuedAt,input.notBefore,input.expiresAt],
+        input.issuedAt,input.notBefore,effectiveExpiresAt],
     );
     return Object.freeze({ claims, claimsDigest });
   }
