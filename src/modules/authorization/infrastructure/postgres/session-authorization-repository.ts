@@ -71,6 +71,7 @@ type PersonalRow = Record<string, unknown> & {
   readonly authorizationEpoch: bigint;
   readonly isDefault: boolean;
   readonly productContextRef: string;
+  readonly contextExpiresAt: Date;
 };
 
 export class PostgresSessionAuthorizationRepository implements SessionAuthorizationRepository {
@@ -152,15 +153,16 @@ export class PostgresSessionAuthorizationRepository implements SessionAuthorizat
               project.execution_space_ref AS "executionSpaceRef", project.display_name AS "projectDisplayName",
               membership.membership_epoch AS "membershipEpoch",
               membership.authorization_epoch AS "authorizationEpoch", membership.is_default AS "isDefault",
-              context.product_context_ref AS "productContextRef"
+              context.product_context_ref AS "productContextRef",
+              context.expires_at AS "contextExpiresAt"
        FROM platform.authorization_identity_session identity_session
        JOIN platform.authorization_subject subject ON subject.subject_ref=identity_session.subject_ref
        JOIN platform.authorization_project_membership membership ON membership.subject_ref=subject.subject_ref
        JOIN platform.authorization_project project ON project.project_ref=membership.project_ref
        JOIN LATERAL (
-         SELECT product_context_ref FROM platform.authorization_product_context
+         SELECT product_context_ref,expires_at FROM platform.authorization_product_context
          WHERE binding_ref=$1 AND site_ref=$2 AND expires_at>$5::timestamptz
-         ORDER BY expires_at DESC LIMIT 1
+         ORDER BY expires_at DESC,product_context_ref LIMIT 1
        ) context ON TRUE
        WHERE identity_session.session_ref=$3 AND identity_session.site_ref=$2
          AND identity_session.state='active' AND identity_session.expires_at>$5::timestamptz
@@ -203,7 +205,10 @@ export class PostgresSessionAuthorizationRepository implements SessionAuthorizat
       defaultProjectRef: (rows.find((row) => row.isDefault) ?? first).projectRef,
       projects: Object.freeze(projects),
       issuedAt: input.now,
-      expiresAt: input.expiresAt,
+      expiresAt: new Date(Math.min(
+        Date.parse(input.expiresAt),
+        first.contextExpiresAt.getTime(),
+      )).toISOString(),
     });
   }
 

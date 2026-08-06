@@ -82,6 +82,49 @@ describe("PostgresSessionAuthorizationRepository", () => {
     expect(statement).not.toMatch(/FOR\s+(?:NO\s+KEY\s+)?UPDATE|FOR\s+(?:KEY\s+)?SHARE/iu);
   });
 
+  it("never lets PersonalContext outlive the exact selected ProductContext", async () => {
+    const statements: string[] = [];
+    const lease = issuePlatformTransaction({
+      query: async <Row extends Record<string, unknown>>(statement: string) => {
+        statements.push(statement);
+        return [{
+          subjectRef: "subject-a",
+          subjectGeneration: 1n,
+          displayName: "Subject A",
+          avatarUrl: null,
+          projectRef: "project-a",
+          workspaceRef: "workspace-a",
+          executionSpaceRef: "execution-space-a",
+          projectDisplayName: "Project A",
+          membershipEpoch: 1n,
+          authorizationEpoch: 1n,
+          isDefault: true,
+          productContextRef: "product-context-a",
+          contextExpiresAt: new Date("2026-08-05T12:00:45.000Z"),
+        } as unknown as Row];
+      },
+      execute: async () => 0,
+    });
+    try {
+      const context = await new PostgresSessionAuthorizationRepository().loadPersonalContext(
+        lease.transaction,
+        {
+          workload,
+          session,
+          now: "2026-08-05T12:00:00.000Z",
+          expiresAt: "2026-08-05T12:05:00.000Z",
+        },
+      );
+
+      expect(context.productContextRef).toBe("product-context-a");
+      expect(context.expiresAt).toBe("2026-08-05T12:00:45.000Z");
+      expect(statements).toHaveLength(1);
+      expect(statements[0]).toContain('context.expires_at AS "contextExpiresAt"');
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
   it("prepares a SessionAccessGrant using only SELECT authority", async () => {
     const statement = await captureRejectedQuery((repository, transaction) =>
       repository.prepareSessionAccessGrant(transaction, {
