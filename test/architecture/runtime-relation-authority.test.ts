@@ -33,6 +33,9 @@ describe("PostgreSQL runtime relation authority contract", () => {
       expect(implementation).toContain("SITE_PUBLICATION_ADMIN_SELECT_RELATIONS_SQL");
       expect(implementation).toContain("SITE_PUBLICATION_ADMIN_INSERT_RELATIONS_SQL");
       expect(implementation).toContain("SITE_PUBLICATION_ADMIN_UPDATE_RELATIONS_SQL");
+      expect(implementation).toContain("SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS_SQL");
+      expect(implementation).toContain("SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS_SQL");
+      expect(implementation).toContain("SITE_PUBLICATION_ADMISSION_UPDATE_RELATIONS_SQL");
     }
   });
 
@@ -56,12 +59,15 @@ describe("PostgreSQL runtime relation authority contract", () => {
       "site_release_candidate_authorization",
       "site_publication_revision",
       "site_release_producer_trust_revision",
-      "site_release_attestation_envelope",
-      "site_release_evidence_decision",
+      "site_release_checker_trust_revision",
+      "site_release_provenance_attestation",
+      "site_release_evidence_checker_decision",
     ]);
     expect(SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS).toEqual([
       "command_receipt",
       "site_publication_revision",
+      "site_release_provenance_attestation",
+      "site_release_evidence_checker_decision",
     ]);
     expect(SITE_PUBLICATION_ADMISSION_UPDATE_RELATIONS).toEqual(["command_receipt"]);
     expect(ADMISSION_INSERT_RELATIONS).toEqual(expect.arrayContaining(
@@ -82,8 +88,7 @@ describe("PostgreSQL runtime relation authority contract", () => {
       "site_web_build_intent_issuer_head",
       "site_web_build_intent_envelope",
       "site_release_producer_trust_revision",
-      "site_release_attestation_envelope",
-      "site_release_evidence_decision",
+      "site_release_certification_envelope",
     ]);
     expect(SITE_PUBLICATION_ADMIN_INSERT_RELATIONS).toEqual([
       "site_release_candidate_authority",

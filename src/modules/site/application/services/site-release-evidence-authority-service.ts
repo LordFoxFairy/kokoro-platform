@@ -2,10 +2,18 @@ import type { VerifiedRequestSecurityContext } from "../../../../shared/security
 import type { PlatformUnitOfWork } from "../../../../shared/unit-of-work/index.js";
 import type { SiteAuthorityJournal } from "../contracts/site-authority-ports.js";
 import type {
+  SiteReleaseEvidenceRecordRepositoryPort,
+  SiteReleaseEvidenceWorkloadRecord,
+} from "../contracts/site-release-evidence-records.js";
+import type {
   SitePublicationAuthorityRepository,
   SiteReleaseEvidenceAdmissionPort,
 } from "../contracts/site-publication-authority-ports.js";
-import { createSiteAuthorityCommand } from "../site-command.js";
+import type {
+  DetachedReleaseEvidenceAttestation,
+  SignedReleaseEvidenceDecision,
+} from "../../../../generated/proto/kokoro/platform/site/v1/site_publication_pb.js";
+import { assertDigest, canonicalCommandId } from "../../../../shared/outbox-inbox/receipt.js";
 import {
   admitSitePublicationNode,
   type CandidateAuthorityBinding,
@@ -23,10 +31,12 @@ export class SiteReleaseEvidenceAuthorityService {
     private readonly repository: SitePublicationAuthorityRepository,
     private readonly journal: SiteAuthorityJournal,
     private readonly evidence: SiteReleaseEvidenceAdmissionPort,
+    private readonly records: SiteReleaseEvidenceRecordRepositoryPort,
   ) {}
 
   recordEvidence(input: CommandInput & Readonly<{
     siteRef: string;
+    requestDigest: string;
     candidate: CandidateAuthorityBinding;
     compiledWebManifest: ImmutableRevisionBinding;
     webArtifactProvenance: ImmutableRevisionBinding;
@@ -35,13 +45,32 @@ export class SiteReleaseEvidenceAuthorityService {
     journeyEvidence: ImmutableRevisionBinding;
     securityEvidence: ImmutableRevisionBinding;
     producerIdentityRef: string;
+    producerRegistration: ImmutableRevisionBinding;
+    provenanceAttestation: DetachedReleaseEvidenceAttestation;
+    evidenceDecisions: readonly SignedReleaseEvidenceDecision[];
+    workload: SiteReleaseEvidenceWorkloadRecord;
     reason: string;
   }>, context: VerifiedRequestSecurityContext) {
-    workload(context, input.siteRef);
-    const command = createSiteAuthorityCommand("site.release-evidence.publish", input.siteRef,
-      input, context, effect(input));
+    workload(context, input);
+    const command = siteEvidenceCommand(input, context);
     return this.unitOfWork.execute({ context, operation: command.operation }, async (transaction) => {
       const disposition = await this.journal.begin(transaction, command);
+      await this.records.assertLiveWorkload(transaction, input.workload);
+      if (disposition === "replay") {
+        const replay = await this.records.loadReplay(transaction, {
+          commandId: command.commandId,
+          candidate: input.candidate,
+          siteRef: input.siteRef,
+          environment: input.workload.environment,
+          webArtifactDigest: input.webArtifactDigest,
+          artifactInspectionEvidence: input.artifactInspectionEvidence,
+          journeyEvidence: input.journeyEvidence,
+          securityEvidence: input.securityEvidence,
+        });
+        if (replay === null) throw new Error("SITE_PUBLICATION_NODE_REPLAY_CONFLICT");
+        return Object.freeze({ binding: replay.binding, siteRef: input.siteRef,
+          state: "published" as const, replayed: true });
+      }
       const candidate = await this.repository.loadCandidate(transaction, input.candidate.ref);
       if (candidate === null || candidate.siteRef !== input.siteRef) {
         throw new Error("SITE_PUBLICATION_CANDIDATE_NOT_FOUND");
@@ -49,7 +78,6 @@ export class SiteReleaseEvidenceAuthorityService {
       exactCandidate(candidate.binding, input.candidate);
       const existing = await this.repository.loadNode(transaction, "release-evidence",
         input.candidate.ref, input.candidate.version);
-      if (disposition === "replay") return nodeReplay(existing, input);
       if (existing !== null) throw new Error("SITE_PUBLICATION_RELEASE_EVIDENCE_ALREADY_EXISTS");
       const predecessors = await loadPredecessors(this.repository, transaction, input.candidate);
       const verified = await this.evidence.verify(transaction, { ...input, candidate, predecessors });
@@ -60,6 +88,30 @@ export class SiteReleaseEvidenceAuthorityService {
         predecessors,
       });
       await this.repository.insertNode(transaction, node, "workload-attested", command.commandId);
+      const record = Object.freeze({
+        requestDigest: command.requestDigest,
+        commandId: command.commandId,
+        admittedAt: verified.verifiedAt,
+        siteRef: input.siteRef,
+        environment: candidate.environment,
+        candidate: candidate.binding,
+        releaseEvidence: node.binding,
+        compiledWebManifest: input.compiledWebManifest,
+        provenance: input.webArtifactProvenance,
+        provenanceCanonicalPayload: verified.provenanceCanonicalPayload,
+        provenanceSignature: new Uint8Array(input.provenanceAttestation.signature),
+        webArtifactDigest: input.webArtifactDigest,
+        artifactInspectionEvidence: input.artifactInspectionEvidence,
+        journeyEvidence: input.journeyEvidence,
+        securityEvidence: input.securityEvidence,
+        producer: verified.producer,
+        workload: input.workload,
+        decisions: verified.decisions,
+      });
+      await this.records.insertProvenance(transaction, record);
+      for (const decision of verified.decisions) {
+        await this.records.insertDecision(transaction, record, decision);
+      }
       const receipt = { siteRef: input.siteRef, state: "published", replayed: false } as const;
       await this.journal.succeed(transaction, command, receipt, context);
       return Object.freeze({ binding: node.binding, ...receipt });
@@ -80,9 +132,18 @@ async function loadPredecessors(
     entry[1] !== null));
 }
 
-function workload(context: VerifiedRequestSecurityContext, siteRef: string): void {
+function workload(
+  context: VerifiedRequestSecurityContext,
+  input: Readonly<{ siteRef: string; workload: SiteReleaseEvidenceWorkloadRecord }>,
+): void {
   if (context.trustedCaller.kind !== "platform_worker" || context.actor.kind !== "workload" ||
-      context.target.siteId !== siteRef) throw new Error("SITE_PUBLICATION_ATTESTOR_SCOPE_REQUIRED");
+      context.target.siteId !== input.siteRef || input.workload.siteRef !== input.siteRef ||
+      input.workload.environment !== context.environment || input.workload.region !== context.region ||
+      input.workload.workloadIdentityRef !== context.trustedCaller.workloadIdentityId ||
+      input.workload.bindingEpoch.toString() !== context.trustedCaller.bindingEpoch ||
+      input.workload.workloadRevocationEpoch !== 0n) {
+    throw new Error("SITE_PUBLICATION_ATTESTOR_SCOPE_REQUIRED");
+  }
 }
 
 function exactCandidate(left: CandidateAuthorityBinding, right: CandidateAuthorityBinding): void {
@@ -92,16 +153,22 @@ function exactCandidate(left: CandidateAuthorityBinding, right: CandidateAuthori
   }
 }
 
-function nodeReplay(
-  existing: SitePublicationNode | null,
-  input: Readonly<{ siteRef: string }>,
+function siteEvidenceCommand(
+  input: Readonly<{ commandId: string; idempotencyKey: string; requestDigest: string; siteRef: string }>,
+  context: VerifiedRequestSecurityContext,
 ) {
-  if (existing === null) throw new Error("SITE_PUBLICATION_NODE_REPLAY_CONFLICT");
-  return Object.freeze({ binding: existing.binding, siteRef: input.siteRef,
-    state: "published" as const, replayed: true });
-}
-
-function effect(input: object): Readonly<Record<string, unknown>> {
-  return Object.freeze(Object.fromEntries(Object.entries(input).filter(([key]) =>
-    key !== "commandId" && key !== "idempotencyKey")));
+  assertDigest(input.requestDigest);
+  if (input.idempotencyKey.length < 16 || input.idempotencyKey.length > 256) {
+    throw new Error("SITE_IDEMPOTENCY_KEY_INVALID");
+  }
+  return Object.freeze({
+    commandId: canonicalCommandId(input.commandId),
+    idempotencyKey: input.idempotencyKey,
+    operation: "site.release-evidence.publish",
+    siteRef: input.siteRef,
+    callerIdentity: context.trustedCaller.workloadIdentityId,
+    environment: context.environment,
+    region: context.region,
+    requestDigest: input.requestDigest,
+  });
 }

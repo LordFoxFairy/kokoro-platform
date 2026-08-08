@@ -18,7 +18,6 @@ export class SiteReleaseEvidenceAdmission implements SiteReleaseEvidenceAdmissio
   constructor(
     private readonly documents: Pick<SitePublicationDocumentResolver, "resolve">,
     private readonly trust: SiteReleaseEvidenceTrustPort,
-    private readonly now: () => string = () => new Date().toISOString(),
   ) {}
 
   async verify(
@@ -67,13 +66,41 @@ export class SiteReleaseEvidenceAdmission implements SiteReleaseEvidenceAdmissio
     }
     const trust = await this.trust.verify(transaction, {
       candidate: input.candidate, producerIdentityRef: input.producerIdentityRef,
+      siteRef: input.candidate.siteRef,
+      producerRegistration: input.producerRegistration,
       provenanceBinding: input.webArtifactProvenance,
-      provenanceStatement: provenance.parsedDocument,
+      provenanceCanonicalBytes: provenance.canonicalBytes,
+      provenanceAttestation: input.provenanceAttestation,
       webArtifactDigest: input.webArtifactDigest,
       artifactInspectionEvidence: input.artifactInspectionEvidence,
       journeyEvidence: input.journeyEvidence,
       securityEvidence: input.securityEvidence,
+      evidenceDecisions: input.evidenceDecisions,
     });
+    const provenanceEnvelope = Object.freeze({
+      payloadType: input.provenanceAttestation.payloadType,
+      payloadDigest: provenance.digest,
+      keyId: input.provenanceAttestation.keyId,
+      keyVersion: input.provenanceAttestation.keyVersion.toString(),
+      signatureAlgorithm: "Ed25519",
+      signatureDigest: signatureDigest(input.provenanceAttestation.signature),
+      producerTrust: wireProducerTrust(trust.producer),
+    });
+    const decisions = trust.decisions.map((decision) => Object.freeze({
+      kind: decision.kind,
+      state: decision.state,
+      evidence: wire(decision.evidence),
+      payloadType: decision.signatureDomain,
+      payloadDigest: decision.payloadDigest,
+      signatureDigest: signatureDigest(decision.signature),
+      checkerTrust: wireCheckerTrust(decision),
+      envelopeDigest: canonicalDigest({
+        canonicalPayload: Buffer.from(decision.canonicalPayload).toString("base64"),
+        payloadDigest: decision.payloadDigest,
+        signature: Buffer.from(decision.signature).toString("base64"),
+        checkerTrust: wireCheckerTrust(decision),
+      }),
+    }));
     const document = Object.freeze({
       contract: "kokoro.site-release-evidence.v1", schemaRevision: "1",
       releaseEvidenceRef: evidenceRef(input.candidate.binding, input.webArtifactDigest), revision: "1",
@@ -84,16 +111,28 @@ export class SiteReleaseEvidenceAdmission implements SiteReleaseEvidenceAdmissio
       artifactInspectionEvidence: wire(input.artifactInspectionEvidence),
       journeyEvidence: wire(input.journeyEvidence), securityEvidence: wire(input.securityEvidence),
       producerIdentityRef: input.producerIdentityRef,
-      producerRegistration: wire(trust.producerRegistration), trustPolicy: wire(trust.trustPolicy),
-      signingKeyId: trust.signingKeyId, signingKeyVersion: trust.signingKeyVersion.toString(),
-      signatureAudience: trust.signatureAudience, verifiedAt: instant(this.now()),
+      producerTrust: wireProducerTrust(trust.producer),
+      provenanceAttestation: Object.freeze({
+        ...provenanceEnvelope,
+        envelopeDigest: canonicalDigest({
+          ...provenanceEnvelope,
+          signature: Buffer.from(input.provenanceAttestation.signature).toString("base64"),
+        }),
+      }),
+      evidenceDecisions: Object.freeze(decisions),
+      signatureSetDigest: canonicalDigest({
+        provenanceSignature: Buffer.from(input.provenanceAttestation.signature).toString("base64"),
+        decisionSignatures: decisions.map(({ kind, signatureDigest: value }) => ({ kind, value })),
+      }),
+      verifiedAt: instant(trust.verifiedAt),
     });
     const binding = Object.freeze({ ref: document.releaseEvidenceRef, revision: 1n,
       digest: canonicalDigest(document) });
     return Object.freeze({ binding, source: Object.freeze({
       canonicalBytes: Buffer.from(canonicalJson(document), "utf8"),
       parsedDocument: document, digest: binding.digest,
-    }) });
+    }), producer: trust.producer, decisions: trust.decisions, verifiedAt: trust.verifiedAt,
+    provenanceCanonicalPayload: provenance.canonicalBytes });
   }
 }
 
@@ -107,6 +146,35 @@ function wire(value: ImmutableRevisionBinding) {
 function wireCandidate(value: CandidateAuthorityBinding) {
   return Object.freeze({ ref: value.ref, version: value.version.toString(),
     authorizationEpoch: value.authorizationEpoch.toString(), digest: value.digest });
+}
+function wireProducerTrust(value: Awaited<ReturnType<SiteReleaseEvidenceTrustPort["verify"]>>["producer"]) {
+  return Object.freeze({
+    producerIdentityRef: value.producerIdentityRef, producerRole: value.producerRole,
+    producerRegistration: wire(value.producerRegistration),
+    producerRegistryEpoch: value.producerRegistryEpoch.toString(), trustPolicy: wire(value.trustPolicy),
+    trustPolicyEpoch: value.trustPolicyEpoch.toString(), signingKeyId: value.signingKeyId,
+    signingKeyVersion: value.signingKeyVersion.toString(),
+    signingKeyFingerprint: value.signingKeyFingerprint, signatureDomain: value.signatureDomain,
+    environment: value.environment, keyStatus: value.keyStatus, keyValidFrom: value.keyValidFrom,
+    keyValidUntil: value.keyValidUntil, configurationDigest: value.configurationDigest,
+  });
+}
+function wireCheckerTrust(value: Awaited<ReturnType<SiteReleaseEvidenceTrustPort["verify"]>>["decisions"][number]) {
+  return Object.freeze({
+    checkerIdentityRef: value.checkerIdentityRef, checkerRegistration: wire(value.checkerRegistration),
+    role: value.role, trustPolicy: wire(value.trustPolicy),
+    trustPolicyEpoch: value.trustPolicyEpoch.toString(), signingKeyId: value.signingKeyId,
+    signingKeyVersion: value.signingKeyVersion.toString(),
+    signingKeyFingerprint: value.signingKeyFingerprint, signatureDomain: value.signatureDomain,
+    environment: value.environment, keyStatus: value.keyStatus, keyValidFrom: value.keyValidFrom,
+    keyValidUntil: value.keyValidUntil, configurationDigest: value.configurationDigest,
+  });
+}
+function signatureDigest(value: Uint8Array): string {
+  if (!(value instanceof Uint8Array) || value.byteLength !== 64) {
+    throw new Error("SITE_EVIDENCE_SIGNATURE_INVALID");
+  }
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 function assertRevision(value: unknown, expected: ImmutableRevisionBinding): void {
   const actual = object(value);

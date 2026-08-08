@@ -68,7 +68,8 @@ export async function runSitePublicationAuthorityBootstrap(
     );
     const insertedCount = result.rows[0]?.insertedCount;
     const expected = authority.document.effectiveAccess.length +
-      authority.document.intentIssuers.length + authority.document.producerTrust.length;
+      authority.document.intentIssuers.length + authority.document.producerTrust.length +
+      authority.document.checkerTrust.length;
     if (!Number.isInteger(insertedCount) || insertedCount !== expected) {
       throw new Error("SITE_PUBLICATION_AUTHORITY_BOOTSTRAP_RESULT_INVALID");
     }

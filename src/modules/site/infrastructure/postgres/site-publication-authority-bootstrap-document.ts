@@ -60,21 +60,44 @@ const producerTrustSchema = z.object({
   trustPolicyEpoch: positiveDecimalSchema,
   signingKeyId: authorityReferenceSchema,
   signingKeyVersion: positiveDecimalSchema,
-  signatureAudience: z.enum([
-    "kokoro.web-artifact-provenance.v1",
-    "kokoro.site-release.activation.v1",
+  signatureDomain: z.enum([
+    "application/vnd.in-toto+json",
+    "application/vnd.kokoro.release-certification-instance.v1+json",
   ]),
   keyStatus: z.enum(["active", "revoked"]),
   keyValidFrom: canonicalInstantSchema,
   keyValidUntil: canonicalInstantSchema,
-  publicKeyPem: z.string().min(64).max(16_384),
-  publicKeyFingerprint: prefixedDigestSchema,
+  publicKeySpkiPem: z.string().min(64).max(16_384),
+  signingKeyFingerprint: prefixedDigestSchema,
 }).strict().superRefine((value, context) => {
-  const audience = value.producerRole === "web-artifact-provenance-attestor"
-    ? "kokoro.web-artifact-provenance.v1" : "kokoro.site-release.activation.v1";
-  if (value.signatureAudience !== audience || value.keyValidFrom >= value.keyValidUntil ||
-      !validPublicKey(value.publicKeyPem, value.publicKeyFingerprint)) {
+  const domain = value.producerRole === "web-artifact-provenance-attestor"
+    ? "application/vnd.in-toto+json"
+    : "application/vnd.kokoro.release-certification-instance.v1+json";
+  if (value.signatureDomain !== domain || value.keyValidFrom >= value.keyValidUntil ||
+      !validPublicKey(value.publicKeySpkiPem, value.signingKeyFingerprint)) {
     context.addIssue({ code: "custom", message: "producer trust tuple invalid" });
+  }
+});
+
+const checkerTrustSchema = z.object({
+  checkerIdentityRef: authorityReferenceSchema,
+  checkerRole: z.enum(["artifact-inspection", "journey", "security"]),
+  environment: environmentSchema,
+  checkerRegistration: wireRevisionBindingSchema,
+  trustPolicy: wireRevisionBindingSchema,
+  trustPolicyEpoch: positiveDecimalSchema,
+  signingKeyId: authorityReferenceSchema,
+  signingKeyVersion: positiveDecimalSchema,
+  signingKeyFingerprint: prefixedDigestSchema,
+  signatureDomain: z.literal("application/vnd.kokoro.release-evidence-decision.v1+json"),
+  keyStatus: z.enum(["active", "revoked"]),
+  keyValidFrom: canonicalInstantSchema,
+  keyValidUntil: canonicalInstantSchema,
+  publicKeySpkiPem: z.string().min(64).max(16_384),
+}).strict().superRefine((value, context) => {
+  if (value.keyValidFrom >= value.keyValidUntil ||
+      !validPublicKey(value.publicKeySpkiPem, value.signingKeyFingerprint)) {
+    context.addIssue({ code: "custom", message: "checker trust tuple invalid" });
   }
 });
 
@@ -83,6 +106,7 @@ const documentSchema = z.object({
   effectiveAccess: z.array(effectiveAccessSchema).min(1).max(512),
   intentIssuers: z.array(intentIssuerSchema).min(1).max(512),
   producerTrust: z.array(producerTrustSchema).min(2).max(512),
+  checkerTrust: z.array(checkerTrustSchema).min(3).max(512),
 }).strict().superRefine((value, context) => {
   const effectiveKeys = value.effectiveAccess.map((item) => [item.siteRef, item.environment,
     item.launchProductProfile.ref, item.launchProductProfile.revision,
@@ -90,7 +114,8 @@ const documentSchema = z.object({
   const issuerKeys = value.intentIssuers.map((item) => `${item.siteRef}\0${item.environment}`);
   const trustKeys = value.producerTrust.map((item) => [item.producerIdentityRef, item.producerRole,
     item.environment, item.signingKeyId, item.signingKeyVersion].join("\0"));
-  if (!unique(effectiveKeys) || !unique(issuerKeys) || !unique(trustKeys) ||
+  const checkerKeys = value.checkerTrust.map((item) => `${item.environment}\0${item.checkerRole}`);
+  if (!unique(effectiveKeys) || !unique(issuerKeys) || !unique(trustKeys) || !unique(checkerKeys) ||
       value.effectiveAccess.some((item) => !issuerKeys.includes(`${item.siteRef}\0${item.environment}`))) {
     context.addIssue({ code: "custom", message: "duplicate or missing authority head" });
   }
@@ -101,6 +126,17 @@ const documentSchema = z.object({
         !roles.has("release-certification-authority")) {
       context.addIssue({ code: "custom", message: "producer trust role missing" });
     }
+    const checkers = value.checkerTrust.filter((item) => item.environment === environment);
+    if (checkers.length !== 3 ||
+        new Set(checkers.map(({ checkerRole }) => checkerRole)).size !== 3 ||
+        new Set(checkers.map(({ checkerIdentityRef }) => checkerIdentityRef)).size !== 3 ||
+        new Set(checkers.map(({ signingKeyFingerprint }) => signingKeyFingerprint)).size !== 3) {
+      context.addIssue({ code: "custom", message: "checker trust set invalid" });
+    }
+  }
+  const producerEnvironments = new Set(value.producerTrust.map(({ environment }) => environment));
+  if (value.checkerTrust.some(({ environment }) => !producerEnvironments.has(environment))) {
+    context.addIssue({ code: "custom", message: "checker environment missing producer trust" });
   }
 });
 

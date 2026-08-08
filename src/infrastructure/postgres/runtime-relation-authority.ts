@@ -95,13 +95,16 @@ export const SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS = [
   "site_release_candidate_authorization",
   "site_publication_revision",
   "site_release_producer_trust_revision",
-  "site_release_attestation_envelope",
-  "site_release_evidence_decision",
+  "site_release_checker_trust_revision",
+  "site_release_provenance_attestation",
+  "site_release_evidence_checker_decision",
 ] as const;
 
 export const SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS = [
   "command_receipt",
   "site_publication_revision",
+  "site_release_provenance_attestation",
+  "site_release_evidence_checker_decision",
 ] as const;
 
 export const SITE_PUBLICATION_ADMISSION_UPDATE_RELATIONS = [
@@ -202,8 +205,7 @@ export const SITE_PUBLICATION_ADMIN_SELECT_RELATIONS = [
   "site_web_build_intent_issuer_head",
   "site_web_build_intent_envelope",
   "site_release_producer_trust_revision",
-  "site_release_attestation_envelope",
-  "site_release_evidence_decision",
+  "site_release_certification_envelope",
 ] as const;
 
 export const SITE_PUBLICATION_ADMIN_INSERT_RELATIONS = [

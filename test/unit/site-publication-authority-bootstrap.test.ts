@@ -50,7 +50,18 @@ describe("Site publication authority bootstrap", () => {
       })(),
       (() => {
         const value = validDocument();
-        value.producerTrust[0]!.publicKeyFingerprint = digestA;
+        value.producerTrust[0]!.signingKeyFingerprint = digestA;
+        return value;
+      })(),
+      (() => {
+        const value = validDocument();
+        value.checkerTrust[1]!.checkerIdentityRef = value.checkerTrust[0]!.checkerIdentityRef;
+        return value;
+      })(),
+      (() => {
+        const value = validDocument();
+        value.checkerTrust[2]!.signingKeyFingerprint =
+          value.checkerTrust[0]!.signingKeyFingerprint;
         return value;
       })(),
     ];
@@ -114,12 +125,8 @@ function validDocument() {
     publicKeyFingerprint: digestA, keyValidFrom: "2026-07-01T00:00:00.000Z",
     keyValidUntil: "2027-07-01T00:00:00.000Z",
   };
-  const { publicKey } = generateKeyPairSync("ed25519");
-  const publicKeyPem = publicKey.export({ format: "pem", type: "spki" }).toString();
-  const publicKeyFingerprint = `sha256:${createHash("sha256")
-    .update(publicKey.export({ format: "der", type: "spki" })).digest("hex")}`;
   const trust = (role: "web-artifact-provenance-attestor" |
-  "release-certification-authority") => ({
+  "release-certification-authority") => ({ ...keyMaterial(),
     producerIdentityRef: role === "web-artifact-provenance-attestor"
       ? "producer.web-attestor" : "producer.release-certifier",
     producerRole: role, environment: "production",
@@ -129,10 +136,21 @@ function validDocument() {
     signingKeyId: role === "web-artifact-provenance-attestor"
       ? "key.web-attestor" : "key.release-certifier",
     signingKeyVersion: "1",
-    signatureAudience: role === "web-artifact-provenance-attestor"
-      ? "kokoro.web-artifact-provenance.v1" : "kokoro.site-release.activation.v1",
+    signatureDomain: role === "web-artifact-provenance-attestor"
+      ? "application/vnd.in-toto+json" as const
+      : "application/vnd.kokoro.release-certification-instance.v1+json" as const,
     keyStatus: "active" as const, keyValidFrom: "2026-07-01T00:00:00.000Z",
-    keyValidUntil: "2027-07-01T00:00:00.000Z", publicKeyPem, publicKeyFingerprint,
+    keyValidUntil: "2027-07-01T00:00:00.000Z",
+  });
+  const checker = (role: "artifact-inspection" | "journey" | "security") => ({
+    ...keyMaterial(), checkerIdentityRef: `checker.${role}`, checkerRole: role,
+    environment: "production" as const,
+    checkerRegistration: binding(`checker.registration.${role}`, "1", digestA),
+    trustPolicy: binding(`checker.trust.${role}`, "1", digestA), trustPolicyEpoch: "1",
+    signingKeyId: `key.checker.${role}`, signingKeyVersion: "1",
+    signatureDomain: "application/vnd.kokoro.release-evidence-decision.v1+json" as const,
+    keyStatus: "active" as const, keyValidFrom: "2026-07-01T00:00:00.000Z",
+    keyValidUntil: "2027-07-01T00:00:00.000Z",
   });
   return {
     version: 1 as const,
@@ -145,6 +163,16 @@ function validDocument() {
     intentIssuers: [authority],
     producerTrust: [trust("web-artifact-provenance-attestor"),
       trust("release-certification-authority")],
+    checkerTrust: [checker("artifact-inspection"), checker("journey"), checker("security")],
+  };
+}
+
+function keyMaterial() {
+  const { publicKey } = generateKeyPairSync("ed25519");
+  return {
+    publicKeySpkiPem: publicKey.export({ format: "pem", type: "spki" }).toString(),
+    signingKeyFingerprint: `sha256:${createHash("sha256")
+      .update(publicKey.export({ format: "der", type: "spki" })).digest("hex")}`,
   };
 }
 

@@ -1,4 +1,5 @@
 import { create } from "@bufbuild/protobuf";
+import { createValidator } from "@bufbuild/protovalidate";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError, type HandlerContext, type ServiceImpl } from "@connectrpc/connect";
 import {
@@ -14,6 +15,7 @@ import {
 } from "../../../../generated/proto/kokoro/platform/publication/v1/publication_common_pb.js";
 import {
   SiteEvidenceAdmissionService as SiteEvidenceAdmissionDescriptor,
+  RecordReleaseEvidenceRequestSchema,
   type AttestedReleaseEvidenceContext,
 } from "../../../../generated/proto/kokoro/platform/site/v1/site_publication_pb.js";
 import {
@@ -21,12 +23,14 @@ import {
   type VerifiedReleaseEvidenceWorkloadAxes,
 } from "../../../../generated/contracts/platform-site-evidence-admission@v1/digest.js";
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
-import type { ControlCommandReceiptTimestampReader } from
-  "../../../admin/infrastructure/postgres/control-command-receipt-reader.js";
+import type { SiteReleaseEvidenceWorkloadRecord } from
+  "../../application/contracts/site-release-evidence-records.js";
 import type { SiteReleaseEvidenceAuthorityService } from
   "../../application/services/site-release-evidence-authority-service.js";
 import type { CandidateAuthorityBinding, ImmutableRevisionBinding } from
   "../../domain/site-publication-authority.js";
+import type { ControlCommandReceiptTimestampReader } from
+  "../../../admin/infrastructure/postgres/control-command-receipt-reader.js";
 
 export type SiteEvidenceAdmissionConnectService = ServiceImpl<typeof SiteEvidenceAdmissionDescriptor>;
 
@@ -39,6 +43,7 @@ export interface SiteEvidenceAdmissionResolver {
   ): Promise<Readonly<{
     context: VerifiedRequestSecurityContext;
     axes: VerifiedReleaseEvidenceWorkloadAxes;
+    workload: SiteReleaseEvidenceWorkloadRecord;
   }>>;
 }
 
@@ -49,6 +54,9 @@ export function createSiteEvidenceAdmissionConnectService(input: Readonly<{
 }>): SiteEvidenceAdmissionConnectService {
   return {
     async recordReleaseEvidence(request, transport) {
+      if (createValidator().validate(RecordReleaseEvidenceRequestSchema, request).kind !== "valid") {
+        throw new ConnectError("SITE_EVIDENCE_REQUEST_INVALID", Code.InvalidArgument);
+      }
       const claimed = required(request.context, "SITE_EVIDENCE_CONTEXT_REQUIRED");
       const effect = required(request.effect, "SITE_EVIDENCE_EFFECT_REQUIRED");
       const candidate = required(effect.candidate, "SITE_EVIDENCE_CANDIDATE_REQUIRED");
@@ -68,18 +76,20 @@ export function createSiteEvidenceAdmissionConnectService(input: Readonly<{
         throw new ConnectError("SITE_EVIDENCE_WORKLOAD_SCOPE_REQUIRED", Code.PermissionDenied);
       }
       const identity = required(claimed.command, "SITE_EVIDENCE_COMMAND_REQUIRED");
+      const verifiedRequestDigest = recordReleaseEvidenceRequestDigest(
+        claimed,
+        request.siteId,
+        effect,
+        verified.axes,
+      );
       if (identity.digestAlgorithm !== CommandDigestAlgorithmV2.SHA256_COMMAND_ENVELOPE ||
-          identity.requestDigest !== recordReleaseEvidenceRequestDigest(
-            claimed,
-            request.siteId,
-            effect,
-            verified.axes,
-          )) {
+          identity.requestDigest !== verifiedRequestDigest) {
         throw new ConnectError("SITE_EVIDENCE_REQUEST_DIGEST_MISMATCH", Code.InvalidArgument);
       }
       const result = await input.owner.recordEvidence({
         commandId: identity.commandId,
         idempotencyKey: identity.idempotencyKey,
+        requestDigest: verifiedRequestDigest,
         siteRef: request.siteId,
         candidate: candidateBinding(candidate),
         compiledWebManifest: revision(manifest),
@@ -89,6 +99,12 @@ export function createSiteEvidenceAdmissionConnectService(input: Readonly<{
         journeyEvidence: revision(journey),
         securityEvidence: revision(security),
         producerIdentityRef: claimed.producerIdentityRef,
+        producerRegistration: revision(required(claimed.producerRegistration,
+          "SITE_EVIDENCE_PRODUCER_REGISTRATION_REQUIRED")),
+        provenanceAttestation: required(effect.provenanceAttestation,
+          "SITE_EVIDENCE_PROVENANCE_ATTESTATION_REQUIRED"),
+        evidenceDecisions: effect.evidenceDecisions,
+        workload: verified.workload,
         reason: effect.reason,
       }, verified.context);
       const recordedAt = canonicalDate(await input.receipts.read(verified.context, {

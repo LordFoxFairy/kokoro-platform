@@ -12,6 +12,14 @@ import type {
   SiteWebBuildIntentDsseEnvelope,
   SITE_WEB_BUILD_INTENT_PAYLOAD_TYPE,
 } from "../../domain/site-web-build-intent-dsse.js";
+import type {
+  DetachedReleaseEvidenceAttestation,
+  SignedReleaseEvidenceDecision,
+} from "../../../../generated/proto/kokoro/platform/site/v1/site_publication_pb.js";
+import type {
+  SiteReleaseProducerTrust,
+  VerifiedSiteReleaseEvidenceDecision,
+} from "./site-release-evidence-trust.js";
 
 export interface SiteWebBuildIntentSigningKeyBinding {
   readonly keyId: string;
@@ -135,8 +143,18 @@ export interface SiteReleaseEvidenceAdmissionPort {
       securityEvidence: ImmutableRevisionBinding;
       predecessors: Readonly<Partial<Record<SitePublicationNodeKind, SitePublicationNode>>>;
       producerIdentityRef: string;
+      producerRegistration: ImmutableRevisionBinding;
+      provenanceAttestation: DetachedReleaseEvidenceAttestation;
+      evidenceDecisions: readonly SignedReleaseEvidenceDecision[];
     }>,
-  ): Promise<Readonly<{ binding: ImmutableRevisionBinding; source: ResolvedCanonicalDocument }>>;
+  ): Promise<Readonly<{
+    binding: ImmutableRevisionBinding;
+    source: ResolvedCanonicalDocument;
+    producer: SiteReleaseProducerTrust;
+    decisions: readonly VerifiedSiteReleaseEvidenceDecision[];
+    verifiedAt: string;
+    provenanceCanonicalPayload: Uint8Array;
+  }>>;
 }
 
 export interface SiteReleaseCertificationAdmissionPort {

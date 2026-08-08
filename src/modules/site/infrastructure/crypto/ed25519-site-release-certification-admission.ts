@@ -37,10 +37,10 @@ implements SiteReleaseCertificationAdmissionPort {
       producerIdentityRef,
     });
     if (document.environment !== input.candidate.environment || trust.environment !== input.candidate.environment ||
-        trust.signatureAudience !== "kokoro.site-release.activation.v1" || trust.keyStatus !== "active" ||
-        producer.signatureAudience !== trust.signatureAudience || producer.environment !== trust.environment ||
+        trust.signatureDomain !== payloadType || trust.keyStatus !== "active" ||
+        producer.signatureAudience !== "kokoro.site-release.activation.v1" || producer.environment !== trust.environment ||
         producer.keyId !== trust.keyId || decimal(producer.keyVersion) !== trust.keyVersion ||
-        producer.publicKeyFingerprint !== trust.publicKeyFingerprint) {
+        producer.publicKeyFingerprint !== trust.signingKeyFingerprint) {
       throw new Error("SITE_CERTIFICATION_PRODUCER_NOT_AUTHORIZED");
     }
     exactDigestRef(producer.producerRegistry, trust.producerRegistration);
@@ -57,13 +57,13 @@ implements SiteReleaseCertificationAdmissionPort {
         now >= instant(text(document.validUntil)) || decimal(document.certificationRevocationEpoch) !== 0n) {
       throw new Error("SITE_CERTIFICATION_NOT_LIVE");
     }
-    const key = createPublicKey(trust.publicKeyPem);
+    const key = createPublicKey(trust.publicKeySpkiPem);
     if (key.asymmetricKeyType !== "ed25519") throw new Error("SITE_CERTIFICATION_KEY_INVALID");
     const fingerprint = `sha256:${createHash("sha256").update(key.export({
       format: "der",
       type: "spki",
     })).digest("hex")}`;
-    if (fingerprint !== trust.publicKeyFingerprint ||
+    if (fingerprint !== trust.signingKeyFingerprint ||
         !verify(null, pae(Buffer.from(canonicalJson(verified.parsedDocument), "utf8")), key,
           trust.detachedSignature)) {
       throw new Error("SITE_CERTIFICATION_SIGNATURE_INVALID");

@@ -2279,6 +2279,10 @@ async function grantFoundationPrivileges(
     await client.query(
       `REVOKE ALL ON FUNCTION platform.bootstrap_admin_authorities(JSONB, CHAR(64)), platform.apply_admin_authority_change(UUID, JSONB) FROM ${identifier}`,
     );
+    await client.query(
+      `REVOKE ALL ON FUNCTION platform.site_evidence_resolver_role_is_current(), ` +
+        `platform.site_evidence_owner_role_is_current() FROM ${identifier}`,
+    );
     if (role === apiRole) {
       await client.query(
         `GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${AUTHORIZATION_TABLES}, ${IDENTITY_TABLES}, ${COMMERCE_TABLES}, ${ASSET_API_TABLES}, platform.site, platform.site_release TO ${identifier}`,
@@ -2363,6 +2367,10 @@ async function grantFoundationPrivileges(
         `GRANT EXECUTE ON FUNCTION ${ADMISSION_EXECUTION_ROOT_ROUTINES.join(", ")} TO ${identifier}`,
       );
       await client.query(
+        `GRANT EXECUTE ON FUNCTION platform.site_evidence_resolver_role_is_current(), ` +
+          `platform.site_evidence_owner_role_is_current() TO ${identifier}`,
+      );
+      await client.query(
         `GRANT SELECT ON TABLE ${SITE_PUBLICATION_ADMISSION_SELECT_TABLES} TO ${identifier}`,
       );
       await client.query(
@@ -2382,6 +2390,10 @@ async function grantFoundationPrivileges(
         `GRANT EXECUTE ON FUNCTION platform.lock_authorization_snapshot_watermark() TO ${identifier}`,
       );
     } else {
+      await client.query(
+        `GRANT EXECUTE ON FUNCTION platform.site_evidence_resolver_role_is_current(), ` +
+          `platform.site_evidence_owner_role_is_current() TO ${identifier}`,
+      );
       await client.query(
         `GRANT SELECT ON TABLE platform.command_receipt, platform.outbox_event, ${ADMISSION_RUNTIME_SNAPSHOT_TABLES}, ${AUTHORIZATION_TABLES}, ${SITE_TABLES} TO ${identifier}`,
       );
@@ -3339,6 +3351,10 @@ const POST_MIGRATION_AUTHORITY_SQL = `
              AND publication_relation.relname=ANY(ARRAY[${SITE_PUBLICATION_ADMIN_SELECT_RELATIONS_SQL}]))
            = cardinality(ARRAY[${SITE_PUBLICATION_ADMIN_SELECT_RELATIONS_SQL}])
          AND CASE WHEN runtime_role.rolname=$4 THEN
+           has_function_privilege(runtime_role.rolname,
+             'platform.site_evidence_resolver_role_is_current()','EXECUTE') AND
+           has_function_privilege(runtime_role.rolname,
+             'platform.site_evidence_owner_role_is_current()','EXECUTE') AND
            NOT EXISTS (
              SELECT 1 FROM pg_class publication_relation
              WHERE publication_relation.relnamespace=platform_schema.oid
@@ -3376,6 +3392,10 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  publication_column.attnum,'UPDATE')
            )
          WHEN runtime_role.rolname=$5 THEN
+           has_function_privilege(runtime_role.rolname,
+             'platform.site_evidence_resolver_role_is_current()','EXECUTE') AND
+           has_function_privilege(runtime_role.rolname,
+             'platform.site_evidence_owner_role_is_current()','EXECUTE') AND
            (SELECT count(*) FROM pg_class publication_relation
              WHERE publication_relation.relnamespace=platform_schema.oid
                AND publication_relation.relname=ANY(ARRAY[${SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS_SQL}]))
@@ -3455,7 +3475,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'site_release_model_catalog_publication',
                'site_release_model_catalog_surface','site_release_model_catalog_option'
                ,${PRODUCT_CATALOG_ADMIN_RELATIONS_SQL},
-               ${SITE_PUBLICATION_ADMIN_SELECT_RELATIONS_SQL}
+               ${SITE_PUBLICATION_ADMIN_SELECT_RELATIONS_SQL},
+               ${SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS_SQL}
                ,'identity_account','identity_password_credential','identity_login_identifier',
                'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
                'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
@@ -3521,7 +3542,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                'site_release_model_catalog_publication',
                'site_release_model_catalog_surface','site_release_model_catalog_option',
                ${PRODUCT_CATALOG_ADMIN_RELATIONS_SQL},
-               ${SITE_PUBLICATION_ADMIN_SELECT_RELATIONS_SQL}
+               ${SITE_PUBLICATION_ADMIN_SELECT_RELATIONS_SQL},
+               ${SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS_SQL}
                ,'identity_account','identity_password_credential','identity_login_identifier',
                'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
                'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
@@ -3574,7 +3596,10 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  (runtime_role.rolname=$5 AND (
                    has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
                    OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT')
-                 ) AND candidate.relname <> ALL(ARRAY[${ADMISSION_SELECT_RELATIONS_SQL}]))
+                 ) AND candidate.relname <> ALL(ARRAY[
+                   ${ADMISSION_SELECT_RELATIONS_SQL},
+                   ${SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS_SQL}
+                 ]))
                  OR
                  ((has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')
                    OR has_any_column_privilege(runtime_role.rolname,candidate.oid,'SELECT'))
@@ -3655,6 +3680,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                    ]))
                    OR (runtime_role.rolname = $5 AND
                      candidate.relname=ANY(ARRAY[${ADMISSION_INSERT_RELATIONS_SQL}]))
+                   OR (runtime_role.rolname = $5 AND
+                     candidate.relname=ANY(ARRAY[${SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS_SQL}]))
                    OR (runtime_role.rolname = $2 AND candidate.relname = ANY(ARRAY['authorization_scoped_snapshot','authorization_scoped_snapshot_record']))
                    OR (runtime_role.rolname = $1 AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
                    OR (runtime_role.rolname = $3 AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_INSERT_RELATIONS_SQL}]))
@@ -3686,6 +3713,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                    ]))
                    OR (runtime_role.rolname = $5 AND
                      candidate.relname=ANY(ARRAY[${ADMISSION_UPDATE_RELATIONS_SQL}]))
+                   OR (runtime_role.rolname = $5 AND
+                     candidate.relname=ANY(ARRAY[${SITE_PUBLICATION_ADMISSION_UPDATE_RELATIONS_SQL}]))
                    OR (runtime_role.rolname = $1 AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
                    OR (runtime_role.rolname = $3 AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_UPDATE_RELATIONS_SQL}]))
                    OR (runtime_role.rolname = $3 AND candidate.relname = ANY(ARRAY[
@@ -3729,6 +3758,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                    ]))
                    OR (runtime_role.rolname = $5 AND
                      candidate.relname=ANY(ARRAY[${ADMISSION_INSERT_RELATIONS_SQL}]))
+                   OR (runtime_role.rolname = $5 AND
+                     candidate.relname=ANY(ARRAY[${SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS_SQL}]))
                    OR (runtime_role.rolname = $2 AND candidate.relname = ANY(ARRAY['authorization_scoped_snapshot','authorization_scoped_snapshot_record']))
                    OR (runtime_role.rolname = $1 AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
                    OR (runtime_role.rolname = $3 AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_INSERT_RELATIONS_SQL}]))
@@ -3760,6 +3791,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                    ]))
                    OR (runtime_role.rolname = $5 AND
                      candidate.relname=ANY(ARRAY[${ADMISSION_UPDATE_RELATIONS_SQL}]))
+                   OR (runtime_role.rolname = $5 AND
+                     candidate.relname=ANY(ARRAY[${SITE_PUBLICATION_ADMISSION_UPDATE_RELATIONS_SQL}]))
                    OR (runtime_role.rolname = $1 AND candidate.relname=ANY(ARRAY[${ASSET_API_MUTABLE_RELATIONS_SQL}]))
                    OR (runtime_role.rolname = $3 AND candidate.relname=ANY(ARRAY[${ASSET_WORKER_UPDATE_RELATIONS_SQL}]))
                    OR (runtime_role.rolname = $3 AND candidate.relname = ANY(ARRAY[
@@ -3799,7 +3832,9 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  to_regprocedure('platform.publish_site_release_model_catalog(uuid,jsonb,text)'),
                  to_regprocedure('platform.valid_credit_scope_policy(jsonb)'),
                  to_regprocedure('platform.commerce_safe_label_is_valid(text)'),
-                 to_regprocedure('platform.commerce_iana_zone_is_valid(text)')
+                 to_regprocedure('platform.commerce_iana_zone_is_valid(text)'),
+                 to_regprocedure('platform.site_evidence_resolver_role_is_current()'),
+                 to_regprocedure('platform.site_evidence_owner_role_is_current()')
                ]))
                OR (runtime_role.rolname = $1 AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.resolve_model_candidates(text,text,text)'),
@@ -3822,6 +3857,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  to_regprocedure('platform.admission_role_identity_is_active()'),
                  to_regprocedure('platform.begin_admission_transaction(text)'),
                  to_regprocedure('platform.admission_role_identity_is_current()'),
+                 to_regprocedure('platform.site_evidence_resolver_role_is_current()'),
+                 to_regprocedure('platform.site_evidence_owner_role_is_current()'),
                  to_regprocedure('platform.record_admission_verified_terminal_evidence(text,text,text,text,text,text,text,character)'),
                  to_regprocedure('platform.find_execution_root_closure(text,jsonb,text,character)'),
                  to_regprocedure('platform.lock_execution_root_closure(text,jsonb,text,uuid,uuid,uuid,uuid,uuid,text,bigint,bigint,bigint,numeric,text)'),

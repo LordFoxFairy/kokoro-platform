@@ -154,40 +154,45 @@ describe("PostgreSQL Site publication authorities", () => {
     }
   });
 
-  it("joins an admitted provenance envelope to its exact producer trust and decisions", async () => {
-    const rows = [trustRow({
-      subjectRef: "provenance.alpha", subjectRevision: "1", subjectDigest: digestA,
+  it("resolves producer and exactly three checker keys only from static sealed trust", async () => {
+    const producerRows = [producerTrustRow({
       producerRole: "web-artifact-provenance-attestor",
-      signatureAudience: "kokoro.web-artifact-provenance.v1",
-      detachedSignature: new Uint8Array([1, 2, 3]),
-      evidenceDecisions: [
-        decision("inspection.alpha", digestA),
-        decision("journey.alpha", digestB),
-        decision("security.alpha", digestC),
-      ],
+      signatureDomain: "application/vnd.in-toto+json",
     })];
-    const sql = new ReadSql([rows]);
+    const checkerRows = [checkerTrustRow("artifact-inspection", "a"),
+      checkerTrustRow("journey", "b"), checkerTrustRow("security", "c")];
+    const sql = new ReadSql([producerRows, checkerRows]);
     const lease = issuePlatformTransaction(sql);
     try {
-      const result = await new PostgresSiteReleaseEvidenceTrustAuthority().resolve(
+      const authority = new PostgresSiteReleaseEvidenceTrustAuthority();
+      const result = await authority.resolveProducer(
         lease.transaction,
         {
           producerIdentityRef: "producer.web-attestor",
-          provenanceBinding: binding("provenance.alpha", 1n, digestA),
-          artifactInspectionEvidence: binding("inspection.alpha", 1n, digestA),
-          journeyEvidence: binding("journey.alpha", 1n, digestB),
-          securityEvidence: binding("security.alpha", 1n, digestC),
+          environment: "production",
+          producerRegistration: binding("producer.registration.main", 1n, digestA),
+          signingKeyId: "key.web-attestor",
+          signingKeyVersion: 2n,
         },
       );
       expect(result).toMatchObject({
         producerIdentityRef: "producer.web-attestor",
         producerRole: "web-artifact-provenance-attestor",
         signingKeyId: "key.web-attestor", signingKeyVersion: 2n,
-        detachedSignature: new Uint8Array([1, 2, 3]),
+        signatureDomain: "application/vnd.in-toto+json",
+        configurationDigest: "9".repeat(64),
       });
-      expect(result.evidenceDecisions).toHaveLength(3);
-      expect(sql.statements[0]).toContain("platform.site_release_attestation_envelope");
       expect(sql.statements[0]).toContain("platform.site_release_producer_trust_revision");
+      expect(sql.statements[0]).not.toContain("site_release_provenance_attestation");
+      await expect(authority.resolveCheckers(lease.transaction, {
+        environment: "production",
+      })).resolves.toMatchObject([
+        { role: "artifact-inspection", checkerIdentityRef: "checker.artifact-inspection" },
+        { role: "journey", checkerIdentityRef: "checker.journey" },
+        { role: "security", checkerIdentityRef: "checker.security" },
+      ]);
+      expect(sql.statements[1]).toContain("platform.site_release_checker_trust_revision");
+      expect(sql.statements[1]).not.toContain("site_release_evidence_checker_decision");
       expect(sql.statements[0]).not.toMatch(/\bFOR (?:SHARE|UPDATE)\b/u);
     } finally {
       revokePlatformTransaction(lease);
@@ -195,12 +200,10 @@ describe("PostgreSQL Site publication authorities", () => {
   });
 
   it("resolves certification trust only from its exact admitted envelope", async () => {
-    const sql = new ReadSql([[trustRow({
-      subjectRef: "certification.alpha", subjectRevision: "3", subjectDigest: digestB,
+    const sql = new ReadSql([[producerTrustRow({
       producerRole: "release-certification-authority",
-      signatureAudience: "kokoro.site-release.activation.v1",
+      signatureDomain: "application/vnd.kokoro.release-certification-instance.v1+json",
       detachedSignature: new Uint8Array([9, 8, 7]),
-      evidenceDecisions: [],
     })]]);
     const lease = issuePlatformTransaction(sql);
     try {
@@ -214,9 +217,14 @@ describe("PostgreSQL Site publication authorities", () => {
         producerRegistration: { ref: "producer.registration.main", digest: digestA, epoch: 4n },
         trustPolicy: { ref: "trust.policy.main", digest: digestB, epoch: 9n },
         keyId: "key.web-attestor", keyVersion: 2n,
-        signatureAudience: "kokoro.site-release.activation.v1",
+        signatureDomain: "application/vnd.kokoro.release-certification-instance.v1+json",
         detachedSignature: new Uint8Array([9, 8, 7]),
       });
+      expect(sql.statements[0]).toContain("platform.site_release_certification_envelope");
+      expect(sql.statements[0]).toContain(
+        "trust.configuration_digest=envelope.producer_configuration_digest",
+      );
+      expect(sql.statements[0]).not.toContain("site_release_provenance_attestation");
     } finally {
       revokePlatformTransaction(lease);
     }
@@ -327,17 +335,10 @@ function binding(ref: string, revision: bigint, digest: string) {
 function domainBinding(value: ReturnType<typeof wireBinding>) {
   return { ...value, revision: BigInt(value.revision) };
 }
-function decision(ref: string, digest: string) {
-  return { binding: wireBinding(ref, "1", digest), decision: "passed" };
-}
-function trustRow(input: Readonly<{
-  subjectRef: string;
-  subjectRevision: string;
-  subjectDigest: string;
+function producerTrustRow(input: Readonly<{
   producerRole: string;
-  signatureAudience: string;
-  detachedSignature: Uint8Array;
-  evidenceDecisions: readonly unknown[];
+  signatureDomain: string;
+  detachedSignature?: Uint8Array;
 }>) {
   return {
     ...input,
@@ -356,7 +357,23 @@ function trustRow(input: Readonly<{
     keyStatus: "active",
     keyValidFrom: "2026-07-01T00:00:00.000Z",
     keyValidUntil: "2026-09-01T00:00:00.000Z",
-    publicKeyPem,
-    publicKeyFingerprint: digestC,
+    publicKeySpkiPem: publicKeyPem,
+    signingKeyFingerprint: digestC,
+    configurationDigest: "9".repeat(64),
+  };
+}
+
+function checkerTrustRow(role: string, character: string) {
+  return {
+    environment: "production", checkerRole: role, checkerIdentityRef: `checker.${role}`,
+    checkerRegistrationRef: `registration.${role}`, checkerRegistrationRevision: "1",
+    checkerRegistrationDigest: digestA, trustPolicyRef: `trust.${role}`,
+    trustPolicyRevision: "2", trustPolicyDigest: digestB, trustPolicyEpoch: "3",
+    signingKeyId: `key.${role}`, signingKeyVersion: "4",
+    signingKeyFingerprint: `sha256:${character.repeat(64)}`,
+    signatureDomain: "application/vnd.kokoro.release-evidence-decision.v1+json",
+    keyStatus: "active", keyValidFrom: "2026-07-01T00:00:00.000Z",
+    keyValidUntil: "2026-09-01T00:00:00.000Z", publicKeySpkiPem: publicKeyPem,
+    configurationDigest: "8".repeat(64),
   };
 }

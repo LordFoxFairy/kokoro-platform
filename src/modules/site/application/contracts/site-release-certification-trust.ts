@@ -10,12 +10,12 @@ export interface SiteReleaseCertificationTrustAuthorityPort {
     trustPolicy: Readonly<{ ref: string; digest: string; epoch: bigint }>;
     keyId: string;
     keyVersion: bigint;
-    publicKeyPem: string;
-    publicKeyFingerprint: string;
+    publicKeySpkiPem: string;
+    signingKeyFingerprint: string;
     keyStatus: "active" | "revoked";
     keyValidFrom: string;
     keyValidUntil: string;
-    signatureAudience: "kokoro.site-release.activation.v1";
+    signatureDomain: "application/vnd.kokoro.release-certification-instance.v1+json";
     environment: string;
     detachedSignature: Uint8Array;
   }>>;

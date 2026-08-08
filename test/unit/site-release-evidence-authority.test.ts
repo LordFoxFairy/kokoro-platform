@@ -44,13 +44,22 @@ const intent: SitePublicationNode = Object.freeze({
 
 describe("SiteReleaseEvidenceAuthorityService", () => {
   it("owns only the workload-attested evidence transaction", async () => {
+    const events: string[] = [];
     const inserted = vi.fn();
     const repository = {
-      loadCandidate: async () => candidate,
-      loadNode: async (_transaction: unknown, kind: string) =>
-        kind === "web-build-intent" ? intent : null,
-      insertNode: inserted,
+      loadCandidate: async () => { events.push("candidate"); return candidate; },
+      loadNode: async (_transaction: unknown, kind: string) => {
+        events.push(`node:${kind}`);
+        return kind === "web-build-intent" ? intent : null;
+      },
+      insertNode: async (...args: unknown[]) => { events.push("insert:node"); inserted(...args); },
     } as never;
+    const records = {
+      assertLiveWorkload: async () => { events.push("live"); },
+      insertProvenance: async () => { events.push("insert:provenance"); },
+      insertDecision: async () => { events.push("insert:decision"); },
+      loadReplay: async () => null,
+    };
     const evidenceBinding = revision("release-evidence.alpha");
     const evidenceDocument = Object.freeze({
       contract: "kokoro.site-release-evidence.v1",
@@ -68,17 +77,23 @@ describe("SiteReleaseEvidenceAuthorityService", () => {
     const service = new SiteReleaseEvidenceAuthorityService(
       unitOfWork(),
       repository,
-      { begin: async () => "fresh", succeed: async () => undefined },
-      { verify: async () => ({ binding, source: {
+      { begin: async (_transaction, command) => {
+        events.push(`journal.begin:${command.requestDigest}`); return "fresh";
+      }, succeed: async () => { events.push("journal.succeed"); } },
+      { verify: async () => { events.push("verify"); return { binding, source: {
         parsedDocument: evidenceDocument,
         canonicalBytes: Buffer.from(canonicalJson(evidenceDocument)),
         digest: binding.digest,
-      } }) },
+      }, producer: producerTrust(), decisions: decisionRecords(),
+      verifiedAt: "2026-08-02T12:00:00.000Z",
+      provenanceCanonicalPayload: new TextEncoder().encode("{}") }; } },
+      records as never,
     );
 
-    await expect(service.recordEvidence({
+    const result = await service.recordEvidence({
       commandId: "018f1212-1212-7212-8212-121212121212",
       idempotencyKey: "site-evidence-idempotency-0001",
+      requestDigest: "b".repeat(64),
       siteRef: candidate.siteRef,
       candidate: candidateBinding,
       compiledWebManifest: revision("manifest.alpha"),
@@ -88,12 +103,20 @@ describe("SiteReleaseEvidenceAuthorityService", () => {
       journeyEvidence: revision("journey.alpha"),
       securityEvidence: revision("security.alpha"),
       producerIdentityRef: "producer.web-attestor",
+      producerRegistration: revision("producer-registration.alpha"),
+      provenanceAttestation: { payloadType: "application/vnd.in-toto+json",
+        keyId: "key.producer", keyVersion: 1n, signatureAlgorithm: 1,
+        signature: new Uint8Array(64) } as never,
+      evidenceDecisions: [] as never,
+      workload: workloadRecord(),
       reason: "record verified release evidence",
-    }, await context())).resolves.toMatchObject({
+    }, await context());
+    expect(result).toMatchObject({
       binding,
       state: "published",
       replayed: false,
     });
+    expect(result).not.toHaveProperty("recordedAt");
     expect(inserted).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ kind: "release-evidence", binding }),
@@ -102,6 +125,30 @@ describe("SiteReleaseEvidenceAuthorityService", () => {
     );
     expect("publishRelease" in service).toBe(false);
     expect("authorizeCandidate" in service).toBe(false);
+    expect(events[0]).toBe(`journal.begin:${"b".repeat(64)}`);
+    expect(events.indexOf("insert:node")).toBeLessThan(events.indexOf("insert:provenance"));
+    expect(events.filter((event) => event === "insert:decision")).toHaveLength(3);
+    expect(events.at(-1)).toBe("journal.succeed");
+  });
+
+  it("replays only a complete one-node one-provenance three-decision commit without writes", async () => {
+    const writes = vi.fn();
+    const replayBinding = revision("release-evidence.alpha");
+    const service = new SiteReleaseEvidenceAuthorityService(
+      unitOfWork(),
+      { loadCandidate: async () => candidate, loadNode: async () => intent,
+        insertNode: writes } as never,
+      { begin: async () => "replay", succeed: writes } as never,
+      { verify: writes } as never,
+      { assertLiveWorkload: async () => undefined,
+        loadReplay: async () => ({ binding: replayBinding,
+          recordedAt: "2026-08-02T11:59:59.000Z" }),
+        insertProvenance: writes, insertDecision: writes } as never,
+    );
+    const result = await service.recordEvidence(commandInput(), await context());
+    expect(result).toMatchObject({ binding: replayBinding, replayed: true });
+    expect(result).not.toHaveProperty("recordedAt");
+    expect(writes).not.toHaveBeenCalled();
   });
 });
 
@@ -184,4 +231,59 @@ function wire(value: ImmutableRevisionBinding) {
 function wireCandidate(value: CandidateAuthorityBinding) {
   return Object.freeze({ ref: value.ref, version: value.version.toString(),
     authorizationEpoch: value.authorizationEpoch.toString(), digest: value.digest });
+}
+
+function commandInput() {
+  return {
+    commandId: "018f1212-1212-7212-8212-121212121212",
+    idempotencyKey: "site-evidence-idempotency-0001", requestDigest: "b".repeat(64),
+    siteRef: candidate.siteRef, candidate: candidateBinding,
+    compiledWebManifest: revision("manifest.alpha"),
+    webArtifactProvenance: revision("provenance.alpha"), webArtifactDigest: digest,
+    artifactInspectionEvidence: revision("inspection.alpha"),
+    journeyEvidence: revision("journey.alpha"), securityEvidence: revision("security.alpha"),
+    producerIdentityRef: "producer.web-attestor",
+    producerRegistration: revision("producer-registration.alpha"),
+    provenanceAttestation: { payloadType: "application/vnd.in-toto+json",
+      keyId: "key.producer", keyVersion: 1n, signatureAlgorithm: 1,
+      signature: new Uint8Array(64) } as never,
+    evidenceDecisions: [] as never, workload: workloadRecord(),
+    reason: "record verified release evidence",
+  };
+}
+
+function workloadRecord() {
+  return Object.freeze({ siteProjectBindingRef: "binding.alpha",
+    workloadIdentityRef: "spiffe://kokoro/site-evidence-attestor", siteRef: candidate.siteRef,
+    environment: "production", region: "us-east-1", bindingEpoch: 7n,
+    workloadAttestation: revision("workload-attestation.alpha"), workloadRevocationEpoch: 0n,
+    liveRead: revision("live-read.alpha"), observedAt: "2026-08-02T11:59:59.000Z",
+    validUntil: "2026-08-02T12:00:05.000Z" });
+}
+
+function producerTrust() {
+  return { producerIdentityRef: "producer.web-attestor",
+    producerRole: "web-artifact-provenance-attestor" as const,
+    producerRegistration: revision("producer-registration.alpha"), producerRegistryEpoch: 1n,
+    trustPolicy: revision("trust.producer"), trustPolicyEpoch: 1n,
+    signingKeyId: "key.producer", signingKeyVersion: 1n, signingKeyFingerprint: digest,
+    signatureDomain: "application/vnd.in-toto+json" as const, environment: "production",
+    keyStatus: "active" as const, keyValidFrom: "2026-08-01T00:00:00.000Z",
+    keyValidUntil: "2026-08-03T00:00:00.000Z", publicKeySpkiPem: "public-key",
+    configurationDigest: "a".repeat(64) };
+}
+
+function decisionRecords() {
+  return (["artifact-inspection", "journey", "security"] as const).map((kind) => ({
+    environment: "production", role: kind, kind, checkerIdentityRef: `checker.${kind}`,
+    checkerRegistration: revision(`registration.${kind}`), trustPolicy: revision(`trust.${kind}`),
+    trustPolicyEpoch: 1n, signingKeyId: `key.${kind}`, signingKeyVersion: 1n,
+    signingKeyFingerprint: digest,
+    signatureDomain: "application/vnd.kokoro.release-evidence-decision.v1+json" as const,
+    keyStatus: "active" as const, keyValidFrom: "2026-08-01T00:00:00.000Z",
+    keyValidUntil: "2026-08-03T00:00:00.000Z", publicKeySpkiPem: "public-key",
+    configurationDigest: "a".repeat(64), state: "passed" as const,
+    evidence: revision(`${kind}.evidence`), canonicalPayload: new Uint8Array([1]),
+    payloadDigest: digest, signature: new Uint8Array(64),
+  }));
 }

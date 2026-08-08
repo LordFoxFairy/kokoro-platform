@@ -292,6 +292,7 @@ export type AssetDataPlaneOperation =
 export type PlatformInternalOperation =
   | "admission.command"
   | "site.evidence.authorize"
+  | "site.evidence.record"
   | "capability.projection"
   | "asset.eligibility.check-active"
   | "asset.eligibility.resolve"
@@ -567,6 +568,7 @@ export function createPlatformDatabaseClient(
         config.role === "admission"
           ? operation === "admission.command" ||
             operation === "site.evidence.authorize" ||
+            operation === "site.evidence.record" ||
             operation === "capability.projection" ||
             operation === "asset.eligibility.check-active" ||
             operation === "asset.eligibility.resolve"
@@ -2005,6 +2007,10 @@ const RUNTIME_IDENTITY_SQL = `
              AND publication_relation.relname=ANY(ARRAY[${SITE_PUBLICATION_ADMIN_SELECT_RELATIONS_SQL}]))
            = cardinality(ARRAY[${SITE_PUBLICATION_ADMIN_SELECT_RELATIONS_SQL}])
          AND CASE WHEN $2='admin' THEN
+           has_function_privilege(current_user,
+             'platform.site_evidence_resolver_role_is_current()','EXECUTE') AND
+           has_function_privilege(current_user,
+             'platform.site_evidence_owner_role_is_current()','EXECUTE') AND
            NOT EXISTS (
              SELECT 1 FROM pg_class publication_relation
              WHERE publication_relation.relnamespace=platform_schema.oid
@@ -2042,6 +2048,10 @@ const RUNTIME_IDENTITY_SQL = `
                  publication_column.attnum,'UPDATE')
            )
          WHEN $2='admission' THEN
+           has_function_privilege(current_user,
+             'platform.site_evidence_resolver_role_is_current()','EXECUTE') AND
+           has_function_privilege(current_user,
+             'platform.site_evidence_owner_role_is_current()','EXECUTE') AND
            (SELECT count(*) FROM pg_class publication_relation
              WHERE publication_relation.relnamespace=platform_schema.oid
                AND publication_relation.relname=ANY(ARRAY[${SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS_SQL}]))
@@ -2116,7 +2126,8 @@ const RUNTIME_IDENTITY_SQL = `
                'site_release_model_catalog_publication',
                'site_release_model_catalog_surface','site_release_model_catalog_option',
                ${PRODUCT_CATALOG_ADMIN_RELATIONS_SQL},
-               ${SITE_PUBLICATION_ADMIN_SELECT_RELATIONS_SQL}
+               ${SITE_PUBLICATION_ADMIN_SELECT_RELATIONS_SQL},
+               ${SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS_SQL}
                ,'identity_account','identity_password_credential','identity_login_identifier',
                'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
                'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
@@ -2177,7 +2188,8 @@ const RUNTIME_IDENTITY_SQL = `
                'site_release_model_catalog_publication',
                'site_release_model_catalog_surface','site_release_model_catalog_option',
                ${PRODUCT_CATALOG_ADMIN_RELATIONS_SQL},
-               ${SITE_PUBLICATION_ADMIN_SELECT_RELATIONS_SQL}
+               ${SITE_PUBLICATION_ADMIN_SELECT_RELATIONS_SQL},
+               ${SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS_SQL}
                ,'identity_account','identity_password_credential','identity_login_identifier',
                'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
                'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
@@ -2473,7 +2485,9 @@ const RUNTIME_IDENTITY_SQL = `
                  to_regprocedure('platform.publish_site_release_model_catalog(uuid,jsonb,text)'),
                  to_regprocedure('platform.valid_credit_scope_policy(jsonb)'),
                  to_regprocedure('platform.commerce_safe_label_is_valid(text)'),
-                 to_regprocedure('platform.commerce_iana_zone_is_valid(text)')
+                 to_regprocedure('platform.commerce_iana_zone_is_valid(text)'),
+                 to_regprocedure('platform.site_evidence_resolver_role_is_current()'),
+                 to_regprocedure('platform.site_evidence_owner_role_is_current()')
                ]))
                OR ($2 = 'api' AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.resolve_model_candidates(text,text,text)'),
@@ -2496,6 +2510,8 @@ const RUNTIME_IDENTITY_SQL = `
                  to_regprocedure('platform.admission_role_identity_is_active()'),
                  to_regprocedure('platform.begin_admission_transaction(text)'),
                  to_regprocedure('platform.admission_role_identity_is_current()'),
+                 to_regprocedure('platform.site_evidence_resolver_role_is_current()'),
+                 to_regprocedure('platform.site_evidence_owner_role_is_current()'),
                  to_regprocedure('platform.record_admission_verified_terminal_evidence(text,text,text,text,text,text,text,character)'),
                  to_regprocedure('platform.find_execution_root_closure(text,jsonb,text,character)'),
                  to_regprocedure('platform.lock_execution_root_closure(text,jsonb,text,uuid,uuid,uuid,uuid,uuid,text,bigint,bigint,bigint,numeric,text)'),

@@ -189,7 +189,20 @@ implements SiteEvidenceAdmissionResolver {
         workloadAuthorizationValidUntil: claimed.workloadAuthorizationValidUntil!,
         authoritativeNow: timestampFromDate(now),
       });
-      return Object.freeze({ context, axes });
+      const workload = Object.freeze({
+        siteProjectBindingRef: peer.siteProjectBindingRef,
+        workloadIdentityRef: peer.workloadIdentityRef,
+        siteRef: peer.siteRef,
+        environment: peer.environment,
+        region: peer.region,
+        bindingEpoch: row.bindingEpoch,
+        workloadAttestation: peer.workloadAttestation,
+        workloadRevocationEpoch: 0n,
+        liveRead,
+        observedAt: observedAt.toISOString(),
+        validUntil: validUntil.toISOString(),
+      });
+      return Object.freeze({ context, axes, workload });
     });
   }
 }

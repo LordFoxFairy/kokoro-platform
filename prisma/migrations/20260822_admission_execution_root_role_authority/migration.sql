@@ -112,7 +112,7 @@ AS $function$
 DECLARE current_epoch BIGINT;
 BEGIN
   IF p_operation IS NULL OR p_operation NOT IN (
-    'admission.command','site.evidence.authorize','capability.projection',
+    'admission.command','site.evidence.authorize','site.evidence.record','capability.projection',
     'asset.eligibility.check-active','asset.eligibility.resolve'
   ) THEN
     RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='PLATFORM_ADMISSION_OPERATION_INVALID';
@@ -155,7 +155,7 @@ AS $function$
       AND runtime_role.rolname=SESSION_USER
       AND current_setting('app.workload_kind',true)='platform_admission'
       AND current_setting('app.operation',true) IN (
-        'admission.command','site.evidence.authorize','capability.projection',
+        'admission.command','site.evidence.authorize','site.evidence.record','capability.projection',
         'asset.eligibility.check-active','asset.eligibility.resolve'
       )
       AND current_setting('app.admission_lease_epoch',true)=authority.lease_epoch::TEXT
