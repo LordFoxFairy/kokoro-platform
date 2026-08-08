@@ -29,6 +29,23 @@ AS $function$
 $function$;
 REVOKE ALL ON FUNCTION platform.admission_role_identity_is_current() FROM PUBLIC;
 
+DROP POLICY admission_media_access_scope
+  ON platform.admission_media_access_authorization;
+CREATE POLICY admission_media_access_scope
+  ON platform.admission_media_access_authorization
+  USING (
+    platform.admission_role_identity_is_current()
+    AND current_setting('app.operation',true)='admission.command'
+    AND current_setting('app.workload_kind',true)='platform_admission'
+    AND site_id=NULLIF(current_setting('app.site_id',true),'')
+  )
+  WITH CHECK (
+    platform.admission_role_identity_is_current()
+    AND current_setting('app.operation',true)='admission.command'
+    AND current_setting('app.workload_kind',true)='platform_admission'
+    AND site_id=NULLIF(current_setting('app.site_id',true),'')
+  );
+
 DROP POLICY credit_execution_root_closure_definer
   ON platform.credit_execution_root_closure_receipt;
 CREATE POLICY credit_execution_root_closure_definer

@@ -1017,6 +1017,66 @@ describe("Platform PostgreSQL foundation", () => {
     }
   });
 
+  it("lets the exact leased Admission role reserve media access only inside its site fence", async () => {
+    const suffix = randomUUID();
+    const siteRef = `admission-media-site-${suffix}`;
+    const bootstrap = new Client({ connectionString: bootstrapDatabaseUrl });
+    const admission = new Client({ connectionString: admissionDatabaseUrl });
+    await Promise.all([bootstrap.connect(), admission.connect()]);
+    try {
+      await bootstrap.query("BEGIN");
+      await bootstrap.query("SELECT set_config('app.site_id',$1,true)", [siteRef]);
+      await bootstrap.query(
+        "INSERT INTO platform.site(site_ref,site_key,state) VALUES ($1,$2,'preview_ready')",
+        [siteRef, `admission-media-${suffix.slice(0, 20)}`],
+      );
+      await bootstrap.query("COMMIT");
+
+      const reserve = (commandId: string, digestSeed: string) => admission.query(
+        `INSERT INTO platform.admission_media_access_authorization
+           (handle_digest,site_id,project_ref,session_id,run_id,command_id,request_digest,
+            configuration_revision_id,subject_ref,subject_generation,projection_reservation_digest,
+            reservation_receipt_ref,input_policy_decision_ref,expires_at,state)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,1,$10,$11,$12,$13::timestamptz,'reserved')`,
+        [digestSeed.repeat(64), siteRef, `project-${suffix}`, `session-${suffix}`, `run-${suffix}`,
+          commandId, "c".repeat(64), `configuration-${suffix}`, `subject-${suffix}`,
+          "b".repeat(64), `reservation-receipt-${suffix}`, `policy-${suffix}`,
+          new Date(Date.now() + 60_000).toISOString()],
+      );
+
+      await admission.query("BEGIN");
+      await admission.query(
+        `SELECT set_config('app.operation','admission.command',true),
+                set_config('app.workload_kind','platform_admission',true),
+                set_config('app.site_id',$1,true)`,
+        [siteRef],
+      );
+      await expect(reserve(`media-command-${suffix}`, "a")).resolves.toMatchObject({ rowCount: 1 });
+      await admission.query("ROLLBACK");
+
+      await admission.query("BEGIN");
+      await admission.query(
+        `SELECT set_config('app.operation','admission.command',true),
+                set_config('app.workload_kind','platform_admission',true),
+                set_config('app.site_id',$1,true)`,
+        [`foreign-${siteRef}`],
+      );
+      await expect(reserve(`foreign-media-command-${suffix}`, "d"))
+        .rejects.toMatchObject({ code: "42501" });
+      await admission.query("ROLLBACK");
+    } finally {
+      await admission.query("ROLLBACK").catch(() => undefined);
+      await bootstrap.query("ROLLBACK").catch(() => undefined);
+      await bootstrap.query("BEGIN").catch(() => undefined);
+      await bootstrap.query("SELECT set_config('app.site_id',$1,true)", [siteRef])
+        .catch(() => undefined);
+      await bootstrap.query("DELETE FROM platform.site WHERE site_ref=$1", [siteRef])
+        .catch(() => undefined);
+      await bootstrap.query("COMMIT").catch(() => undefined);
+      await Promise.allSettled([admission.end(), bootstrap.end()]);
+    }
+  });
+
   it("rejects a Media execution-root proof presented by the Admission database role", async () => {
     const admission = new Client({ connectionString: admissionDatabaseUrl });
     await admission.connect();

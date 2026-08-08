@@ -33,6 +33,10 @@ const workerDatabase = readFileSync(new URL(
   "../../src/modules/media/infrastructure/postgres/media-image-worker-database.ts",
   import.meta.url,
 ), "utf8");
+const admissionRoleAuthorityMigration = readFileSync(new URL(
+  "../../prisma/migrations/20260822_admission_execution_root_role_authority/migration.sql",
+  import.meta.url,
+), "utf8");
 
 describe("Media/Artifact image vertical database boundary", () => {
   it("uses encrypted-only canonical input persistence", () => {
@@ -72,6 +76,27 @@ describe("Media/Artifact image vertical database boundary", () => {
     );
     expect(migration).toContain("CREATE POLICY media_operation_runtime_definer");
     expect(migration).toContain("REVOKE CREATE ON SCHEMA platform FROM platform_media_public,platform_media_runtime,platform_media_worker");
+  });
+
+  it("binds media-access reservation to the exact leased Admission role and site context", () => {
+    expect(admissionRoleAuthorityMigration).toContain(
+      "DROP POLICY admission_media_access_scope\n  ON platform.admission_media_access_authorization",
+    );
+    expect(admissionRoleAuthorityMigration).toContain(
+      "CREATE POLICY admission_media_access_scope\n  ON platform.admission_media_access_authorization",
+    );
+    expect(admissionRoleAuthorityMigration).toContain(
+      "platform.admission_role_identity_is_current()",
+    );
+    expect(admissionRoleAuthorityMigration).toContain(
+      "current_setting('app.operation',true)='admission.command'",
+    );
+    expect(admissionRoleAuthorityMigration).toContain(
+      "current_setting('app.workload_kind',true)='platform_admission'",
+    );
+    expect(admissionRoleAuthorityMigration).toContain(
+      "site_id=NULLIF(current_setting('app.site_id',true),'')",
+    );
   });
 
   it("keeps both submit adapters function-only", () => {
