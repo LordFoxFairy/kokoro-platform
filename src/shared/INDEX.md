@@ -7,6 +7,12 @@ owners:
 
 # Shared Platform kernel
 
+`deployment-environment.ts` owns the sole deployment-stage vocabulary: `development`, `preview`, `staging`, and
+`production`. Domain models, application ports, transports, and workload registries import its type and predicate; they must not
+declare local environment unions, allowlists, or parser branches. Database `CHECK` constraints are persistence projections of the
+same vocabulary, updated in the same change and guarded by the shared vocabulary test; SQL consumers must not introduce a second
+environment list or alias set.
+
 `unit-of-work/` owns the opaque transaction capability. Application code may import only its public `index.ts`; the issuing,
 resolving, and revocation functions are internal to PostgreSQL/owner adapters. A capability is valid only during one database
 callback and is revoked in `finally` after commit or rollback.
