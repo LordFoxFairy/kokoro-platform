@@ -2,10 +2,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { createModelGatewayCreditFixtureResult } from
-  "../fixtures/model-gateway-litellm-credit-runtime.js";
+  "../fixtures/model-gateway-credit-runtime.js";
 
 const fixtureSource = readFileSync(new URL(
-  "../fixtures/model-gateway-litellm-credit-runtime.ts",
+  "../fixtures/model-gateway-credit-runtime.ts",
   import.meta.url,
 ), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
@@ -18,9 +18,9 @@ function liteLlmConfig(name: string): Record<string, unknown> {
   return config as Record<string, unknown>;
 }
 
-describe("Model Gateway to LiteLLM Credit runtime fixture", () => {
+describe("Model Gateway Credit production runtime fixture", () => {
   it("exports a bounded private handoff for an Agent-owned Gateway probe", async () => {
-    const fixtureModule = await import("../fixtures/model-gateway-litellm-credit-runtime.js");
+    const fixtureModule = await import("../fixtures/model-gateway-credit-runtime.js");
     const createServerResult = (fixtureModule as unknown as Record<string, unknown>)
       .createModelGatewayCreditServerResult;
     const startServer = (fixtureModule as unknown as Record<string, unknown>)
@@ -46,7 +46,7 @@ describe("Model Gateway to LiteLLM Credit runtime fixture", () => {
     };
     expect(createServerResult(valid)).toEqual({
       schemaVersion: 1,
-      kind: "model-gateway-litellm-credit-server",
+      kind: "model-gateway-credit-server",
       ...valid,
     });
     expect(() => createServerResult({ ...valid, baseUrl: "http://127.0.0.1:43901" }))
@@ -66,7 +66,7 @@ describe("Model Gateway to LiteLLM Credit runtime fixture", () => {
     } as const;
     expect(createModelGatewayCreditFixtureResult(valid)).toEqual({
       schemaVersion: 1,
-      kind: "model-gateway-litellm-credit-runtime",
+      kind: "model-gateway-credit-runtime",
       ...valid,
     });
     for (const flag of ["firstCompleted", "replayCompleted", "replayAttached", "sameInvocation"] as const) {
@@ -87,9 +87,10 @@ describe("Model Gateway to LiteLLM Credit runtime fixture", () => {
     expect(fixtureSource).toContain('"genpkey", "-algorithm", "RSA"');
     expect(fixtureSource).not.toContain('"genrsa"');
     expect(fixtureSource).not.toMatch(/(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+platform\./iu);
-    expect(packageJson.scripts["fixture:model-gateway-litellm-credit-runtime"]).toBe(
-      "tsx test/fixtures/model-gateway-litellm-credit-runtime.ts",
+    expect(packageJson.scripts["fixture:model-gateway-credit-runtime"]).toBe(
+      "tsx test/fixtures/model-gateway-credit-runtime.ts",
     );
+    expect(packageJson.scripts).not.toHaveProperty("fixture:model-gateway-litellm-credit-runtime");
   });
 
   it("uses fixed debug stages without dynamic startup data", () => {

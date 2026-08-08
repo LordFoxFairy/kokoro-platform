@@ -157,41 +157,45 @@ export async function loadModelGatewayProviderRouter(
   timeoutMs: number,
   readPrivate: PrivateFileReader = readBoundedPrivateFile,
 ): Promise<ModelGatewayProviderRouter> {
-  const litellmEndpoint = environment.PLATFORM_MODEL_GATEWAY_LITELLM_ENDPOINT;
-  const litellmKeyFile = environment.PLATFORM_MODEL_GATEWAY_LITELLM_API_KEY_FILE;
   const directEndpoint = environment.PLATFORM_MODEL_GATEWAY_DIRECT_ENDPOINT;
   const directKeyFile = environment.PLATFORM_MODEL_GATEWAY_DIRECT_API_KEY_FILE;
-  const litellmConfigured = completeAdapterConfiguration(
-    [litellmEndpoint, litellmKeyFile],
-    "PLATFORM_MODEL_GATEWAY_LITELLM_CONFIG_INVALID",
-  );
   const directConfigured = completeAdapterConfiguration(
     [directEndpoint, directKeyFile],
     "PLATFORM_MODEL_GATEWAY_DIRECT_CONFIG_INVALID",
   );
-  if (!litellmConfigured && !directConfigured) {
-    throw new Error("PLATFORM_MODEL_GATEWAY_PROVIDER_ADAPTER_REQUIRED");
+  if (!directConfigured || directEndpoint === undefined || directKeyFile === undefined) {
+    throw new Error("PLATFORM_MODEL_GATEWAY_DIRECT_CONFIG_REQUIRED");
   }
+  const litellmEndpoint = environment.PLATFORM_MODEL_GATEWAY_LITELLM_ENDPOINT;
+  const litellmKeyFile = environment.PLATFORM_MODEL_GATEWAY_LITELLM_API_KEY_FILE;
+  const litellmConfigured = completeAdapterConfiguration(
+    [litellmEndpoint, litellmKeyFile],
+    "PLATFORM_MODEL_GATEWAY_LITELLM_CONFIG_INVALID",
+  );
 
   const adapters: {
     litellm?: LiteLlmChatAdapter;
-    direct?: DirectOpenAiChatAdapter;
-  } = {};
+    direct: DirectOpenAiChatAdapter;
+  } = {
+    direct: new DirectOpenAiChatAdapter({
+      endpoint: directEndpoint,
+      apiKey: secretLine(
+        await readPrivate(directKeyFile, 8 * 1024,
+          "PLATFORM_MODEL_GATEWAY_DIRECT_API_KEY_FILE_INVALID"),
+        "PLATFORM_MODEL_GATEWAY_DIRECT_API_KEY_FILE_INVALID",
+      ),
+      timeoutMs,
+    }),
+  };
   if (litellmConfigured) {
-    const key = await readPrivate(litellmKeyFile!, 8 * 1024,
+    if (litellmEndpoint === undefined || litellmKeyFile === undefined) {
+      throw new Error("PLATFORM_MODEL_GATEWAY_LITELLM_CONFIG_INVALID");
+    }
+    const key = await readPrivate(litellmKeyFile, 8 * 1024,
       "PLATFORM_MODEL_GATEWAY_LITELLM_API_KEY_FILE_INVALID");
     adapters.litellm = new LiteLlmChatAdapter({
-      endpoint: litellmEndpoint!,
+      endpoint: litellmEndpoint,
       apiKey: secretLine(key, "PLATFORM_MODEL_GATEWAY_LITELLM_API_KEY_FILE_INVALID"),
-      timeoutMs,
-    });
-  }
-  if (directConfigured) {
-    const key = await readPrivate(directKeyFile!, 8 * 1024,
-      "PLATFORM_MODEL_GATEWAY_DIRECT_API_KEY_FILE_INVALID");
-    adapters.direct = new DirectOpenAiChatAdapter({
-      endpoint: directEndpoint!,
-      apiKey: secretLine(key, "PLATFORM_MODEL_GATEWAY_DIRECT_API_KEY_FILE_INVALID"),
       timeoutMs,
     });
   }

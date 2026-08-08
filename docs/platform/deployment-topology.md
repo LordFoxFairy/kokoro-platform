@@ -43,12 +43,13 @@ authorization admission and the pending-to-terminal stream audit; the login has 
 the SDK credential chain and integrity/identity fences. Its HTTPS product listener and pod-only HTTP health listener are separate
 so kubelet never receives a Site BFF client key.
 
-`platform-model-gateway` defaults to one Direct OpenAI-compatible HTTPS `/v1` adapter. Compose passes
+`platform-model-gateway` requires one Direct OpenAI-compatible HTTPS `/v1` adapter on every production start. Compose passes
 `PLATFORM_MODEL_GATEWAY_DIRECT_ENDPOINT` and mounts `PLATFORM_MODEL_GATEWAY_SECRET_DIRECTORY` read-only at
 `/run/secrets/platform-model-gateway`; that directory contains the server TLS identity, client CA, exact inbound peer registry,
 response key ring, and `direct-api-key`. LiteLLM is not part of this default composition. Model Control publishes the exact
 `direct | litellm` adapter, Gateway alias, and provider model; a selected adapter that is not explicitly configured fails before
-provider I/O and is never substituted with another adapter.
+provider I/O and is never substituted with another adapter. LiteLLM is available only when its endpoint and key-file pair are both
+explicitly configured; that optional pair never replaces the Direct endpoint and key.
 
 ## Docker Compose
 
@@ -97,8 +98,8 @@ docker compose -f deploy/docker-compose.services.yml up -d
 only the Service objects required by the environment. TLS files, peer registries, OIDC clients,
 keyrings, provider credentials, and database URLs belong in managed Secrets.
 
-For `platform-model-gateway`, `platform-model-gateway-secrets` supplies the Direct endpoint and all
-file references by default. The matching file Secret contains `server.key`, `server.crt`,
+For `platform-model-gateway`, `platform-model-gateway-secrets` must supply the Direct endpoint and all
+file references. The matching file Secret contains `server.key`, `server.crt`,
 `client-ca.crt`, `inbound-peers.json`, `response-key-ring.json`, and `direct-api-key`. An optional
 LiteLLM rollout must add its own endpoint, key file and trusted CA explicitly; it does not replace or
 implicitly fall back to Direct.

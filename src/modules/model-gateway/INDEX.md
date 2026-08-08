@@ -53,8 +53,9 @@ The production listener is private HTTP/2 ConnectRPC over TLS 1.3 mutual authent
 fingerprint/SPIFFE allowlist. Only the configured GA SPIFFE identity may invoke the RPC. Trusted provider reconciliation remains an
 internal application/worker path; it is deliberately not caller-accessible. It can finalize only an existing `outcome_unknown`
 invocation at the same Credit fence and never redispatches the provider effect. Startup requires a dedicated database identity,
-bounded owner-only response key ring, TLS files, peer registry, and endpoint plus owner-only key file for every configured provider
-adapter. At least one adapter must be configured completely. Health, readiness and drain are process-owned; shutdown stops
+bounded owner-only response key ring, TLS files, peer registry, and a complete Direct endpoint/key pair on every production start.
+LiteLLM is installed only when its endpoint and key file are both explicitly present; a partial pair fails startup, and it never
+replaces the required Direct baseline. Health, readiness and drain are process-owned; shutdown stops
 admission, waits to a deadline, then aborts in-flight work.
 
 Admission mints the opaque authorization handle, places it inside the sealed RunRequest and binds it into the execution-manifest

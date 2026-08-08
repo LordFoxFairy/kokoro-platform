@@ -17,7 +17,7 @@
     "model-option:materialize": "tsx scripts/model-control/materialize-options.mts",
     "model-option:publish-site-release": "tsx scripts/model-control/publish-site-release-catalog.mts",
     "fixture:web-chat-credit-runtime": "tsx test/fixtures/web-chat-credit-runtime.ts",
-    "fixture:model-gateway-litellm-credit-runtime": "tsx test/fixtures/model-gateway-litellm-credit-runtime.ts",
+    "fixture:model-gateway-credit-runtime": "tsx test/fixtures/model-gateway-credit-runtime.ts",
     "contract:verify-generated": "node scripts/contract/verify-generated-contracts.mjs .",
     "check:production-source-boundary": "node scripts/contract/check-production-source-boundary.mjs .",
     "clean:runtime": "node scripts/build/clean-runtime-output.mjs .",

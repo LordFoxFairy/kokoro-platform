@@ -357,10 +357,12 @@ deployables:
     runtimeTraffic: false
     inboundContracts: []
     declaredInboundContracts: [platform-model-gateway-connect-v1]
-    outboundContracts: [litellm-openai-chat-completions, platform-model-gateway-reconciliation-https]
+    outboundContracts:
+      [direct-openai-chat-completions, litellm-openai-chat-completions,
+       platform-model-gateway-reconciliation-https]
     secretClasses:
       [platform-model-gateway-database, mtls-server, mtls-peer-registry,
-       model-gateway-response-keyring, litellm-api-key]
+       model-gateway-response-keyring, direct-api-key, litellm-api-key]
     audience: platform-model-gateway
     scalingKey: provider-request-concurrency
     readiness: /health/ready

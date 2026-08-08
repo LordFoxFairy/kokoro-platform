@@ -30,7 +30,7 @@ type StartupStage = "configuration-valid" | "trust-ready" | "composition-ready" 
 
 export type ModelGatewayCreditFixtureResult = Readonly<{
   schemaVersion: 1;
-  kind: "model-gateway-litellm-credit-runtime";
+  kind: "model-gateway-credit-runtime";
   firstCompleted: boolean;
   replayCompleted: boolean;
   replayAttached: boolean;
@@ -41,7 +41,7 @@ export type ModelGatewayCreditFixtureResult = Readonly<{
 
 export type ModelGatewayCreditServerResult = Readonly<{
   schemaVersion: 1;
-  kind: "model-gateway-litellm-credit-server";
+  kind: "model-gateway-credit-server";
   baseUrl: string;
   serverName: "localhost";
   certificateAuthorityFile: string;
@@ -81,7 +81,7 @@ export function createModelGatewayCreditServerResult(
   }
   return Object.freeze({
     schemaVersion: 1,
-    kind: "model-gateway-litellm-credit-server",
+    kind: "model-gateway-credit-server",
     ...input,
   });
 }
@@ -96,7 +96,7 @@ export function createModelGatewayCreditFixtureResult(input: ResultFields): Mode
   }
   return Object.freeze({
     schemaVersion: 1,
-    kind: "model-gateway-litellm-credit-runtime",
+    kind: "model-gateway-credit-runtime",
     ...input,
   });
 }

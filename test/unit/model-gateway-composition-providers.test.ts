@@ -20,20 +20,16 @@ describe("Model Gateway provider composition", () => {
     expect(reads).toEqual(["/private/direct-key"]);
   });
 
-  it("starts with a LiteLLM adapter and no Direct configuration", async () => {
+  it("rejects LiteLLM-only production configuration before reading a secret", async () => {
     const reads: string[] = [];
-    const router = await loadModelGatewayProviderRouter({
+    await expect(loadModelGatewayProviderRouter({
       PLATFORM_MODEL_GATEWAY_LITELLM_ENDPOINT: "https://litellm.internal.example/v1",
       PLATFORM_MODEL_GATEWAY_LITELLM_API_KEY_FILE: "/private/litellm-key",
     }, 5_000, async (path) => {
       reads.push(path);
       return "litellm-key\n";
-    });
-
-    expect(router.prepare(request(), authorization("litellm")).gatewayModel).toBe("chat-primary");
-    expect(() => router.prepare(request(), authorization("direct")))
-      .toThrowError("MODEL_GATEWAY_PROVIDER_ADAPTER_UNAVAILABLE");
-    expect(reads).toEqual(["/private/litellm-key"]);
+    })).rejects.toThrowError("PLATFORM_MODEL_GATEWAY_DIRECT_CONFIG_REQUIRED");
+    expect(reads).toEqual([]);
   });
 
   it("starts with both exact adapters without a routing map", async () => {
@@ -53,12 +49,19 @@ describe("Model Gateway provider composition", () => {
     expect(reads.sort()).toEqual(["/private/direct-key", "/private/litellm-key"]);
   });
 
-  it("rejects missing and partially configured adapters", async () => {
+  it("rejects missing Direct and partially configured optional adapters", async () => {
     const read = async () => "unused";
     await expect(loadModelGatewayProviderRouter({}, 5_000, read))
-      .rejects.toThrowError("PLATFORM_MODEL_GATEWAY_PROVIDER_ADAPTER_REQUIRED");
+      .rejects.toThrowError("PLATFORM_MODEL_GATEWAY_DIRECT_CONFIG_REQUIRED");
     await expect(loadModelGatewayProviderRouter({
+      PLATFORM_MODEL_GATEWAY_DIRECT_ENDPOINT: "https://provider.internal.example/v1",
+      PLATFORM_MODEL_GATEWAY_DIRECT_API_KEY_FILE: "/private/direct-key",
       PLATFORM_MODEL_GATEWAY_LITELLM_ENDPOINT: "https://litellm.internal.example/v1",
+    }, 5_000, read)).rejects.toThrowError("PLATFORM_MODEL_GATEWAY_LITELLM_CONFIG_INVALID");
+    await expect(loadModelGatewayProviderRouter({
+      PLATFORM_MODEL_GATEWAY_DIRECT_ENDPOINT: "https://provider.internal.example/v1",
+      PLATFORM_MODEL_GATEWAY_DIRECT_API_KEY_FILE: "/private/direct-key",
+      PLATFORM_MODEL_GATEWAY_LITELLM_API_KEY_FILE: "/private/litellm-key",
     }, 5_000, read)).rejects.toThrowError("PLATFORM_MODEL_GATEWAY_LITELLM_CONFIG_INVALID");
     await expect(loadModelGatewayProviderRouter({
       PLATFORM_MODEL_GATEWAY_DIRECT_ENDPOINT: "https://provider.internal.example/v1",
