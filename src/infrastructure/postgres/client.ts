@@ -40,6 +40,9 @@ import {
   SITE_PUBLICATION_ADMIN_INSERT_RELATIONS,
   SITE_PUBLICATION_ADMIN_SELECT_RELATIONS,
   SITE_PUBLICATION_ADMIN_UPDATE_RELATIONS,
+  SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS,
+  SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS,
+  SITE_PUBLICATION_ADMISSION_UPDATE_RELATIONS,
 } from "./runtime-relation-authority.js";
 
 export type PlatformProcessRole =
@@ -282,6 +285,7 @@ export type AssetDataPlaneOperation =
 
 export type PlatformInternalOperation =
   | "admission.command"
+  | "site.evidence.authorize"
   | "capability.projection"
   | "asset.eligibility.check-active"
   | "asset.eligibility.resolve"
@@ -553,6 +557,7 @@ export function createPlatformDatabaseClient(
       const allowed =
         config.role === "admission"
           ? operation === "admission.command" ||
+            operation === "site.evidence.authorize" ||
             operation === "capability.projection" ||
             operation === "asset.eligibility.check-active" ||
             operation === "asset.eligibility.resolve"
@@ -1297,6 +1302,12 @@ const SITE_PUBLICATION_ADMIN_INSERT_RELATIONS_SQL =
   sqlLiterals(SITE_PUBLICATION_ADMIN_INSERT_RELATIONS);
 const SITE_PUBLICATION_ADMIN_UPDATE_RELATIONS_SQL =
   sqlLiterals(SITE_PUBLICATION_ADMIN_UPDATE_RELATIONS);
+const SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS_SQL =
+  sqlLiterals(SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS);
+const SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS_SQL =
+  sqlLiterals(SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS);
+const SITE_PUBLICATION_ADMISSION_UPDATE_RELATIONS_SQL =
+  sqlLiterals(SITE_PUBLICATION_ADMISSION_UPDATE_RELATIONS);
 const ADMIN_INSERT_RELATIONS_SQL = sqlLiterals(ADMIN_INSERT_RELATIONS);
 const ADMIN_UPDATE_RELATIONS_SQL = sqlLiterals(ADMIN_UPDATE_RELATIONS);
 
@@ -2011,6 +2022,43 @@ const RUNTIME_IDENTITY_SQL = `
                AND has_column_privilege(current_user,publication_column.attrelid,
                  publication_column.attnum,'UPDATE')
            )
+         WHEN $2='admission' THEN
+           (SELECT count(*) FROM pg_class publication_relation
+             WHERE publication_relation.relnamespace=platform_schema.oid
+               AND publication_relation.relname=ANY(ARRAY[${SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS_SQL}]))
+             = cardinality(ARRAY[${SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS_SQL}])
+           AND NOT EXISTS (
+             SELECT 1 FROM pg_class publication_relation
+             WHERE publication_relation.relnamespace=platform_schema.oid
+               AND publication_relation.relname=ANY(ARRAY[${SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS_SQL}])
+               AND (
+                 NOT has_table_privilege(current_user,publication_relation.oid,'SELECT')
+                 OR (publication_relation.relname=ANY(ARRAY[${SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS_SQL}])
+                   AND NOT has_table_privilege(current_user,publication_relation.oid,'INSERT'))
+                 OR (publication_relation.relname<>ALL(ARRAY[${SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS_SQL}])
+                   AND has_any_column_privilege(current_user,publication_relation.oid,'INSERT'))
+                 OR has_table_privilege(current_user,publication_relation.oid,'UPDATE')
+                 OR (publication_relation.relname<>ALL(ARRAY[${SITE_PUBLICATION_ADMISSION_UPDATE_RELATIONS_SQL}])
+                   AND has_any_column_privilege(current_user,publication_relation.oid,'UPDATE'))
+                 OR has_table_privilege(current_user,publication_relation.oid,
+                   'DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+                 OR has_any_column_privilege(current_user,publication_relation.oid,'REFERENCES')
+               )
+           )
+           AND has_column_privilege(current_user,'platform.command_receipt','state','UPDATE')
+           AND has_column_privilege(current_user,'platform.command_receipt','result','UPDATE')
+           AND has_column_privilege(current_user,'platform.command_receipt','result_digest','UPDATE')
+           AND has_column_privilege(current_user,'platform.command_receipt','updated_at','UPDATE')
+           AND NOT EXISTS (
+             SELECT 1 FROM pg_attribute publication_column
+             WHERE publication_column.attrelid='platform.command_receipt'::regclass
+               AND publication_column.attnum>0 AND NOT publication_column.attisdropped
+               AND publication_column.attname<>ALL(ARRAY[
+                 'state','result','result_digest','updated_at'
+               ])
+               AND has_column_privilege(current_user,publication_column.attrelid,
+                 publication_column.attnum,'UPDATE')
+           )
          ELSE NOT EXISTS (
            SELECT 1 FROM pg_class publication_relation
            WHERE publication_relation.relnamespace=platform_schema.oid
@@ -2181,7 +2229,8 @@ const RUNTIME_IDENTITY_SQL = `
                     ($2='api' AND candidate.relname=ANY(ARRAY['site','site_release']))
                     OR ($2='__retired_runtime_role__' AND candidate.relname<>'site_effect_approval')
                     OR $2='admin'
-                    OR ($2='admission' AND candidate.relname=ANY(ARRAY['site','site_release']))
+                    OR ($2='admission' AND
+                      candidate.relname=ANY(ARRAY['site','site_project_binding','site_release']))
                   ))
                  OR
                  ((has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')

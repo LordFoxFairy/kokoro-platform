@@ -480,6 +480,75 @@ CREATE POLICY site_producer_trust_bootstrap
   ON platform.site_release_producer_trust_revision FOR INSERT
   WITH CHECK (current_setting('app.site_publication_authority_bootstrap',true)='true');
 
+CREATE POLICY site_project_binding_evidence_admission_read
+  ON platform.site_project_binding FOR SELECT
+  USING (
+    current_setting('app.workload_kind',true)='platform_admission' AND
+    current_setting('app.actor_kind',true)='workload' AND
+    current_setting('app.operation',true)='site.evidence.authorize' AND
+    binding_ref=current_setting('app.site_project_binding_ref',true) AND
+    binding_epoch=current_setting('app.workload_binding_epoch',true)::BIGINT AND
+    workload_identity_id=current_setting('app.workload_identity_ref',true) AND
+    site_ref=NULLIF(current_setting('app.site_id',true),'') AND
+    environment=current_setting('app.environment',true) AND
+    region=current_setting('app.region',true) AND
+    state='active'
+  );
+CREATE POLICY site_evidence_producer_trust_read
+  ON platform.site_release_producer_trust_revision FOR SELECT
+  USING (
+    producer_role='web-artifact-provenance-attestor' AND
+    environment=current_setting('app.environment',true) AND
+    current_setting('app.workload_kind',true)='platform_worker' AND
+    current_setting('app.actor_kind',true)='workload' AND
+    current_setting('app.operation',true)='site.release-evidence.publish' AND
+    EXISTS (
+      SELECT 1 FROM platform.site_project_binding binding
+      WHERE binding.site_ref=NULLIF(current_setting('app.site_id',true),'')
+        AND binding.environment=current_setting('app.environment',true)
+        AND binding.region=current_setting('app.region',true)
+        AND binding.workload_identity_id=current_setting('app.workload_identity_ref',true)
+        AND binding.binding_epoch=current_setting('app.workload_binding_epoch',true)::BIGINT
+        AND binding.state='active'
+    )
+  );
+CREATE POLICY site_evidence_attestation_read
+  ON platform.site_release_attestation_envelope FOR SELECT
+  USING (
+    subject_kind='web-artifact-provenance' AND
+    site_ref=NULLIF(current_setting('app.site_id',true),'') AND
+    environment=current_setting('app.environment',true) AND
+    current_setting('app.workload_kind',true)='platform_worker' AND
+    current_setting('app.actor_kind',true)='workload' AND
+    current_setting('app.operation',true)='site.release-evidence.publish' AND
+    EXISTS (
+      SELECT 1 FROM platform.site_project_binding binding
+      WHERE binding.site_ref=site_release_attestation_envelope.site_ref
+        AND binding.environment=site_release_attestation_envelope.environment
+        AND binding.region=current_setting('app.region',true)
+        AND binding.workload_identity_id=current_setting('app.workload_identity_ref',true)
+        AND binding.binding_epoch=current_setting('app.workload_binding_epoch',true)::BIGINT
+        AND binding.state='active'
+    )
+  );
+CREATE POLICY site_evidence_decision_read
+  ON platform.site_release_evidence_decision FOR SELECT
+  USING (
+    subject_kind='web-artifact-provenance' AND
+    current_setting('app.workload_kind',true)='platform_worker' AND
+    current_setting('app.actor_kind',true)='workload' AND
+    current_setting('app.operation',true)='site.release-evidence.publish' AND
+    EXISTS (
+      SELECT 1 FROM platform.site_release_attestation_envelope envelope
+      WHERE envelope.subject_kind=site_release_evidence_decision.subject_kind
+        AND envelope.subject_ref=site_release_evidence_decision.subject_ref
+        AND envelope.subject_revision=site_release_evidence_decision.subject_revision
+        AND envelope.subject_digest=site_release_evidence_decision.subject_digest
+        AND envelope.site_ref=NULLIF(current_setting('app.site_id',true),'')
+        AND envelope.environment=current_setting('app.environment',true)
+    )
+  );
+
 CREATE POLICY site_effective_access_candidate_read
   ON platform.site_effective_access_authority_revision FOR SELECT
   USING (site_ref=NULLIF(current_setting('app.site_id',true),'') AND

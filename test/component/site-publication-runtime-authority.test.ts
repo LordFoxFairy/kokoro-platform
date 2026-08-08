@@ -1,6 +1,20 @@
 import { createHash, generateKeyPairSync, randomUUID } from "node:crypto";
+import { create } from "@bufbuild/protobuf";
+import { timestampFromDate } from "@bufbuild/protobuf/wkt";
+import type { HandlerContext } from "@connectrpc/connect";
 import { Client } from "pg";
 import { describe, expect, it } from "vitest";
+import {
+  CommandDigestAlgorithmV2,
+  CommandIdentityV2Schema,
+} from "../../src/generated/proto/kokoro/common/v2/command_envelope_pb.js";
+import { ImmutableContractRevisionBindingSchema } from
+  "../../src/generated/proto/kokoro/platform/publication/v1/publication_common_pb.js";
+import {
+  AttestedReleaseEvidenceContextSchema,
+  ReleaseEvidenceProducerRole,
+  WorkloadAuthorizationState,
+} from "../../src/generated/proto/kokoro/platform/site/v1/site_publication_pb.js";
 import {
   createPlatformDatabaseClient,
   loadPlatformDatabaseConfig,
@@ -10,6 +24,9 @@ import {
   SITE_PUBLICATION_ADMIN_INSERT_RELATIONS,
   SITE_PUBLICATION_ADMIN_SELECT_RELATIONS,
   SITE_PUBLICATION_ADMIN_UPDATE_RELATIONS,
+  SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS,
+  SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS,
+  SITE_PUBLICATION_ADMISSION_UPDATE_RELATIONS,
 } from "../../src/infrastructure/postgres/runtime-relation-authority.js";
 import { canonicalDigest, canonicalJson, type ResolvedCanonicalDocument } from
   "../../src/modules/product-catalog/domain/canonical-product-document.js";
@@ -36,8 +53,17 @@ import { PostgresSitePublicationAuthorityRepository } from
   "../../src/modules/site/infrastructure/postgres/site-publication-authority-repository.js";
 import { PostgresSiteReleaseCandidateAssembler } from
   "../../src/modules/site/infrastructure/postgres/site-release-candidate-assembler.js";
+import {
+  PostgresSiteEvidenceWorkloadAuthorizationResolver,
+  siteEvidenceWorkloadAuthorizationLiveRead,
+} from "../../src/modules/site/infrastructure/postgres/site-evidence-workload-authorization-resolver.js";
 import { PostgresSiteWebBuildIntentIssuerAuthority } from
   "../../src/modules/site/infrastructure/postgres/site-web-build-intent-issuer-authority.js";
+import {
+  SITE_EVIDENCE_ADMISSION_AUDIENCE,
+  SITE_EVIDENCE_ADMISSION_RPC_OPERATION,
+  type VerifiedSiteEvidencePeer,
+} from "../../src/modules/site/infrastructure/security/site-evidence-peer-registry.js";
 import { verifyRequestSecurityContext } from
   "../../src/shared/security-context/request-security-context.js";
 import { PlatformUnitOfWork } from "../../src/shared/unit-of-work/index.js";
@@ -45,8 +71,10 @@ import { PlatformUnitOfWork } from "../../src/shared/unit-of-work/index.js";
 const migratorUrl = leased(process.env.DATABASE_URL_PLATFORM_MIGRATOR_TEST);
 const bootstrapUrl = leased(process.env.DATABASE_URL_PLATFORM_BOOTSTRAP_TEST);
 const adminUrl = leased(process.env.DATABASE_URL_PLATFORM_ADMIN_TEST);
+const admissionUrl = leased(process.env.DATABASE_URL_PLATFORM_ADMISSION_TEST);
 const apiRole = role(process.env.PLATFORM_DATABASE_API_ROLE);
 const adminRole = role(process.env.PLATFORM_DATABASE_ADMIN_ROLE);
+const admissionRole = role(process.env.PLATFORM_DATABASE_ADMISSION_ROLE);
 const migratorRole = role(process.env.PLATFORM_DATABASE_MIGRATOR_ROLE);
 const databaseName = new URL(migratorUrl).pathname.slice(1);
 const digestA = `sha256:${"a".repeat(64)}`;
@@ -69,9 +97,16 @@ describe("Site publication PostgreSQL runtime authority", () => {
       PLATFORM_DATABASE_MIGRATOR_ROLE: migratorRole,
       PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
     }));
+    const admission = createPlatformDatabaseClient(loadPlatformDatabaseConfig("admission", {
+      DATABASE_URL_PLATFORM: admissionUrl,
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: "admission",
+      PLATFORM_DATABASE_ADMISSION_ROLE: admissionRole,
+      PLATFORM_DATABASE_MIGRATOR_ROLE: migratorRole,
+      PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
+    }));
     await bootstrap.connect();
     try {
-      await expect(admin.connect()).resolves.toBeUndefined();
+      await expect(Promise.all([admin.connect(), admission.connect()])).resolves.toHaveLength(2);
       const authority = await bootstrap.query<{
         relation_name: string;
         admin_select: boolean;
@@ -115,6 +150,42 @@ describe("Site publication PostgreSQL runtime authority", () => {
       expect(rls.rows).toHaveLength(SITE_PUBLICATION_ADMIN_SELECT_RELATIONS.length);
       expect(rls.rows.every((row) => row.enabled && row.forced)).toBe(true);
 
+      const admissionAuthority = await bootstrap.query<{
+        relation_name: string;
+        can_select: boolean;
+        can_insert: boolean;
+        can_update: boolean;
+        can_delete: boolean;
+      }>(
+        `SELECT relation_name,
+                has_table_privilege($1,format('platform.%I',relation_name),'SELECT') AS can_select,
+                has_table_privilege($1,format('platform.%I',relation_name),'INSERT') AS can_insert,
+                has_any_column_privilege($1,format('platform.%I',relation_name),'UPDATE') AS can_update,
+                has_table_privilege($1,format('platform.%I',relation_name),'DELETE') AS can_delete
+         FROM unnest($2::text[]) relation_name ORDER BY relation_name`,
+        [admissionRole, SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS],
+      );
+      expect(admissionAuthority.rows).toHaveLength(SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS.length);
+      for (const row of admissionAuthority.rows) {
+        expect(row).toEqual({
+          relation_name: row.relation_name,
+          can_select: true,
+          can_insert: SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS.includes(row.relation_name as never),
+          can_update: SITE_PUBLICATION_ADMISSION_UPDATE_RELATIONS.includes(row.relation_name as never),
+          can_delete: false,
+        });
+      }
+      const receiptUpdate = await bootstrap.query<{ column_name: string }>(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema='platform' AND table_name='command_receipt'
+           AND has_column_privilege($1,'platform.command_receipt',column_name,'UPDATE')
+         ORDER BY ordinal_position`,
+        [admissionRole],
+      );
+      expect(receiptUpdate.rows.map((row) => row.column_name)).toEqual([
+        "state", "result", "result_digest", "updated_at",
+      ]);
+
       await expect(bootstrap.query(
         `SELECT platform.bootstrap_site_publication_authorities(
            '{"version":1,"effectiveAccess":[{}],"intentIssuers":[{}],"producerTrust":[{},{}]}'::jsonb,
@@ -129,7 +200,7 @@ describe("Site publication PostgreSQL runtime authority", () => {
         "SITE_PUBLICATION_AUTHORITY_BOOTSTRAP_TRANSITION_INVALID",
       ) });
     } finally {
-      await admin.disconnect();
+      await Promise.allSettled([admin.disconnect(), admission.disconnect()]);
       await bootstrap.end();
     }
   }, 60_000);
@@ -233,7 +304,136 @@ describe("Site publication PostgreSQL runtime authority", () => {
       await bootstrap.end();
     }
   }, 60_000);
+
+  it("resolves only the exact active workload binding through Admission RLS", async () => {
+    await runPlatformMigrations({
+      environment: {
+        ...process.env,
+        DATABASE_URL_PLATFORM: migratorUrl,
+        PLATFORM_DATABASE_CREDENTIAL_CLASS: "migrator",
+      },
+    });
+    const suffix = randomUUID().replaceAll("-", "");
+    const peer = evidencePeer(suffix);
+    const bootstrap = new Client({ connectionString: bootstrapUrl });
+    const admission = createPlatformDatabaseClient(loadPlatformDatabaseConfig("admission", {
+      DATABASE_URL_PLATFORM: admissionUrl,
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: "admission",
+      PLATFORM_DATABASE_ADMISSION_ROLE: admissionRole,
+      PLATFORM_DATABASE_MIGRATOR_ROLE: migratorRole,
+      PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
+    }));
+    await Promise.all([bootstrap.connect(), admission.connect()]);
+    try {
+      await bootstrap.query(
+        "INSERT INTO platform.site(site_ref,site_key,state) VALUES ($1,$2,'preview_ready')",
+        [peer.siteRef, `evidence-${suffix.slice(0, 24)}`],
+      );
+      await bootstrap.query(
+        `INSERT INTO platform.site_project_binding
+         (binding_ref,site_ref,repository_ref,provider_namespace,provider_project_ref,
+          environment,region,workload_identity_id,binding_epoch,state)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1,'active')`,
+        [peer.siteProjectBindingRef, peer.siteRef, `repository.${suffix}`, "fixture-provider",
+          `project.${suffix}`, peer.environment, peer.region, peer.workloadIdentityRef],
+      );
+      const resolver = new PostgresSiteEvidenceWorkloadAuthorizationResolver({
+        database: admission,
+        peer: () => peer,
+      });
+      const observedAt = new Date(Date.now() - 1_000);
+      const validUntil = new Date(Date.now() + 20_000);
+      const request = { siteRef: peer.siteRef, resourceRefs: ["candidate.alpha"] } as const;
+
+      await expect(resolver.resolve(
+        evidenceContext(peer, 1n, observedAt, validUntil),
+        {} as HandlerContext,
+        request,
+      )).resolves.toMatchObject({
+        context: { trustedCaller: { workloadIdentityId: peer.workloadIdentityRef, bindingEpoch: "1" } },
+        axes: { siteId: peer.siteRef, workloadAuthorizationEpoch: 1n },
+      });
+      await expect(resolver.resolve(
+        evidenceContext(peer, 2n, observedAt, validUntil),
+        {} as HandlerContext,
+        request,
+      )).rejects.toThrow("SITE_EVIDENCE_WORKLOAD_AUTHORIZATION_NOT_FOUND");
+
+      await bootstrap.query(
+        "UPDATE platform.site_project_binding SET state='revoked' WHERE binding_ref=$1",
+        [peer.siteProjectBindingRef],
+      );
+      await expect(resolver.resolve(
+        evidenceContext(peer, 1n, observedAt, validUntil),
+        {} as HandlerContext,
+        request,
+      )).rejects.toThrow("SITE_EVIDENCE_WORKLOAD_AUTHORIZATION_NOT_FOUND");
+    } finally {
+      await Promise.allSettled([admission.disconnect()]);
+      await bootstrap.query("DELETE FROM platform.site_project_binding WHERE binding_ref=$1",
+        [peer.siteProjectBindingRef]);
+      await bootstrap.query("DELETE FROM platform.site WHERE site_ref=$1", [peer.siteRef]);
+      await bootstrap.end();
+    }
+  }, 60_000);
 });
+
+function evidencePeer(suffix: string): VerifiedSiteEvidencePeer {
+  return Object.freeze({
+    workloadIdentityRef: `spiffe://kokoro/site-evidence-attestor/${suffix}`,
+    siteProjectBindingRef: `site-project-binding.${suffix}`,
+    siteRef: `site.evidence.${suffix}`,
+    environment: "production",
+    region: "us-east-1",
+    audience: SITE_EVIDENCE_ADMISSION_AUDIENCE,
+    operation: SITE_EVIDENCE_ADMISSION_RPC_OPERATION,
+    producerIdentityRef: `producer.web-attestor.${suffix}`,
+    producerRegistration: Object.freeze({ ref: `producer-registration.${suffix}`,
+      revision: 1n, digest: digestA }),
+    producerRole: "web-artifact-provenance-attestor",
+    workloadAttestation: Object.freeze({ ref: `workload-attestation.${suffix}`,
+      revision: 1n, digest: digestA }),
+  });
+}
+
+function evidenceContext(
+  peer: VerifiedSiteEvidencePeer,
+  bindingEpoch: bigint,
+  observedAt: Date,
+  validUntil: Date,
+) {
+  const liveRead = siteEvidenceWorkloadAuthorizationLiveRead({
+    bindingRef: peer.siteProjectBindingRef,
+    bindingEpoch,
+    workloadIdentityRef: peer.workloadIdentityRef,
+    siteRef: peer.siteRef,
+    environment: peer.environment,
+    region: peer.region,
+    state: "active",
+  });
+  return create(AttestedReleaseEvidenceContextSchema, {
+    command: create(CommandIdentityV2Schema, {
+      commandId: randomUUID(),
+      idempotencyKey: `evidence-${randomUUID()}`,
+      digestAlgorithm: CommandDigestAlgorithmV2.SHA256_COMMAND_ENVELOPE,
+      requestDigest: "b".repeat(64),
+    }),
+    workloadIdentityRef: peer.workloadIdentityRef,
+    audience: peer.audience,
+    environment: peer.environment,
+    region: peer.region,
+    producerIdentityRef: peer.producerIdentityRef,
+    producerRegistration: create(ImmutableContractRevisionBindingSchema, peer.producerRegistration),
+    producerRole: ReleaseEvidenceProducerRole.WEB_ARTIFACT_PROVENANCE_ATTESTOR,
+    workloadAttestation: create(ImmutableContractRevisionBindingSchema, peer.workloadAttestation),
+    workloadAuthorizationEpoch: bindingEpoch,
+    workloadRevocationEpoch: 0n,
+    workloadAuthorizationState: WorkloadAuthorizationState.ACTIVE,
+    workloadAuthorizationLiveRead: create(ImmutableContractRevisionBindingSchema, liveRead),
+    workloadAuthorizationObservedAt: timestampFromDate(observedAt),
+    workloadAuthorizationValidUntil: timestampFromDate(validUntil),
+  });
+}
 
 interface PublicationFixture {
   readonly suffix: string;

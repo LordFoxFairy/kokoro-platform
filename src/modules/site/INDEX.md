@@ -42,23 +42,31 @@ before the state store may persist an observation; state-store code never manufa
 local attempt.
 
 Fresh Site creation remains on the typed `SiteProvisioningService`; publication is a separate owner boundary.
-The new authority core implements the one-way Root chain through immutable Candidate and publication revisions:
-Product Catalog/Profile are locked from their owner tables, `SiteEffectiveAccessSnapshotPort` composes Commerce,
-Model, Hub, Auth and Memory owner revisions in the same Platform transaction, and Platform—not the operator—builds
-the canonical Candidate. Inventory, Material, Intent, attestor Evidence, Certification and final SiteRelease are
-stored as exact candidate-bound immutable nodes. Operators approve references only; workload evidence has a
-separate producer kind and RLS path. Content-addressed documents are opened by digest with no ref-derived path,
-no symlink following and bounded stable reads, then revalidated against Root JSON Schemas and canonical SHA-256.
+The operator publication owner is mounted on Admin and implements the one-way Root chain through immutable Candidate
+and publication revisions. Product Catalog/Profile are locked from their owner tables,
+`SiteEffectiveAccessSnapshotPort` composes Commerce, Model, Hub, Auth and Memory owner revisions in the same Platform
+transaction, and Platform, not the operator, builds the canonical Candidate and signed WebBuildIntent. Operators
+approve references only. Content-addressed documents are opened by digest with no ref-derived path, no symlink
+following and bounded stable reads, then revalidated against Root JSON Schemas and canonical SHA-256.
 
-`site_active_release_pointer` is a generation aggregate separate from immutable SiteRelease. Rollback CASes this
-pointer to an older immutable release; begin/pre-CAS snapshots freeze certification revocation, producer registry,
-trust policy and signing-key heads. A changed head or generation fails closed, while eligibility evidence and the
-pointer mutation commit atomically in the lifecycle owner's transaction. The old caller-authored `site_release`
-record is not a source or fallback and receives no bridge or dual-write.
+Machine Evidence admission is a separate trust boundary. Its mTLS peer registry binds the certificate fingerprint and
+SPIFFE URI to one Site/project binding, environment, region, producer registration and workload attestation. Admission
+then rereads the exact `site_project_binding` under PostgreSQL RLS and accepts only the matching active workload,
+binding epoch and bounded freshness window. Admission has only the relation and column privileges required for this
+live read, command receipt and immutable evidence publication path. Candidate, trust, attestation and decision reads,
+and the release-evidence publication write, remain fenced by the live Site/environment/region/workload/epoch tuple.
+The private listener mount, secret declaration and generated provenance move together in the subsequent deployment
+composition commit; the ports in this module do not make that runtime active by themselves.
 
-The operator and machine Connect adapters are separate: operators cannot author workload evidence and the evidence
+`site_active_release_pointer`, begin/pre-CAS snapshots and eligibility evidence define the target generation/CAS
+authority, but production Activation is dormant. There is no production `SiteActivationAuthorityReaderPort`, no
+runtime grants for those three relations, no typed lifecycle adapter wiring and no Site-worker
+`site.activation.commit` transaction. The legacy lifecycle path is not an implementation of this authority and must
+be hard-cut after the Root lifecycle generated contract lands. The old caller-authored `site_release` record is not a
+source or fallback for immutable SiteRelease and must not receive a bridge, compatibility adapter or dual-write.
+
+The operator and machine Connect adapters remain separate: operators cannot author workload evidence and the evidence
 workload cannot authorize, certify, publish or activate. Ed25519 DSSE admission verifies provenance and certification
 against transaction-local producer/key/trust authority ports before immutable persistence. Production composition
 requires concrete EffectiveAccess, issuer, evidence-trust and certification-trust owners; no unavailable default or
-self-RPC is accepted. Root `platform-site-publication@v1` still incorrectly asks the caller for the digest of the
-Platform-issued WebBuildIntent, so that one RPC remains deliberately fail closed pending the hard-cut contract.
+self-RPC is accepted.

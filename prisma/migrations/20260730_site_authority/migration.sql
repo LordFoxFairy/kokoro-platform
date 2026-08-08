@@ -349,8 +349,12 @@ CREATE POLICY site_admin_read_scope ON platform.site FOR SELECT USING(
 ALTER TABLE platform.site_project_binding ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.site_project_binding FORCE ROW LEVEL SECURITY;
 CREATE POLICY site_project_binding_scope ON platform.site_project_binding
-  USING(site_ref=NULLIF(current_setting('app.site_id',true),'') OR current_setting('app.workload_kind',true)='platform_worker')
-  WITH CHECK(site_ref=NULLIF(current_setting('app.site_id',true),'') OR current_setting('app.workload_kind',true)='platform_worker');
+  USING((current_setting('app.workload_kind',true)<>'platform_admission' AND
+         site_ref=NULLIF(current_setting('app.site_id',true),'')) OR
+        current_setting('app.workload_kind',true)='platform_worker')
+  WITH CHECK((current_setting('app.workload_kind',true)<>'platform_admission' AND
+              site_ref=NULLIF(current_setting('app.site_id',true),'')) OR
+             current_setting('app.workload_kind',true)='platform_worker');
 
 ALTER TABLE platform.site_release ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.site_release FORCE ROW LEVEL SECURITY;

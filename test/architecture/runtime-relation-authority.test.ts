@@ -12,6 +12,9 @@ import {
   SITE_PUBLICATION_ADMIN_INSERT_RELATIONS,
   SITE_PUBLICATION_ADMIN_SELECT_RELATIONS,
   SITE_PUBLICATION_ADMIN_UPDATE_RELATIONS,
+  SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS,
+  SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS,
+  SITE_PUBLICATION_ADMISSION_UPDATE_RELATIONS,
 } from "../../src/infrastructure/postgres/runtime-relation-authority.js";
 
 const clientSource = source("../../src/infrastructure/postgres/client.ts");
@@ -38,9 +41,35 @@ describe("PostgreSQL runtime relation authority contract", () => {
       ADMISSION_UPDATE_RELATIONS, CREDIT_USAGE_RELATIONS, MEDIA_CONTROL_ADMIN_RELATIONS,
       PRODUCT_CATALOG_ADMIN_RELATIONS, SITE_PUBLICATION_ADMIN_SELECT_RELATIONS,
       SITE_PUBLICATION_ADMIN_INSERT_RELATIONS, SITE_PUBLICATION_ADMIN_UPDATE_RELATIONS,
+      SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS,
+      SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS, SITE_PUBLICATION_ADMISSION_UPDATE_RELATIONS,
       ADMIN_INSERT_RELATIONS, ADMIN_UPDATE_RELATIONS]) {
       expect(new Set(relations).size).toBe(relations.length);
     }
+  });
+
+  it("gives Admission only the relations needed by the machine Evidence authority", () => {
+    expect(SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS).toEqual([
+      "command_receipt",
+      "site_project_binding",
+      "site_release_candidate_authority",
+      "site_release_candidate_authorization",
+      "site_publication_revision",
+      "site_release_producer_trust_revision",
+      "site_release_attestation_envelope",
+      "site_release_evidence_decision",
+    ]);
+    expect(SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS).toEqual([
+      "command_receipt",
+      "site_publication_revision",
+    ]);
+    expect(SITE_PUBLICATION_ADMISSION_UPDATE_RELATIONS).toEqual(["command_receipt"]);
+    expect(ADMISSION_INSERT_RELATIONS).toEqual(expect.arrayContaining(
+      [...SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS],
+    ));
+    expect(ADMISSION_UPDATE_RELATIONS).toEqual(expect.arrayContaining(
+      [...SITE_PUBLICATION_ADMISSION_UPDATE_RELATIONS],
+    ));
   });
 
   it("gives Admin the exact Site publication authority needed by the production owner", () => {

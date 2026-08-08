@@ -88,10 +88,31 @@ export const MODEL_GATEWAY_ADMISSION_RELATIONS = [
   "model_gateway_execution_authorization",
 ] as const;
 
+export const SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS = [
+  "command_receipt",
+  "site_project_binding",
+  "site_release_candidate_authority",
+  "site_release_candidate_authorization",
+  "site_publication_revision",
+  "site_release_producer_trust_revision",
+  "site_release_attestation_envelope",
+  "site_release_evidence_decision",
+] as const;
+
+export const SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS = [
+  "command_receipt",
+  "site_publication_revision",
+] as const;
+
+export const SITE_PUBLICATION_ADMISSION_UPDATE_RELATIONS = [
+  "command_receipt",
+] as const;
+
 export const ADMISSION_SELECT_RELATIONS = [
   ...ADMISSION_RELATIONS,
   ...CREDIT_USAGE_RELATIONS,
   ...MODEL_GATEWAY_ADMISSION_RELATIONS,
+  ...SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS,
   "site",
   "site_release",
   "authorization_site",
@@ -149,6 +170,7 @@ export const ADMISSION_INSERT_RELATIONS = [
   "credit_usage_reconciliation",
   "credit_usage_command_receipt",
   "model_gateway_execution_authorization",
+  ...SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS,
 ] as const;
 
 export const ADMISSION_UPDATE_RELATIONS = [
@@ -160,6 +182,7 @@ export const ADMISSION_UPDATE_RELATIONS = [
   "credit_execution_budget_root",
   "credit_authorization_segment",
   "model_gateway_execution_authorization",
+  ...SITE_PUBLICATION_ADMISSION_UPDATE_RELATIONS,
 ] as const;
 
 export const PRODUCT_CATALOG_ADMIN_RELATIONS = [

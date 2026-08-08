@@ -35,6 +35,9 @@ import {
   SITE_PUBLICATION_ADMIN_INSERT_RELATIONS,
   SITE_PUBLICATION_ADMIN_SELECT_RELATIONS,
   SITE_PUBLICATION_ADMIN_UPDATE_RELATIONS,
+  SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS,
+  SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS,
+  SITE_PUBLICATION_ADMISSION_UPDATE_RELATIONS,
 } from "./runtime-relation-authority.js";
 
 export const MIGRATION_ADVISORY_LOCK = "kokoro-platform:migrations:v1";
@@ -2349,6 +2352,15 @@ async function grantFoundationPrivileges(
       await client.query(
         `GRANT EXECUTE ON FUNCTION ${ADMISSION_EXECUTION_ROOT_ROUTINES.join(", ")} TO ${identifier}`,
       );
+      await client.query(
+        `GRANT SELECT ON TABLE ${SITE_PUBLICATION_ADMISSION_SELECT_TABLES} TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT INSERT ON TABLE ${SITE_PUBLICATION_ADMISSION_INSERT_TABLES} TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT UPDATE(state,result,result_digest,updated_at) ON TABLE platform.command_receipt TO ${identifier}`,
+      );
     } else if (role === authorizationRole) {
       await client.query(
         `GRANT SELECT ON TABLE platform.authorization_scoped_stream_state, platform.authorization_scoped_site_cursor, platform.authorization_scoped_event_log, platform.authorization_scoped_snapshot, platform.authorization_scoped_snapshot_record, platform.authorization_site, platform.authorization_subject, platform.authorization_identity_session, platform.authorization_project, platform.authorization_project_membership, platform.authorization_session_access_grant TO ${identifier}`,
@@ -2575,6 +2587,10 @@ const SITE_PUBLICATION_ADMIN_SELECT_TABLES = SITE_PUBLICATION_ADMIN_SELECT_RELAT
   .map((name) => `platform.${name}`).join(", ");
 const SITE_PUBLICATION_ADMIN_INSERT_TABLES = SITE_PUBLICATION_ADMIN_INSERT_RELATIONS
   .map((name) => `platform.${name}`).join(", ");
+const SITE_PUBLICATION_ADMISSION_SELECT_TABLES = SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS
+  .map((name) => `platform.${name}`).join(", ");
+const SITE_PUBLICATION_ADMISSION_INSERT_TABLES = SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS
+  .map((name) => `platform.${name}`).join(", ");
 const ASSET_RELATIONS_SQL = sqlLiterals(ASSET_RELATIONS);
 const ASSET_API_RELATIONS_SQL = sqlLiterals(ASSET_API_RELATIONS);
 const ASSET_API_MUTABLE_RELATIONS_SQL = sqlLiterals(ASSET_API_MUTABLE_RELATIONS);
@@ -2616,6 +2632,12 @@ const SITE_PUBLICATION_ADMIN_INSERT_RELATIONS_SQL =
   sqlLiterals(SITE_PUBLICATION_ADMIN_INSERT_RELATIONS);
 const SITE_PUBLICATION_ADMIN_UPDATE_RELATIONS_SQL =
   sqlLiterals(SITE_PUBLICATION_ADMIN_UPDATE_RELATIONS);
+const SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS_SQL =
+  sqlLiterals(SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS);
+const SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS_SQL =
+  sqlLiterals(SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS);
+const SITE_PUBLICATION_ADMISSION_UPDATE_RELATIONS_SQL =
+  sqlLiterals(SITE_PUBLICATION_ADMISSION_UPDATE_RELATIONS);
 const ADMIN_INSERT_RELATIONS_SQL = sqlLiterals(ADMIN_INSERT_RELATIONS);
 const ADMIN_UPDATE_RELATIONS_SQL = sqlLiterals(ADMIN_UPDATE_RELATIONS);
 
@@ -3334,6 +3356,47 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                AND has_column_privilege(runtime_role.rolname,publication_column.attrelid,
                  publication_column.attnum,'UPDATE')
            )
+         WHEN runtime_role.rolname=$5 THEN
+           (SELECT count(*) FROM pg_class publication_relation
+             WHERE publication_relation.relnamespace=platform_schema.oid
+               AND publication_relation.relname=ANY(ARRAY[${SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS_SQL}]))
+             = cardinality(ARRAY[${SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS_SQL}])
+           AND NOT EXISTS (
+             SELECT 1 FROM pg_class publication_relation
+             WHERE publication_relation.relnamespace=platform_schema.oid
+               AND publication_relation.relname=ANY(ARRAY[${SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS_SQL}])
+               AND (
+                 NOT has_table_privilege(runtime_role.rolname,publication_relation.oid,'SELECT')
+                 OR (publication_relation.relname=ANY(ARRAY[${SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS_SQL}])
+                   AND NOT has_table_privilege(runtime_role.rolname,publication_relation.oid,'INSERT'))
+                 OR (publication_relation.relname<>ALL(ARRAY[${SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS_SQL}])
+                   AND has_any_column_privilege(runtime_role.rolname,publication_relation.oid,'INSERT'))
+                 OR has_table_privilege(runtime_role.rolname,publication_relation.oid,'UPDATE')
+                 OR (publication_relation.relname<>ALL(ARRAY[${SITE_PUBLICATION_ADMISSION_UPDATE_RELATIONS_SQL}])
+                   AND has_any_column_privilege(runtime_role.rolname,publication_relation.oid,'UPDATE'))
+                 OR has_table_privilege(runtime_role.rolname,publication_relation.oid,
+                   'DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+                 OR has_any_column_privilege(runtime_role.rolname,publication_relation.oid,'REFERENCES')
+               )
+           )
+           AND has_column_privilege(runtime_role.rolname,
+             'platform.command_receipt','state','UPDATE')
+           AND has_column_privilege(runtime_role.rolname,
+             'platform.command_receipt','result','UPDATE')
+           AND has_column_privilege(runtime_role.rolname,
+             'platform.command_receipt','result_digest','UPDATE')
+           AND has_column_privilege(runtime_role.rolname,
+             'platform.command_receipt','updated_at','UPDATE')
+           AND NOT EXISTS (
+             SELECT 1 FROM pg_attribute publication_column
+             WHERE publication_column.attrelid='platform.command_receipt'::regclass
+               AND publication_column.attnum>0 AND NOT publication_column.attisdropped
+               AND publication_column.attname<>ALL(ARRAY[
+                 'state','result','result_digest','updated_at'
+               ])
+               AND has_column_privilege(runtime_role.rolname,publication_column.attrelid,
+                 publication_column.attnum,'UPDATE')
+           )
          ELSE NOT EXISTS (
            SELECT 1 FROM pg_class publication_relation
            WHERE publication_relation.relnamespace=platform_schema.oid
@@ -3506,7 +3569,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                     OR (runtime_role.rolname=$3 AND candidate.relname<>'site_effect_approval')
                     OR runtime_role.rolname=$4
                     OR (runtime_role.rolname=$5 AND
-                      candidate.relname=ANY(ARRAY['site','site_release']))
+                      candidate.relname=ANY(ARRAY['site','site_project_binding','site_release']))
                  ))
                  OR
                  ((has_table_privilege(runtime_role.rolname,candidate.oid,'SELECT')

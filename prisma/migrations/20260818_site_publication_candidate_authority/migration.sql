@@ -215,7 +215,16 @@ CREATE POLICY site_release_candidate_scope ON platform.site_release_candidate_au
      (current_setting('app.workload_kind',true)='platform_worker' AND
       current_setting('app.actor_kind',true)='workload' AND
       current_setting('app.operation',true) IN
-        ('site.release-evidence.publish','site.activation.commit'))))
+        ('site.release-evidence.publish','site.activation.commit') AND
+      (current_setting('app.operation',true)<>'site.release-evidence.publish' OR EXISTS (
+        SELECT 1 FROM platform.site_project_binding binding
+        WHERE binding.site_ref=site_release_candidate_authority.site_ref
+          AND binding.environment=site_release_candidate_authority.environment
+          AND binding.region=current_setting('app.region',true)
+          AND binding.workload_identity_id=current_setting('app.workload_identity_ref',true)
+          AND binding.binding_epoch=current_setting('app.workload_binding_epoch',true)::BIGINT
+          AND binding.state='active'
+      )))))
   WITH CHECK (site_ref=NULLIF(current_setting('app.site_id',true),'') AND
     environment=current_setting('app.environment',true) AND
     current_setting('app.workload_kind',true)='admin_workload' AND
@@ -239,7 +248,16 @@ CREATE POLICY site_release_candidate_authorization_scope
            (current_setting('app.workload_kind',true)='platform_worker' AND
             current_setting('app.actor_kind',true)='workload' AND
             current_setting('app.operation',true) IN
-              ('site.release-evidence.publish','site.activation.commit')))))
+              ('site.release-evidence.publish','site.activation.commit') AND
+            (current_setting('app.operation',true)<>'site.release-evidence.publish' OR EXISTS (
+              SELECT 1 FROM platform.site_project_binding binding
+              WHERE binding.site_ref=candidate.site_ref
+                AND binding.environment=candidate.environment
+                AND binding.region=current_setting('app.region',true)
+                AND binding.workload_identity_id=current_setting('app.workload_identity_ref',true)
+                AND binding.binding_epoch=current_setting('app.workload_binding_epoch',true)::BIGINT
+                AND binding.state='active'
+            ))))))
   WITH CHECK (EXISTS (SELECT 1 FROM platform.site_release_candidate_authority candidate
     WHERE candidate.candidate_ref=site_release_candidate_authorization.candidate_ref
       AND candidate.candidate_version=site_release_candidate_authorization.candidate_version
@@ -265,7 +283,16 @@ CREATE POLICY site_publication_revision_scope ON platform.site_publication_revis
     (current_setting('app.workload_kind',true)='platform_worker' AND
      current_setting('app.actor_kind',true)='workload' AND
      current_setting('app.operation',true) IN
-       ('site.release-evidence.publish','site.activation.commit'))
+       ('site.release-evidence.publish','site.activation.commit') AND
+     (current_setting('app.operation',true)<>'site.release-evidence.publish' OR EXISTS (
+       SELECT 1 FROM platform.site_project_binding binding
+       WHERE binding.site_ref=site_publication_revision.site_ref
+         AND binding.environment=current_setting('app.environment',true)
+         AND binding.region=current_setting('app.region',true)
+         AND binding.workload_identity_id=current_setting('app.workload_identity_ref',true)
+         AND binding.binding_epoch=current_setting('app.workload_binding_epoch',true)::BIGINT
+         AND binding.state='active'
+     )))
   ))
   WITH CHECK (site_ref=NULLIF(current_setting('app.site_id',true),'') AND (
     (current_setting('app.workload_kind',true)='admin_workload' AND
@@ -283,12 +310,21 @@ CREATE POLICY site_publication_revision_scope ON platform.site_publication_revis
     (current_setting('app.workload_kind',true)='platform_worker' AND
      current_setting('app.actor_kind',true)='workload' AND
      current_setting('app.operation',true)='site.release-evidence.publish' AND
-     publication_kind='release-evidence' AND producer_kind='workload-attested')
+     publication_kind='release-evidence' AND producer_kind='workload-attested' AND
+     EXISTS (
+       SELECT 1 FROM platform.site_project_binding binding
+       WHERE binding.site_ref=site_publication_revision.site_ref
+         AND binding.environment=current_setting('app.environment',true)
+         AND binding.region=current_setting('app.region',true)
+         AND binding.workload_identity_id=current_setting('app.workload_identity_ref',true)
+         AND binding.binding_epoch=current_setting('app.workload_binding_epoch',true)::BIGINT
+         AND binding.state='active'
+     ))
   ));
 CREATE POLICY site_active_release_pointer_scope ON platform.site_active_release_pointer
   USING (site_ref=NULLIF(current_setting('app.site_id',true),'') AND
     environment=current_setting('app.environment',true) AND
-    ((current_setting('app.workload_kind',true)='platform_admin' AND
+    ((current_setting('app.workload_kind',true)='admin_workload' AND
       current_setting('app.actor_kind',true)='operator' AND
       current_setting('app.operation',true)='site.activation.begin') OR
      (current_setting('app.workload_kind',true)='platform_worker' AND
@@ -299,14 +335,14 @@ CREATE POLICY site_active_release_pointer_scope ON platform.site_active_release_
     ((current_setting('app.workload_kind',true)='platform_worker' AND
       current_setting('app.actor_kind',true)='workload' AND
       current_setting('app.operation',true)='site.activation.commit') OR
-     (current_setting('app.workload_kind',true)='platform_admin' AND
+     (current_setting('app.workload_kind',true)='admin_workload' AND
       current_setting('app.actor_kind',true)='operator' AND
       current_setting('app.operation',true)='site.activation.begin' AND
       generation=0 AND active_release_ref IS NULL)));
 CREATE POLICY site_activation_snapshot_scope ON platform.site_activation_authority_snapshot
   USING (site_ref=NULLIF(current_setting('app.site_id',true),'') AND
     environment=current_setting('app.environment',true) AND
-    ((current_setting('app.workload_kind',true)='platform_admin' AND
+    ((current_setting('app.workload_kind',true)='admin_workload' AND
       current_setting('app.actor_kind',true)='operator' AND
       current_setting('app.operation',true)='site.activation.begin') OR
      (current_setting('app.workload_kind',true)='platform_worker' AND
@@ -317,7 +353,7 @@ CREATE POLICY site_activation_snapshot_scope ON platform.site_activation_authori
     ((current_setting('app.workload_kind',true)='platform_worker' AND
       current_setting('app.actor_kind',true)='workload' AND
       current_setting('app.operation',true)='site.activation.commit' AND phase='pre-cas') OR
-     (current_setting('app.workload_kind',true)='platform_admin' AND
+     (current_setting('app.workload_kind',true)='admin_workload' AND
       current_setting('app.actor_kind',true)='operator' AND
       current_setting('app.operation',true)='site.activation.begin' AND phase='begin')));
 CREATE POLICY site_activation_eligibility_scope ON platform.site_activation_eligibility_evidence
@@ -325,8 +361,9 @@ CREATE POLICY site_activation_eligibility_scope ON platform.site_activation_elig
     WHERE snapshot.attempt_ref=site_activation_eligibility_evidence.attempt_ref
       AND snapshot.site_ref=NULLIF(current_setting('app.site_id',true),'')
       AND snapshot.environment=current_setting('app.environment',true)
-      AND ((current_setting('app.workload_kind',true)='platform_admin' AND
-            current_setting('app.actor_kind',true)='operator') OR
+      AND ((current_setting('app.workload_kind',true)='admin_workload' AND
+            current_setting('app.actor_kind',true)='operator' AND
+            current_setting('app.operation',true)='site.activation.begin') OR
            (current_setting('app.workload_kind',true)='platform_worker' AND
             current_setting('app.actor_kind',true)='workload' AND
             current_setting('app.operation',true)='site.activation.commit'))))
