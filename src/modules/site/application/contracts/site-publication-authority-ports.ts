@@ -8,6 +8,28 @@ import type {
   SitePublicationNodeKind,
   SiteReleaseCandidateAuthority,
 } from "../../domain/site-publication-authority.js";
+import type {
+  SiteWebBuildIntentDsseEnvelope,
+  SITE_WEB_BUILD_INTENT_PAYLOAD_TYPE,
+} from "../../domain/site-web-build-intent-dsse.js";
+
+export interface SiteWebBuildIntentSigningKeyBinding {
+  readonly keyId: string;
+  readonly keyVersion: bigint;
+  readonly publicKeyFingerprint: string;
+}
+
+export interface SiteWebBuildIntentSignerPort {
+  sign(input: Readonly<{
+    key: SiteWebBuildIntentSigningKeyBinding;
+    payloadType: typeof SITE_WEB_BUILD_INTENT_PAYLOAD_TYPE;
+    payload: Uint8Array;
+  }>): Promise<SiteWebBuildIntentDsseEnvelope>;
+  verify(input: Readonly<{
+    key: SiteWebBuildIntentSigningKeyBinding;
+    envelope: SiteWebBuildIntentDsseEnvelope;
+  }>): Promise<void>;
+}
 
 export interface SiteReleaseCandidateAssemblyPort {
   assemble(
