@@ -110,13 +110,14 @@ const memoryDatabaseUrls = Object.freeze({
       operation: string,
       subjectRef: string,
       region = "us-east-1",
+      environment = "staging",
     ): Promise<void> => {
       await admin.query(
         `SELECT set_config('app.operation',$1,true),set_config('app.site_id',$2,true),
-                set_config('app.environment','production',true),set_config('app.region',$3,true),
+                set_config('app.environment',$5,true),set_config('app.region',$3,true),
                 set_config('app.workload_kind','admin_workload',true),
                 set_config('app.actor_kind','operator',true),set_config('app.subject_id',$4,true)`,
-        [operation, ownSiteRef, region, subjectRef],
+        [operation, ownSiteRef, region, subjectRef, environment],
       );
     };
 
@@ -214,7 +215,7 @@ const memoryDatabaseUrls = Object.freeze({
         await bootstrap.query(
           `INSERT INTO platform.command_receipt
            (command_id,environment,region,caller_identity,operation,idempotency_key,request_digest)
-           VALUES ($1,'production','us-east-1',$2,'admin.authority.change',$3,repeat('1',64))`,
+           VALUES ($1,'staging','us-east-1',$2,'admin.authority.change',$3,repeat('1',64))`,
           [commandId, operatorRef, idempotencyKey],
         );
       }
@@ -225,10 +226,10 @@ const memoryDatabaseUrls = Object.freeze({
           approval_policy,operator_reason,admitted_at,expires_at)
          VALUES
          ($1,$2,repeat('1',64),'{}',repeat('2',64),'admin.authority.change',$3,1,1,$4,
-          'production','us-east-1','dangerous','pre_effect','generic change',
+          'staging','us-east-1','dangerous','pre_effect','generic change',
           '2099-08-08T12:00:00.123456Z','2100-08-08T12:00:00.000000Z'),
          ($5,$6,repeat('1',64),'{}',repeat('2',64),'admin.authority.change',$3,1,1,NULL,
-          'production','us-east-1','dangerous','pre_effect','global change',
+          'staging','us-east-1','dangerous','pre_effect','global change',
           '2099-08-08T11:59:00.000000Z','2100-08-08T12:00:00.000000Z')`,
         [sharedApprovalRef, genericCommandId, operatorRef, ownSiteRef,
           globalApprovalRef, globalCommandId],
@@ -243,7 +244,7 @@ const memoryDatabaseUrls = Object.freeze({
           `INSERT INTO platform.site_effect_approval
            (approval_ref,site_ref,environment,region,operation,effect_digest,reason,command_id,
             idempotency_key,request_digest,state,maker_subject_ref,requested_at,expires_at)
-           VALUES ($1,$2,'production',$3,'site.activation.begin',repeat('3',64),
+           VALUES ($1,$2,'staging',$3,'site.activation.begin',repeat('3',64),
                    'activate release',$4,$5,repeat('4',64),'pending',$6,$7::timestamptz,
                    '2100-08-08T12:00:00.000000Z')`,
           [approvalRef, siteRef, region, randomUUID(), `lifecycle-${approvalRef}`, operatorRef,
@@ -257,12 +258,28 @@ const memoryDatabaseUrls = Object.freeze({
         `INSERT INTO platform.site_effect_approval
          (approval_ref,site_ref,environment,region,operation,effect_digest,reason,command_id,
           idempotency_key,request_digest,state,maker_subject_ref,requested_at,expires_at)
-         VALUES ($1,$2,'production','us-east-1','site.activation.begin',repeat('5',64),
+         VALUES ($1,$2,'staging','us-east-1','site.activation.begin',repeat('5',64),
                  'policy transition',$3,$4,repeat('6',64),'pending',$5,
                  '2099-08-08T10:00:00.000001Z','2100-08-08T10:00:00.000001Z')`,
         [policyApprovalRef, ownSiteRef, randomUUID(), `policy-${policyApprovalRef}`, operatorRef],
       );
       await admin.query("COMMIT");
+
+      for (const [environment, region] of [
+        ["production", "us-east-1"],
+        ["staging", "us-west-2"],
+      ] as const) {
+        await admin.query("BEGIN");
+        await setOwnerContext("site.approval.approve", checkerRef, region, environment);
+        expect((await admin.query(
+          `UPDATE platform.site_effect_approval
+           SET state='approved',checker_subject_ref=$2,decided_at='2099-08-08T10:00:30.000002Z',
+               updated_at='2099-08-08T10:00:30.000002Z'
+           WHERE approval_ref=$1::uuid`,
+          [policyApprovalRef, checkerRef],
+        )).rowCount).toBe(0);
+        await admin.query("ROLLBACK");
+      }
 
       await admin.query("BEGIN");
       await setOwnerContext("site.approval.approve", checkerRef);
@@ -285,6 +302,17 @@ const memoryDatabaseUrls = Object.freeze({
          WHERE approval_ref=$1::uuid`,
         [policyApprovalRef],
       )).rejects.toThrow("SITE_EFFECT_APPROVAL_CHECKER_EVIDENCE_IMMUTABLE");
+
+      await admin.query("BEGIN");
+      await setOwnerContext("site.traffic-stop.suspend", checkerRef);
+      expect((await admin.query(
+        `UPDATE platform.site_effect_approval
+         SET state='consumed',consumed_request_id=$2,
+             consumed_at='2099-08-08T10:01:30.000003Z',updated_at='2099-08-08T10:01:30.000003Z'
+         WHERE approval_ref=$1::uuid`,
+        [policyApprovalRef, `request:${suffix}:wrong-operation`],
+      )).rowCount).toBe(0);
+      await admin.query("ROLLBACK");
 
       await admin.query("BEGIN");
       await setOwnerContext("site.activation.begin", checkerRef);
@@ -311,7 +339,7 @@ const memoryDatabaseUrls = Object.freeze({
       const reader = new PostgresAdminQueryReader(host);
       const basePermit = {
         operatorRef,
-        environment: "production",
+        environment: "staging",
         region: "us-east-1",
         operation: "admin.approval.list",
         authorityBindingDigest: "a".repeat(64),
@@ -380,7 +408,7 @@ const memoryDatabaseUrls = Object.freeze({
       await admin.query("BEGIN");
       await admin.query(
         `SELECT set_config('app.operation','admin.site.read',true),
-                set_config('app.environment','production',true),
+                set_config('app.environment','staging',true),
                 set_config('app.region','us-east-1',true),
                 set_config('app.workload_kind','platform_admin',true),
                 set_config('app.actor_kind','operator',true),
