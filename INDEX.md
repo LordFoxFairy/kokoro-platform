@@ -15,7 +15,7 @@ one migration authority. API, worker, Admission, Authorization, Asset Data Plane
 independently selectable processes with exact database credential classes. PostgreSQL RLS, security-definer projections and
 process-specific grants enforce the internal boundaries. Split workers additionally bind their configured role name to a
 migrator-maintained PostgreSQL role OID and use only operation-fenced security-definer routines for authority row locks; no worker
-receives broad authority-table UPDATE. There is no MySQL authority mode, dual write or legacy cutover path.
+receives broad authority-table UPDATE. This PostgreSQL implementation is the sole business authority.
 
 ## Responsibilities
 
@@ -29,7 +29,7 @@ Platform does not execute Agent graphs, own Session messages/SSE, render Site We
 
 Ordinary Site product traffic uses the bounded public HTTP/JSON BFF contract. Privileged control planes use Root-owned
 Protobuf/Connect contracts: Admin Identity/Query/Commerce/Credit/Site Provisioning/Model Control and the declared-only Product Catalog publication provider, Session Admission and Asset Eligibility, Hub capability
-publication/runtime, and Agent Model Gateway. The legacy Admin Auth provider remains implemented without a current official Web consumer. Same-Platform bounded contexts never self-RPC; application ports and one scoped
+publication/runtime, and Agent Model Gateway. Same-Platform bounded contexts never self-RPC; application ports and one scoped
 transaction coordinate local owners. Root `src/index.ts` exposes only the Platform composition surface, and
 `deploy/docker/Dockerfile` builds the closed runtime artifact. `platform-hub-connect` selects the private Hub
 Connect entrypoint independently from the `@kokoro/hub` HTTP process. Root-generated contracts,
@@ -52,7 +52,7 @@ Root currently registers only GET redemption; Platform does not invent HEAD or c
 
 ## Callers and dependencies
 
-Web Admin calls the generated Admin Identity, Query, Commerce, Credit, Site Provisioning, and Model Control services; the legacy Admin Auth provider has no current official Web consumer. Session consumes versioned internal APIs; Agent reaches model/capability backends only through approved runtime protocols.
+Web Admin calls the generated Admin Identity, Query, Commerce, Credit, Site Provisioning, and Model Control services. Session consumes versioned internal APIs; Agent reaches model/capability backends only through approved runtime protocols.
 
 ## Data ownership and events
 

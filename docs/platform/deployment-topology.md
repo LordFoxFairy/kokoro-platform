@@ -26,9 +26,6 @@ accepts a module path.
 | `@kokoro/hub` | Mongo/S3 | skill/MCP HTTP management surface |
 | `platform-hub-connect` | Mongo/S3 | private catalog publication and Agent runtime resolution |
 
-The retired per-domain MySQL services are not deployables and must not appear in image selectors,
-Compose, Kubernetes, CI services, service discovery, or release manifests.
-
 ## Startup order
 
 1. Provision PostgreSQL 18 and the distinct roles named by `deployables.yaml`.
@@ -147,8 +144,7 @@ active deadline and a PostgreSQL advisory lock; it never runs inside a polling w
 - mTLS/Connect services use distinct workload identities and bounded request sizes;
 - production credentials are process-specific; Commerce, Site, Asset, Admin, Identity and Authorization
   maintenance never share a runtime database role, secret mount or worker lifecycle;
-- rollbacks select a prior verified image digest and compatible PostgreSQL schema, never a retired
-  MySQL service.
+- rollbacks select a prior verified image digest and compatible PostgreSQL schema.
 
 ## Verification
 

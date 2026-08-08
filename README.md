@@ -38,12 +38,6 @@ Root contracts, protobuf modules and JSON-schema validators are checked in exact
 build-local under `src/generated/platform-prisma`. Package-local vendors and per-service generated
 mirrors are not supported.
 
-The directories `kokoro-site`, `kokoro-user`, `kokoro-model`, `kokoro-credit`, `kokoro-payment`,
-and `kokoro-platform-admin` are retired source archives. They are deliberately absent from the
-pnpm workspace, root dependencies, lock importers, TypeScript build, lint, tests, Docker build
-context, final image, runtime selector, Compose/Kubernetes templates, CI, and release artifact.
-They are not a rollback path and receive no data migration compatibility.
-
 ## Database authority
 
 `DATABASE_URL_PLATFORM` must be PostgreSQL and must use the exact credential class for the selected
@@ -79,7 +73,7 @@ roles. They never start an implicit local database.
 
 `deployables.yaml` is the process-role inventory. `deploy/docker/Dockerfile` creates one production
 image, and `deploy/docker/runtime-entrypoint.mjs` selects only the closed runtime set above. The image
-verifier rejects source trees, dev tooling, unexpected workspaces, retired packages, incomplete
+verifier rejects source trees, dev tooling, unexpected workspaces, incomplete
 migrations, and missing compiled entrypoints.
 
 See [deployment topology](docs/platform/deployment-topology.md) and

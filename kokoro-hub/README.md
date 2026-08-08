@@ -1,6 +1,6 @@
 # @kokoro/hub
 
-skill/MCP 能力中台的管理写面与运行时发布权威。Fresh runtime 不依赖旧 `kokoro-user`；self-service 在 PostgreSQL Platform membership adapter 接入前保持 fail-closed。
+skill/MCP 能力中台的管理写面与运行时发布权威。Hub 不拥有独立身份包；self-service 在 PostgreSQL Platform membership adapter 接入前保持 fail-closed。
 
 ## 职责
 

@@ -21,7 +21,7 @@ Admin MCP registration is an admission boundary, not a raw repository proxy: `en
 ## Callers and dependencies
 Admin and Platform orchestration write through Hub. Platform freezes a SiteRelease-bound catalog through private ConnectRPC. Agent alone consumes `ResolveExecutionAssembly` and `FetchSkillArtifact`; it must present the exact `agent_catalog_ref` and ordered grants issued by Session.
 
-Fresh runtime has no `kokoro-user` dependency. Hub self-service remains fail-closed until the PostgreSQL Platform membership owner adapter is injected; do not restore the retired MySQL HTTP edge.
+Hub has no separate identity-package dependency. Self-service remains fail-closed until the PostgreSQL Platform membership owner adapter is injected; do not add a second identity authority.
 
 ## Data ownership and events
 Hub owns capability catalog/revision metadata and package references in Mongo/S3-compatible storage. A frozen catalog is immutable, Ed25519-signed with an explicit key revision, and carries its durable Platform projection state in the same Mongo document.
@@ -37,7 +37,7 @@ invoke only the existing `HubRuntimeService`. Connect traffic uses 4252; a separ
 probe listener uses 4253 and is not service-discovered. A single skill artifact is capped at 32 MiB;
 one assembly is capped at 64 MiB compressed and 128 MiB unpacked.
 
-All official Hub Admin namespace resources (skill catalog, skill revision uploads, skill curation, and MCP servers) are explicitly platform-global (`siteScopeField: null`). The Admin gateway therefore exposes them only to operators with wildcard Site scope; no finite Site scope is treated as an implicit namespace filter.
+All official Hub Admin namespace resources (skill catalog, skill revision uploads, skill curation, and MCP servers) are explicitly platform-global (`siteScopeField: null`). The Platform Admin control plane therefore exposes them only to operators with wildcard Site scope; no finite Site scope is treated as an implicit namespace filter.
 
 ## Idempotency, failure, and recovery
 Revision/CAS and content hashes handle duplicate publication; package-first metadata-second writes prevent dangling live references. Freeze command identity, request digest, publication, and projection intent are inserted atomically. Ambiguous projection delivery reconciles the exact Platform receipt before retrying the same command identity.

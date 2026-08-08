@@ -1,10 +1,30 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import { parse } from "yaml";
 
 const root = resolve(import.meta.dirname, "../..");
+const legacySourceDirectories = Object.freeze([
+  "kokoro-platform-admin", "kokoro-site", "kokoro-user", "kokoro-model",
+  "kokoro-credit", "kokoro-payment",
+]);
+const localBuildOutputs = new Set(["dist", "generated", "node_modules"]);
+
+async function sourceTreeEntries(directory) {
+  try {
+    const entries = await readdir(resolve(root, directory), { withFileTypes: true });
+    const nested = await Promise.all(entries.map(async (entry) => {
+      if (localBuildOutputs.has(entry.name)) return [];
+      const relative = `${directory}/${entry.name}`;
+      return entry.isDirectory() ? sourceTreeEntries(relative) : [relative];
+    }));
+    return nested.flat().sort();
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
+}
 
 function workflowJobs(source) {
   const document = parse(source);
@@ -110,12 +130,24 @@ test("artifact is built once from the repository-owned Dockerfile", async () => 
   }]);
 });
 
-test("legacy source directories are excluded from Docker build context", async () => {
-  const dockerignore = await readFile(resolve(root, ".dockerignore"), "utf8");
-  for (const directory of [
-    "kokoro-platform-admin", "kokoro-site", "kokoro-user", "kokoro-model",
-    "kokoro-credit", "kokoro-payment",
-  ]) assert.match(dockerignore, new RegExp(`^${directory}$`, "mu"));
+test("legacy source trees are deleted rather than excluded from active tooling", async () => {
+  const [dockerignore, eslintConfig, workspace, lockfile] = await Promise.all([
+    readFile(resolve(root, ".dockerignore"), "utf8"),
+    readFile(resolve(root, "eslint.config.mjs"), "utf8"),
+    readFile(resolve(root, "pnpm-workspace.yaml"), "utf8").then(parse),
+    readFile(resolve(root, "pnpm-lock.yaml"), "utf8").then(parse),
+  ]);
+  assert.deepEqual(workspace.packages, ["kokoro-platform-kit", "kokoro-hub"]);
+  assert.deepEqual(Object.keys(lockfile.importers).sort(), [
+    ".", "kokoro-hub", "kokoro-platform-kit",
+  ]);
+  assert.match(dockerignore, /^\*\*\/dist$/mu);
+  assert.match(dockerignore, /^\*\*\/generated\/prisma$/mu);
+  for (const directory of legacySourceDirectories) {
+    assert.deepEqual(await sourceTreeEntries(directory), [], `${directory} source tree must be deleted`);
+    assert.doesNotMatch(dockerignore, new RegExp(`^${directory}$`, "mu"));
+    assert.doesNotMatch(eslintConfig, new RegExp(`^[ \\t]*["']${directory}/\\*\\*["'],?$`, "mu"));
+  }
 });
 
 test("canonical contract trees remain in the clean Docker build context", async () => {

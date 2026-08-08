@@ -5,8 +5,7 @@
 ## 放这里
 
 - platform 父仓职责、模块注册、部署拓扑、统一验证和 admin 入口。
-- kokoro-site / kokoro-user / kokoro-model / kokoro-credit / kokoro-payment /
-  kokoro-litellm / platform-kit 的模块方案。
+- `src/modules/` 下的 Platform bounded contexts，以及 Hub、LiteLLM adapter 和 Platform Kit 的模块方案。
 - 平台域内部的 multi-site、tenant、admin、tech hardening、module roadmap。
 
 ## 不放这里
@@ -19,10 +18,10 @@
 
 ## 入口
 
-- [platform 总路线](./platform/subrepo-capability-roadmap.md)
-- [platform 部署拓扑](./platform/deployment-topology.md)
-- [platform 模块交接](./platform/modules/README.md)
-- [multi-site 分册](./platform/multi-site/README.md)
+- [Platform 当前边界](../INDEX.md)
+- [Platform 部署拓扑](./platform/deployment-topology.md)
+- [Platform 模块入口](./platform/modules/README.md)
+- [Multi-site 边界](./platform/multi-site/README.md)
 
 ## 与 namespace 的关系
 

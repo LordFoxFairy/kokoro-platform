@@ -1,39 +1,14 @@
-# Kokoro Platform 子仓技术方案索引
+# Platform 模块入口
 
-本文档包用于交接 `kokoro-platform` 下各子仓的技术方案。阅读顺序：
+当前 Platform 业务 owner 位于根 `src/modules/`，共享一套 PostgreSQL migration authority。修改前先读对应目录的 `INDEX.md`：
 
-```text
-00-overview.md
-  平台子仓共性约束、数据库选型、部署和验证策略。
+- `src/modules/site`：Site lifecycle、publication、provisioning 与 runtime effects。
+- `src/modules/identity`：身份、membership、security management 与 namespace allocation。
+- `src/modules/model-control`、`src/modules/model-gateway`：模型目录、Site policy 与 provider effects。
+- `src/modules/credit`、`src/modules/commerce`：usage/credit authority 与购买、兑换、履约。
+- `src/modules/admin-control`、`src/modules/admission`、`src/modules/authorization`：privileged control、Admission 与授权。
+- `src/modules/artifact`、`src/modules/media`、`src/modules/memory`：产物、媒体执行与 Product Memory。
+- `src/modules/product-catalog`、`src/modules/policy`、`src/modules/hub`：产品发布、策略与 Hub projection。
+- `kokoro-hub`：独立 Hub HTTP package；`kokoro-platform-kit`：无业务状态的共享 runtime library。
 
-01-kokoro-site.md
-  站点、域名、应用开关、策略、品牌、SEO 的权威模块。
-
-02-kokoro-user.md
-  站点内用户、团队、成员、角色、服务账号和审计模块。
-
-03-kokoro-model.md
-  模型配置、provider account、model binding、label、LiteLLM/直连分流模块。
-
-04-kokoro-credit.md
-  积分账户、冻结、账本、usage、pricing rule、套餐权益结算模块。
-
-05-kokoro-payment.md
-  plan、order、subscription、payment event、provider webhook 模块。
-
-06-kokoro-litellm.md
-  LiteLLM 网关集成边界，不复制网关实现。
-
-07-kokoro-platform-kit.md
-  无业务状态的公共基础工具包边界。
-```
-
-总原则：
-
-```text
-siteId 是第一业务隔离边界。
-核心管理数据用 MySQL。
-产物和任务结果后续用 Mongo。
-当前方案不引入 PostgreSQL。
-每个子仓自己拥有 schema、API、admin manifest、部署入口和测试。
-```
+当前边界以根 `INDEX.md`、各模块 `INDEX.md` 和 `docs/platform/deployment-topology.md` 为准。
