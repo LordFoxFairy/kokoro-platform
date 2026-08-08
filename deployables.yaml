@@ -88,6 +88,7 @@ deployables:
       migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
       expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
       credentialClass: platform-admission
+      identityLifecycle: run-scoped-leased-role
       permissions: admission-owner-transaction-only
       ddl: forbidden
     activationAuthorized: false
@@ -588,6 +589,7 @@ deployables:
       expectedUserEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
       apiRoleEnvironmentVariable: PLATFORM_DATABASE_API_ROLE
       admissionRoleEnvironmentVariable: PLATFORM_DATABASE_ADMISSION_ROLE
+      admissionRoleLifecycle: run-scoped-leased-role
       commerceWorkerRoleEnvironmentVariable: PLATFORM_DATABASE_COMMERCE_WORKER_ROLE
       siteWorkerRoleEnvironmentVariable: PLATFORM_DATABASE_SITE_WORKER_ROLE
       assetWorkerRoleEnvironmentVariable: PLATFORM_DATABASE_ASSET_WORKER_ROLE

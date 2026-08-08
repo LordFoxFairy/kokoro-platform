@@ -1308,19 +1308,18 @@ describe("Platform PostgreSQL foundation", () => {
       const role = await bootstrap.query<{
         inherits: boolean;
         bypasses_rls: boolean;
-        inherits_canonical_admission: boolean;
+        fixed_admission_role_absent: boolean;
       }>(
         `SELECT runtime_role.rolinherit AS inherits,
                 runtime_role.rolbypassrls AS bypasses_rls,
-                pg_has_role(runtime_role.rolname,'platform_admission','MEMBER')
-                  AS inherits_canonical_admission
+                to_regrole('platform_admission') IS NULL AS fixed_admission_role_absent
            FROM pg_roles runtime_role WHERE runtime_role.rolname=$1`,
         [admissionUser],
       );
       expect(role.rows).toEqual([{
         inherits: false,
         bypasses_rls: false,
-        inherits_canonical_admission: false,
+        fixed_admission_role_absent: true,
       }]);
 
       const policies = await bootstrap.query<{
@@ -1367,6 +1366,130 @@ describe("Platform PostgreSQL foundation", () => {
     }
   });
 
+  it("retires fixed and superseded Admission identities to zero database authority", async () => {
+    const suffix = randomUUID().replaceAll("-", "").slice(0, 12);
+    const fixedRole = "platform_admission";
+    const retiredRole = `kt_pg_admission_retired_${suffix}`;
+    const password = `retired-${suffix}`;
+    const bootstrap = new Client({ connectionString: bootstrapDatabaseUrl });
+    const currentAdmission = createPlatformDatabaseClient(
+      loadPlatformDatabaseConfig("admission", {
+        DATABASE_URL_PLATFORM: admissionDatabaseUrl,
+        PLATFORM_DATABASE_CREDENTIAL_CLASS: "admission",
+        PLATFORM_DATABASE_ADMISSION_ROLE: admissionUser,
+        PLATFORM_DATABASE_MIGRATOR_ROLE: migratorUser,
+        PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
+      }),
+    );
+    await bootstrap.connect();
+    try {
+      const fixedBefore = await bootstrap.query(
+        "SELECT 1 FROM pg_roles WHERE rolname='platform_admission'",
+      );
+      expect(fixedBefore.rowCount).toBe(0);
+      await createLoginOnlyTestRole(bootstrap, fixedRole, password);
+      await createLoginOnlyTestRole(bootstrap, retiredRole, password);
+      for (const roleName of [fixedRole, retiredRole]) {
+        const identifier = quoteIdentifier(roleName);
+        await bootstrap.query(
+          `GRANT CONNECT ON DATABASE ${quoteIdentifier(databaseName)} TO ${identifier}`,
+        );
+        await bootstrap.query(`GRANT USAGE ON SCHEMA platform TO ${identifier}`);
+        await bootstrap.query(
+          `GRANT INSERT ON TABLE platform.admission_command TO ${identifier}`,
+        );
+        await bootstrap.query(
+          `GRANT EXECUTE ON FUNCTION platform.admission_role_identity_is_current() TO ${identifier}`,
+        );
+      }
+      await bootstrap.query(
+        `UPDATE platform.runtime_role_identity_authority
+         SET role_name=$1::name,
+             role_oid=(SELECT oid::bigint FROM pg_roles WHERE rolname=$1::name),recorded_at=now()
+         WHERE role_kind='admission'`,
+        [retiredRole],
+      );
+
+      await runPlatformMigrations({ environment: platformMigrationEnvironment() });
+      await currentAdmission.connect();
+      await currentAdmission.checkHealth();
+
+      const retired = await bootstrap.query<{
+        role_name: string;
+        can_connect: boolean;
+        can_use_platform: boolean;
+        has_relation_authority: boolean;
+        has_routine_authority: boolean;
+        has_default_authority: boolean;
+        has_policy_authority: boolean;
+      }>(
+        `SELECT role_row.rolname AS role_name,
+                has_database_privilege(role_row.rolname,current_database(),'CONNECT') AS can_connect,
+                has_schema_privilege(role_row.rolname,'platform','USAGE') AS can_use_platform,
+                EXISTS (
+                  SELECT 1 FROM pg_class relation
+                  WHERE relation.relnamespace=to_regnamespace('platform') AND (
+                    has_table_privilege(role_row.rolname,relation.oid,
+                      'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+                    OR has_any_column_privilege(role_row.rolname,relation.oid,
+                      'SELECT,INSERT,UPDATE,REFERENCES')
+                  )
+                ) AS has_relation_authority,
+                EXISTS (
+                  SELECT 1 FROM pg_proc routine
+                  WHERE routine.pronamespace=to_regnamespace('platform')
+                    AND has_function_privilege(role_row.rolname,routine.oid,'EXECUTE')
+                ) AS has_routine_authority,
+                EXISTS (
+                  SELECT 1 FROM pg_default_acl defaults
+                  CROSS JOIN LATERAL aclexplode(defaults.defaclacl) acl
+                  WHERE acl.grantee=role_row.oid
+                ) AS has_default_authority,
+                EXISTS (
+                  SELECT 1 FROM pg_policy policy WHERE role_row.oid=ANY(policy.polroles)
+                ) AS has_policy_authority
+           FROM pg_roles role_row WHERE role_row.rolname=ANY($1::text[])
+           ORDER BY role_row.rolname`,
+        [[fixedRole, retiredRole]],
+      );
+      expect(retired.rows).toEqual([
+        fixedRole,
+        retiredRole,
+      ].sort().map((roleName) => ({
+        role_name: roleName,
+        can_connect: false,
+        can_use_platform: false,
+        has_relation_authority: false,
+        has_routine_authority: false,
+        has_default_authority: false,
+        has_policy_authority: false,
+      })));
+
+      for (const roleName of [fixedRole, retiredRole]) {
+        const url = new URL(bootstrapDatabaseUrl);
+        url.username = roleName;
+        url.password = password;
+        const denied = new Client({ connectionString: url.toString() });
+        await expect(denied.connect()).rejects.toThrow();
+        await denied.end().catch(() => undefined);
+      }
+    } finally {
+      await currentAdmission.disconnect();
+      await bootstrap.query(
+        `UPDATE platform.runtime_role_identity_authority
+         SET role_name=$1::name,
+             role_oid=(SELECT oid::bigint FROM pg_roles WHERE rolname=$1::name),recorded_at=now()
+         WHERE role_kind='admission'`,
+        [admissionUser],
+      ).catch(() => undefined);
+      for (const roleName of [fixedRole, retiredRole]) {
+        await bootstrap.query(`DROP OWNED BY ${quoteIdentifier(roleName)}`).catch(() => undefined);
+        await bootstrap.query(`DROP ROLE IF EXISTS ${quoteIdentifier(roleName)}`).catch(() => undefined);
+      }
+      await bootstrap.end();
+    }
+  }, 60_000);
+
   it("lets the exact leased Admission role reserve media access only inside its site fence", async () => {
     const suffix = randomUUID();
     const siteRef = `admission-media-site-${suffix}`;
@@ -1404,16 +1527,23 @@ describe("Platform PostgreSQL foundation", () => {
       await expect(reserve(`media-command-${suffix}`, "a")).resolves.toMatchObject({ rowCount: 1 });
       await admission.query("ROLLBACK");
 
-      await admission.query("BEGIN");
-      await admission.query(
-        `SELECT set_config('app.operation','admission.command',true),
-                set_config('app.workload_kind','platform_admission',true),
-                set_config('app.site_id',$1,true)`,
-        [`foreign-${siteRef}`],
-      );
-      await expect(reserve(`foreign-media-command-${suffix}`, "d"))
-        .rejects.toMatchObject({ code: "42501" });
-      await admission.query("ROLLBACK");
+      for (const [operation, workload, scopedSite, marker] of [
+        ["site.evidence.authorize", "platform_admission", siteRef, "operation"],
+        ["admission.command", "platform_worker", siteRef, "workload"],
+        ["admission.command", "platform_admission", `foreign-${siteRef}`, "site"],
+      ] as const) {
+        await admission.query("BEGIN");
+        await admission.query(
+          `SELECT set_config('app.operation',$1,true),
+                  set_config('app.workload_kind',$2,true),
+                  set_config('app.site_id',$3,true)`,
+          [operation, workload, scopedSite],
+        );
+        await expect(reserve(`${marker}-media-command-${suffix}`, marker.slice(0, 1)))
+          .rejects.toMatchObject({ code: "42501" });
+        await admission.query("ROLLBACK");
+      }
+
     } finally {
       await admission.query("ROLLBACK").catch(() => undefined);
       await bootstrap.query("ROLLBACK").catch(() => undefined);

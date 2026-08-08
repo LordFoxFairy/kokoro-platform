@@ -35,7 +35,14 @@ plaintext or development fallback.
 
 The PostgreSQL lifecycle owner durably freezes the Session binding and execution manifest, mirrors the Credit-owned segment CAS in the same transaction, and never persists trigger-message content or opaque execution-lineage plaintext. Production constructs this adapter itself; deployment cannot replace it.
 
-Admission database identities are run-scoped leased login roles with `NOINHERIT`; they are not members of the fixed `platform_admission` role. Media-access reservations therefore use the recorded role name/OID authority together with the exact `admission.command`, `platform_admission`, and Site transaction context in both RLS `USING` and `WITH CHECK`. A fixed-role policy or a Site-only predicate is not a valid substitute.
+Admission database identities are run-scoped `kt_pg_*` leased login roles with `NOINHERIT`; a fixed
+`platform_admission` database role is not provisioned. The bootstrap administrator creates only the
+login, while the migrator grants the current lease its exact database authority, records its name/OID,
+and removes every database, schema, relation, routine, default-ACL and policy authority from the
+superseded lease before rebinding. `platform_admission` remains only the trusted transaction
+`app.workload_kind`, not a PostgreSQL principal. Media-access reservations therefore bind the recorded
+role name/OID together with the exact `admission.command`, workload kind, and Site transaction context
+in both RLS `USING` and `WITH CHECK`.
 
 The native Site owner resolves only an active exact Site, active release, active project, and allowlisted locale; it has no default-Site fallback and does not own GA runtime policy. The native Model owner resolves only an option published by that immutable release. Its admission-only security-definer projection excludes provider account and secret references, preserves the option's declared orchestration primary/fallback order, and chooses a healthy binding deterministically before any effect. Production constructs both adapters itself.
 

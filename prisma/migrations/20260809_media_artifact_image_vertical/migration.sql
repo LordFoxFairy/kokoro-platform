@@ -459,10 +459,6 @@ CREATE TABLE platform.artifact_delivery_authorization (
 
 ALTER TABLE platform.admission_media_access_authorization ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.admission_media_access_authorization FORCE ROW LEVEL SECURITY;
-CREATE POLICY admission_media_access_scope ON platform.admission_media_access_authorization
-  TO platform_admission
-  USING(site_id=NULLIF(current_setting('app.site_id',true),''))
-  WITH CHECK(site_id=NULLIF(current_setting('app.site_id',true),''));
 CREATE POLICY admission_media_access_runtime_definer ON platform.admission_media_access_authorization
   TO platform_migrator
   USING(SESSION_USER='platform_media_runtime');
@@ -633,7 +629,6 @@ REVOKE ALL ON TABLE
   platform.artifact_delivery_authorization
 FROM PUBLIC;
 
-GRANT SELECT,INSERT,UPDATE ON platform.admission_media_access_authorization TO platform_admission;
 GRANT SELECT ON platform.media_operation_definition_revision TO platform_admin;
 GRANT SELECT,INSERT ON platform.site_release_media_definition TO platform_admin;
 GRANT SELECT,INSERT,UPDATE ON

@@ -10,7 +10,7 @@ accepts a module path.
 |---|---|---|
 | `platform-migrator` | PostgreSQL migrator | one-shot schema/ACL migration |
 | `platform-api` | PostgreSQL API role | public mTLS HTTPS owner on 4100; pod-only HTTP probes on 4101 |
-| `platform-admission` | PostgreSQL Admission role | Admission Connect owner |
+| `platform-admission` | run-scoped PostgreSQL `kt_pg_*` lease | Admission Connect owner |
 | `platform-authorization` | PostgreSQL authorization role | session authorization feed |
 | `platform-asset-data-plane` | PostgreSQL asset-data-plane role | capability-scoped multipart provider effects |
 | `platform-artifact-data-plane` | PostgreSQL Artifact data-plane role + private S3 | generated GET binary redemption with durable audit and mTLS workload binding |
@@ -28,8 +28,11 @@ accepts a module path.
 
 ## Startup order
 
-1. Provision PostgreSQL 18 and the distinct roles named by `deployables.yaml`.
-2. Run `platform-migrator` to completion.
+1. Provision PostgreSQL 18, the fixed non-Admission roles named by `deployables.yaml`, and one
+   login-only `kt_pg_*` Admission lease. The bootstrap administrator grants it no business authority.
+2. Supply the same `PLATFORM_DATABASE_ADMISSION_ROLE` to the migrator and Admission deployment, then
+   run `platform-migrator` to completion. It retires the prior Admission lease, pins the current
+   name/OID, and grants the exact current ACL.
 3. Start root runtime processes with their own database credentials.
 4. Start Hub HTTP and Hub Connect as separate processes with Mongo/package storage. Hub Connect also
    requires signing material, exact inbound Platform/Agent peers, and outbound Platform projection mTLS.
@@ -56,6 +59,8 @@ explicitly configured; that optional pair never replaces the Direct endpoint and
 `deploy/docker-compose.services.yml` contains only root Platform processes and Hub. It expects
 role-specific `DATABASE_URL_PLATFORM_*` variables plus Hub Mongo configuration from the caller's
 environment. It does not start infrastructure implicitly and never supplies development credentials.
+`PLATFORM_DATABASE_ADMISSION_ROLE` has no Compose default and must match the `kt_pg_*` user in
+`DATABASE_URL_PLATFORM_ADMISSION`; `platform_admission` is only an application workload-kind value.
 
 `platform-api` has no network outbound contract beyond its PostgreSQL authority. Its public listener
 uses mandatory client certificates on 4100, while its unpublished HTTP listener on 4101 serves only

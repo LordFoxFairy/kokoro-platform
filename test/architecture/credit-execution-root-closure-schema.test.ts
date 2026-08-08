@@ -13,7 +13,9 @@ describe("Credit execution root closure schema", () => {
     for (const existingRoleKind of ["memory_public", "memory_runtime", "memory_worker"]) {
       expect(migration).toContain(`'${existingRoleKind}'`);
     }
-    expect(migration).toContain("CREATE FUNCTION platform.admission_role_identity_is_current()");
+    expect(migration).toContain(
+      "CREATE OR REPLACE FUNCTION platform.admission_role_identity_is_current()",
+    );
     expect(migration).toContain("authority.role_kind='admission'");
     expect(migration).toContain("runtime_role.rolname=SESSION_USER");
     expect(migration).toContain("runtime_role.oid::BIGINT=authority.role_oid");
@@ -32,18 +34,7 @@ describe("Credit execution root closure schema", () => {
     expect(migration).not.toContain("SESSION_USER<>'platform_admission'");
     expect(migration).not.toContain("SESSION_USER='platform_admission'");
 
-    for (const routine of [
-      "record_admission_verified_terminal_evidence",
-      "find_execution_root_closure",
-      "lock_execution_root_closure",
-      "commit_execution_root_closure",
-      "mark_execution_root_reconciliation",
-    ]) {
-      expect(migration).toMatch(new RegExp(
-        `REVOKE EXECUTE ON FUNCTION platform\\.${routine}\\([\\s\\S]*?FROM platform_admission`,
-        "u",
-      ));
-    }
+    expect(migration).not.toMatch(/\b(?:TO|FROM)\s+platform_admission\b/iu);
   });
 
   it("keeps closure receipts immutable, conserved and fenced", async () => {
@@ -66,7 +57,8 @@ describe("Credit execution root closure schema", () => {
     expect(migration).toContain("PERFORM platform.assert_media_image_worker_lease(");
     expect(migration).toContain("platform.admission_verified_terminal_evidence");
     expect(migration).toContain("TO platform_media_worker");
-    expect(migration).toContain("platform_admission");
+    expect(migration).toContain("platform.admission_role_identity_is_current()");
+    expect(migration).not.toMatch(/\b(?:TO|FROM)\s+platform_admission\b/iu);
     expect(migration).not.toMatch(
       /GRANT\s+(?:SELECT|INSERT|UPDATE|DELETE|TRUNCATE)[\s\S]{0,200}\bTO\s+platform_media_worker\b/iu,
     );
@@ -164,7 +156,7 @@ describe("Credit execution root closure schema", () => {
       migration.indexOf("CREATE FUNCTION platform.execution_root_closure_receipt_json"),
     );
     expect(proof).toContain("SESSION_USER<>'platform_media_worker'");
-    expect(proof).toContain("SESSION_USER<>'platform_admission'");
+    expect(proof).toContain("NOT platform.admission_role_identity_is_current()");
     expect(proof).toContain("platform.admission_verified_terminal_evidence");
     expect(proof).toContain("terminal_evidence_digest");
     expect(proof).toContain("credit_direct_root_is_reference");

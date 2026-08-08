@@ -4,7 +4,7 @@ CREATE ROLE platform_migrator
 CREATE ROLE platform_api
   LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
   PASSWORD 'platform-api-ci';
-CREATE ROLE platform_admission
+CREATE ROLE kt_pg_platform_admission_ci
   LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
   PASSWORD 'platform-admission-ci';
 CREATE ROLE platform_authorization
@@ -67,7 +67,6 @@ REVOKE ALL ON DATABASE kokoro_test_platform FROM PUBLIC;
 GRANT CONNECT ON DATABASE kokoro_test_platform TO
   platform_migrator,
   platform_api,
-  platform_admission,
   platform_authorization,
   platform_asset_data_plane,
   platform_artifact_data_plane,

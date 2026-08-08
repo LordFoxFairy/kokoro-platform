@@ -17,6 +17,11 @@ process-specific grants enforce the internal boundaries. Split workers additiona
 migrator-maintained PostgreSQL role OID and use only operation-fenced security-definer routines for authority row locks; no worker
 receives broad authority-table UPDATE. This PostgreSQL implementation is the sole business authority.
 
+Admission uses a run-scoped `kt_pg_*` login rather than a fixed database role. The migrator owns its
+lease transition: it retires every prior Admission principal to zero business authority, records the
+current name/OID, then applies the exact runtime ACL. The application workload value
+`platform_admission` is not a PostgreSQL role name.
+
 ## Responsibilities
 
 Own shared Site, identity, Product Catalog publication, model-control, credit, commerce, capability, and privileged Admin business facts in a modular TypeScript service repository.

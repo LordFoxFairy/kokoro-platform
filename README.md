@@ -45,6 +45,12 @@ process. Runtime roles are distinct from the migrator and are verified against t
 role, PostgreSQL major version, schema ownership, grants, and RLS policy before serving traffic.
 There is no authority-mode switch: PostgreSQL is the Platform authority.
 
+Admission is the one rotating runtime identity: `PLATFORM_DATABASE_ADMISSION_ROLE` must name a
+run-scoped `kt_pg_*` login matching `DATABASE_URL_PLATFORM`. PostgreSQL bootstrap creates that login
+without business grants; `platform-migrator` grants the current lease, pins its role OID, and strips
+all authority from the superseded lease. A fixed `platform_admission` database role is not part of
+the production topology; the same text used by `app.workload_kind` is an application fence only.
+
 Migrations run only through `platform-migrator`; runtime processes have no DDL capability.
 
 ## Development and verification

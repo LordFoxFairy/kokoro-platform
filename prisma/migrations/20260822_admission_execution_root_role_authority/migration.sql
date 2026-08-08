@@ -11,7 +11,7 @@ ALTER TABLE platform.runtime_role_identity_authority
     'memory_public','memory_runtime','memory_worker','admission'
   ));
 
-CREATE FUNCTION platform.admission_role_identity_is_current()
+CREATE OR REPLACE FUNCTION platform.admission_role_identity_is_current()
 RETURNS BOOLEAN
 LANGUAGE sql
 STABLE
@@ -29,7 +29,7 @@ AS $function$
 $function$;
 REVOKE ALL ON FUNCTION platform.admission_role_identity_is_current() FROM PUBLIC;
 
-DROP POLICY admission_media_access_scope
+DROP POLICY IF EXISTS admission_media_access_scope
   ON platform.admission_media_access_authorization;
 CREATE POLICY admission_media_access_scope
   ON platform.admission_media_access_authorization
@@ -219,19 +219,3 @@ BEGIN
   END IF;
 END
 $function$;
-
-REVOKE EXECUTE ON FUNCTION platform.record_admission_verified_terminal_evidence(
-  TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,CHAR
-) FROM platform_admission;
-REVOKE EXECUTE ON FUNCTION platform.find_execution_root_closure(
-  TEXT,JSONB,TEXT,CHAR
-) FROM platform_admission;
-REVOKE EXECUTE ON FUNCTION platform.lock_execution_root_closure(
-  TEXT,JSONB,TEXT,UUID,UUID,UUID,UUID,UUID,TEXT,BIGINT,BIGINT,BIGINT,NUMERIC,TEXT
-) FROM platform_admission;
-REVOKE EXECUTE ON FUNCTION platform.commit_execution_root_closure(
-  JSONB
-) FROM platform_admission;
-REVOKE EXECUTE ON FUNCTION platform.mark_execution_root_reconciliation(
-  JSONB
-) FROM platform_admission;

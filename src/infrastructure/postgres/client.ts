@@ -80,6 +80,12 @@ export type PlatformCredentialClass =
   | "admin"
   | "migrator";
 
+const PLATFORM_ADMISSION_LEASED_ROLE_PATTERN = /^kt_pg_[a-z0-9_]{1,57}$/u;
+
+export function isPlatformAdmissionLeasedRole(value: string): boolean {
+  return PLATFORM_ADMISSION_LEASED_ROLE_PATTERN.test(value);
+}
+
 const ROLE_DEFAULTS = {
   api: { poolMax: 20, credentialClass: "api", identityEnv: "PLATFORM_DATABASE_API_ROLE" },
   admission: {
@@ -388,6 +394,9 @@ export function loadPlatformDatabaseConfig(
     environment[defaults.identityEnv],
     defaults.identityEnv,
   );
+  if (role === "admission" && !isPlatformAdmissionLeasedRole(expectedDatabaseUser)) {
+    throw new Error("PLATFORM_ADMISSION_DATABASE_ROLE_MUST_BE_LEASED");
+  }
   const migratorDatabaseUser = requireIdentifier(
     environment.PLATFORM_DATABASE_MIGRATOR_ROLE,
     "PLATFORM_DATABASE_MIGRATOR_ROLE",

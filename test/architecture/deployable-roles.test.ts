@@ -19,7 +19,9 @@ import { createPlatformApiProcess } from "../../src/process/api.js";
 import { createPlatformWorkerProcess } from "../../src/process/worker.js";
 
 const apiUrl = "postgresql://platform_api:secret@localhost:5432/kokoro_platform";
-const admissionUrl = "postgresql://platform_admission:secret@localhost:5432/kokoro_platform";
+const leasedAdmissionRole = "kt_pg_platform_admission_fixture";
+const admissionUrl =
+  `postgresql://${leasedAdmissionRole}:secret@localhost:5432/kokoro_platform`;
 const commerceWorkerUrl =
   "postgresql://platform_commerce_worker:secret@localhost:5432/kokoro_platform";
 const identityWorkerUrl =
@@ -39,7 +41,7 @@ const migratorUrl = "postgresql://platform_migrator:secret@localhost:5432/kokoro
 const commonEnvironment = {
   PLATFORM_DATABASE_EXPECTED_DATABASE: "kokoro_platform",
   PLATFORM_DATABASE_MIGRATOR_ROLE: "platform_migrator",
-  PLATFORM_DATABASE_ADMISSION_ROLE: "platform_admission",
+  PLATFORM_DATABASE_ADMISSION_ROLE: leasedAdmissionRole,
   PLATFORM_DATABASE_ADMIN_ROLE: "platform_admin",
   PLATFORM_DATABASE_AUTHORIZATION_ROLE: "platform_authorization",
   PLATFORM_DATABASE_ASSET_DATA_PLANE_ROLE: "platform_asset_data_plane",
@@ -185,7 +187,7 @@ describe("Platform PostgreSQL authority", () => {
     expect(admission).toMatchObject({
       role: "admission",
       credentialClass: "admission",
-      expectedDatabaseUser: "platform_admission",
+      expectedDatabaseUser: leasedAdmissionRole,
       applicationName: "kokoro-platform-admission",
       pool: { max: 12, connectionTimeoutMs: 5_000 },
     });
@@ -213,15 +215,44 @@ describe("Platform PostgreSQL authority", () => {
     ]);
     expect(JSON.stringify([memoryPublic, memoryRuntime, memoryWorker])).not.toContain("secret");
   });
+
+  it("rejects a fixed Admission database identity before opening PostgreSQL", () => {
+    expect(() => loadPlatformDatabaseConfig("admission", {
+      ...commonEnvironment,
+      DATABASE_URL_PLATFORM:
+        "postgresql://platform_admission:secret@localhost:5432/kokoro_platform",
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: "admission",
+      PLATFORM_DATABASE_ADMISSION_ROLE: "platform_admission",
+    })).toThrowError("PLATFORM_ADMISSION_DATABASE_ROLE_MUST_BE_LEASED");
+  });
 });
 
 describe("Platform migrator", () => {
+  it("rejects a fixed Admission role before acquiring the migration lock", async () => {
+    let opened = false;
+    await expect(runPlatformMigrations({
+      environment: {
+        ...commonEnvironment,
+        DATABASE_URL_PLATFORM: migratorUrl,
+        PLATFORM_DATABASE_CREDENTIAL_CLASS: "migrator",
+        PLATFORM_DATABASE_API_ROLE: "platform_api",
+        PLATFORM_DATABASE_ADMISSION_ROLE: "platform_admission",
+      },
+      createLockClient: () => {
+        opened = true;
+        throw new Error("migration lock must not open");
+      },
+    })).rejects.toThrowError("PLATFORM_ADMISSION_DATABASE_ROLE_MUST_BE_LEASED");
+    expect(opened).toBe(false);
+  });
+
   it("preflights PostgreSQL 18 roles, locks migration, grants scoped access, and sanitizes env", async () => {
     const leasedAdmissionRole = "kt_pg_platformadmission_fixture";
     const events: string[] = [];
     const grants: string[] = [];
     let authoritySql = "";
     let memoryAuthoritySql = "";
+    let retirementDiscoverySql = "";
     const lockClient: MigrationLockClient = {
       async connect() {
         events.push("connect");
@@ -279,6 +310,18 @@ describe("Platform migrator", () => {
         if (sql.includes("admissionRoleIdentityAuthority")) {
           events.push("verify-admission-role-identity");
           return { rows: [{ admissionRoleIdentityExact: true }] };
+        }
+        if (sql.includes("retiredAdmissionRoleDiscovery")) {
+          events.push("discover-retired-admission-roles");
+          retirementDiscoverySql = sql;
+          return { rows: [
+            { roleName: "platform_admission" },
+            { roleName: "kt_pg_platformadmission_retired" },
+          ] };
+        }
+        if (sql.includes("retiredAdmissionRoleAuthorityClosed")) {
+          events.push("verify-retired-admission-roles");
+          return { rows: [{ retiredAdmissionRoleAuthorityClosed: true }] };
         }
         if (sql.includes("INSERT INTO platform.runtime_role_identity_authority") &&
             sql.includes("'admission'")) {
@@ -420,6 +463,24 @@ describe("Platform migrator", () => {
     );
     expect(events).toContain(`bind-admission-role:${leasedAdmissionRole}`);
     expect(events).toContain("verify-admission-role-identity");
+    expect(events).toContain("discover-retired-admission-roles");
+    expect(events).toContain("verify-retired-admission-roles");
+    expect(retirementDiscoverySql).toContain("acl.grantee<>routine.proowner");
+    for (const retiredRole of ["platform_admission", "kt_pg_platformadmission_retired"]) {
+      expect(grants).toContain(
+        `REVOKE CONNECT,CREATE,TEMPORARY ON DATABASE "kokoro_platform" FROM "${retiredRole}"`,
+      );
+      expect(grants).toContain(`REVOKE ALL ON SCHEMA platform FROM "${retiredRole}"`);
+      expect(grants).toContain(
+        `REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA platform FROM "${retiredRole}"`,
+      );
+      expect(grants).toContain(
+        `REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA platform FROM "${retiredRole}"`,
+      );
+    }
+    expect(grants).toContain(
+      `GRANT CONNECT ON DATABASE "kokoro_platform" TO "${leasedAdmissionRole}"`,
+    );
     expect(grants).toContain(
       "GRANT EXECUTE ON FUNCTION platform.admission_role_identity_is_current(), " +
         "platform.record_admission_verified_terminal_evidence(TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,CHAR), " +
@@ -608,7 +669,7 @@ describe("Platform migrator", () => {
           return {
             rows: [
               safeRole("platform_api"),
-              safeRole("platform_admission"),
+              safeRole(leasedAdmissionRole),
               safeRole("platform_authorization"),
               { ...safeRole("platform_worker"), [membershipField]: true },
               safeRole("platform_admin"),
@@ -644,7 +705,7 @@ describe("Platform migrator", () => {
         }
         if (sql.includes("isMigratorMember") && !sql.includes("memoryRolePreflight")) {
           return { rows: [
-            safeRole("platform_api"), safeRole("platform_admission"),
+            safeRole("platform_api"), safeRole(leasedAdmissionRole),
             safeRole("platform_authorization"), safeRole("platform_admin"),
           ] };
         }
@@ -692,7 +753,7 @@ describe("Platform migrator", () => {
           }
           if (sql.includes("isMigratorMember")) {
             return { rows: [
-              safeRole("platform_api"), safeRole("platform_admission"),
+              safeRole("platform_api"), safeRole(leasedAdmissionRole),
               safeRole("platform_authorization"), safeRole("platform_admin"),
             ] };
           }
@@ -744,7 +805,7 @@ describe("Platform migrator", () => {
           return {
             rows: [
               safeRole("platform_api"),
-              safeRole("platform_admission"),
+              safeRole(leasedAdmissionRole),
               safeRole("platform_authorization"),
               safeRole("platform_admin"),
             ],
@@ -769,7 +830,7 @@ describe("Platform migrator", () => {
           return {
             rows: [
               { ...authority("platform_api"), hasUnexpectedPlatformPrivilege: true },
-              authority("platform_admission"),
+              authority(leasedAdmissionRole),
               authority("platform_authorization"),
               authority("platform_admin"),
             ],
@@ -818,7 +879,7 @@ describe("Platform migrator", () => {
           if (sql.includes("server_version_num")) return { rows: [safeMigratorAuthority()] };
           if (sql.includes("hasAnyMembership") || sql.includes("isMigratorMember")) {
             return { rows: [
-              safeRole("platform_api"), safeRole("platform_admission"),
+              safeRole("platform_api"), safeRole(leasedAdmissionRole),
               safeRole("platform_authorization"),
               safeRole("platform_admin"),
             ] };
@@ -840,7 +901,7 @@ describe("Platform migrator", () => {
           }
           if (sql.includes("hasUnexpectedPlatformPrivilege")) {
             return { rows: [
-              authority("platform_api"), authority("platform_admission"),
+              authority("platform_api"), authority(leasedAdmissionRole),
               authority("platform_authorization"),
               authority("platform_admin"),
             ].map((row) => row.roleName === roleName ? { ...row, [field]: value } : row) };
@@ -1116,7 +1177,7 @@ function safeMemoryRoles(): readonly Record<string, unknown>[] {
 
 function authority(
   roleName: string,
-  admissionRoleName = "platform_admission",
+  admissionRoleName = leasedAdmissionRole,
 ): Record<string, unknown> {
   return {
     roleName,
@@ -1224,7 +1285,7 @@ function splitWorkerPolicyRows(): readonly Record<string, unknown>[] {
   return [...runtimePolicies, ...definerPolicies];
 }
 
-function outboxPolicyRows(admissionRoleName = "platform_admission"): readonly Record<string, unknown>[] {
+function outboxPolicyRows(admissionRoleName = leasedAdmissionRole): readonly Record<string, unknown>[] {
   return [
     ["outbox_asset_function_insert", "a", "platform_migrator", ["asset"]],
     ["outbox_admin_insert", "a", "platform_admin",

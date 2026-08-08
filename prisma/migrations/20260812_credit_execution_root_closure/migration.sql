@@ -2,6 +2,24 @@ SET statement_timeout = '30s';
 SET lock_timeout = '5s';
 SET idle_in_transaction_session_timeout = '30s';
 
+CREATE FUNCTION platform.admission_role_identity_is_current()
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER SET search_path=pg_catalog,platform
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM platform.runtime_role_identity_authority authority
+    JOIN pg_catalog.pg_roles runtime_role
+      ON runtime_role.oid::BIGINT=authority.role_oid
+     AND runtime_role.rolname=authority.role_name
+    WHERE authority.role_kind='admission'
+      AND runtime_role.rolname=SESSION_USER
+  )
+$$;
+REVOKE ALL ON FUNCTION platform.admission_role_identity_is_current() FROM PUBLIC;
+
 CREATE TABLE platform.admission_verified_terminal_evidence (
   site_ref TEXT NOT NULL,
   run_ref TEXT NOT NULL CHECK(length(run_ref) BETWEEN 1 AND 256),
@@ -149,19 +167,20 @@ REVOKE ALL ON TABLE platform.credit_execution_root_closure_receipt,
   platform.admission_verified_terminal_evidence FROM PUBLIC;
 CREATE POLICY credit_execution_root_closure_definer
   ON platform.credit_execution_root_closure_receipt TO platform_migrator
-  USING(SESSION_USER IN ('platform_media_worker','platform_admission'))
-  WITH CHECK(SESSION_USER IN ('platform_media_worker','platform_admission'));
+  USING(SESSION_USER='platform_media_worker' OR platform.admission_role_identity_is_current())
+  WITH CHECK(SESSION_USER='platform_media_worker' OR platform.admission_role_identity_is_current());
 CREATE POLICY credit_execution_root_reconciliation_definer
   ON platform.credit_execution_root_reconciliation TO platform_migrator
-  USING(SESSION_USER IN ('platform_media_worker','platform_admission'))
-  WITH CHECK(SESSION_USER IN ('platform_media_worker','platform_admission'));
+  USING(SESSION_USER='platform_media_worker' OR platform.admission_role_identity_is_current())
+  WITH CHECK(SESSION_USER='platform_media_worker' OR platform.admission_role_identity_is_current());
 CREATE POLICY credit_execution_root_outcome_definer
   ON platform.credit_execution_root_outcome TO platform_migrator
-  USING(SESSION_USER IN ('platform_media_worker','platform_admission'))
-  WITH CHECK(SESSION_USER IN ('platform_media_worker','platform_admission'));
+  USING(SESSION_USER='platform_media_worker' OR platform.admission_role_identity_is_current())
+  WITH CHECK(SESSION_USER='platform_media_worker' OR platform.admission_role_identity_is_current());
 CREATE POLICY admission_verified_terminal_evidence_definer
   ON platform.admission_verified_terminal_evidence TO platform_migrator
-  USING(SESSION_USER='platform_admission') WITH CHECK(SESSION_USER='platform_admission');
+  USING(platform.admission_role_identity_is_current())
+  WITH CHECK(platform.admission_role_identity_is_current());
 
 CREATE FUNCTION platform.reject_credit_execution_root_fact_mutation() RETURNS TRIGGER
 LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
@@ -416,7 +435,8 @@ CREATE FUNCTION platform.record_admission_verified_terminal_evidence(
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$
 DECLARE prior platform.admission_verified_terminal_evidence%ROWTYPE;
 BEGIN
-  IF SESSION_USER<>'platform_admission' OR p_terminal_outcome NOT IN ('completed','canceled','failed')
+  IF NOT platform.admission_role_identity_is_current()
+    OR p_terminal_outcome NOT IN ('completed','canceled','failed')
     OR p_terminal_evidence_digest !~ '^[a-f0-9]{64}$'
     OR p_site_ref IS NULL OR p_run_ref IS NULL OR p_manifest_ref IS NULL OR p_session_ref IS NULL
     OR p_launch_ref IS NULL OR p_terminal_evidence_ref IS NULL THEN
@@ -443,8 +463,6 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION platform.record_admission_verified_terminal_evidence(
   TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,CHAR) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION platform.record_admission_verified_terminal_evidence(
-  TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,CHAR) TO platform_admission;
 
 CREATE FUNCTION platform.assert_execution_root_owner_proof_envelope(p_owner_proof JSONB) RETURNS VOID
 LANGUAGE plpgsql SET search_path=pg_catalog,platform AS $$
@@ -476,7 +494,7 @@ BEGIN
       p_owner_proof#>>'{workerLease,taskRef}',p_owner_proof#>>'{workerLease,leaseEpoch}',
       p_owner_proof#>>'{workerLease,leaseTokenHash}']);
   ELSIF p_owner_proof->>'kind'='admission_run' THEN
-    IF SESSION_USER<>'platform_admission' THEN
+    IF NOT platform.admission_role_identity_is_current() THEN
       RAISE EXCEPTION 'CREDIT_EXECUTION_ROOT_OWNER_ROLE_INVALID';
     END IF;
     IF NOT platform.credit_direct_root_json_exact_keys(p_owner_proof,
@@ -520,7 +538,7 @@ BEGIN
       (p_owner_proof#>>'{workerLease,leaseEpoch}')::BIGINT,
       p_owner_proof#>>'{workerLease,leaseTokenHash}');
   ELSIF p_owner_proof->>'kind'='admission_run' THEN
-    IF SESSION_USER<>'platform_admission' THEN
+    IF NOT platform.admission_role_identity_is_current() THEN
       RAISE EXCEPTION 'CREDIT_EXECUTION_ROOT_OWNER_ROLE_INVALID';
     END IF;
     SELECT TRUE INTO matched FROM platform.admission_verified_terminal_evidence evidence
@@ -603,7 +621,7 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION platform.find_execution_root_closure(TEXT,JSONB,TEXT,CHAR) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION platform.find_execution_root_closure(TEXT,JSONB,TEXT,CHAR)
-  TO platform_media_worker,platform_admission;
+  TO platform_media_worker;
 
 CREATE FUNCTION platform.lock_execution_root_closure(
   p_site_ref TEXT,p_owner_proof JSONB,p_business_operation_key TEXT,p_execution_budget_root_ref UUID,
@@ -729,7 +747,7 @@ REVOKE ALL ON FUNCTION platform.lock_execution_root_closure(
   TEXT,JSONB,TEXT,UUID,UUID,UUID,UUID,UUID,TEXT,BIGINT,BIGINT,BIGINT,NUMERIC,TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION platform.lock_execution_root_closure(
   TEXT,JSONB,TEXT,UUID,UUID,UUID,UUID,UUID,TEXT,BIGINT,BIGINT,BIGINT,NUMERIC,TEXT)
-  TO platform_media_worker,platform_admission;
+  TO platform_media_worker;
 
 CREATE FUNCTION platform.commit_execution_root_closure(p_record JSONB) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$
@@ -1113,7 +1131,7 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION platform.commit_execution_root_closure(JSONB) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION platform.commit_execution_root_closure(JSONB)
-  TO platform_media_worker,platform_admission;
+  TO platform_media_worker;
 
 CREATE FUNCTION platform.mark_execution_root_reconciliation(p_record JSONB) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,platform AS $$
@@ -1357,9 +1375,7 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION platform.mark_execution_root_reconciliation(JSONB) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION platform.mark_execution_root_reconciliation(JSONB)
-  TO platform_media_worker,platform_admission;
+  TO platform_media_worker;
 
 GRANT USAGE ON SCHEMA platform TO platform_media_worker;
-GRANT USAGE ON SCHEMA platform TO platform_admission;
 REVOKE CREATE ON SCHEMA platform FROM platform_media_worker;
-REVOKE CREATE ON SCHEMA platform FROM platform_admission;

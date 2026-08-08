@@ -80,7 +80,7 @@ describe("Media/Artifact image vertical database boundary", () => {
 
   it("binds media-access reservation to the exact leased Admission role and site context", () => {
     expect(admissionRoleAuthorityMigration).toContain(
-      "DROP POLICY admission_media_access_scope\n  ON platform.admission_media_access_authorization",
+      "DROP POLICY IF EXISTS admission_media_access_scope\n  ON platform.admission_media_access_authorization",
     );
     expect(admissionRoleAuthorityMigration).toContain(
       "CREATE POLICY admission_media_access_scope\n  ON platform.admission_media_access_authorization",
@@ -97,6 +97,7 @@ describe("Media/Artifact image vertical database boundary", () => {
     expect(admissionRoleAuthorityMigration).toContain(
       "site_id=NULLIF(current_setting('app.site_id',true),'')",
     );
+    expect(migration).not.toMatch(/\b(?:TO|FROM)\s+platform_admission\b/iu);
   });
 
   it("keeps both submit adapters function-only", () => {

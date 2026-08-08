@@ -86,7 +86,7 @@ test("PostgreSQL CI provisions isolated non-superuser roles", async () => {
   const roles = [
     "platform_migrator",
     "platform_api",
-    "platform_admission",
+    "kt_pg_platform_admission_ci",
     "platform_authorization",
     "platform_asset_data_plane",
     "platform_artifact_data_plane",
@@ -117,6 +117,33 @@ test("PostgreSQL CI provisions isolated non-superuser roles", async () => {
   assert.match(source, /CREATE DATABASE kokoro_test_platform OWNER platform_migrator;/u);
   assert.match(source, /REVOKE ALL ON DATABASE kokoro_test_platform FROM PUBLIC;/u);
   assert.doesNotMatch(source, /GRANT\s+ALL/iu);
+});
+
+test("Admission fixtures and deployment require one run-scoped leased database identity", async () => {
+  const [workflow, provision, compose, deployables] = await Promise.all([
+    readFile(resolve(root, ".github/workflows/ci.yml"), "utf8"),
+    readFile(resolve(root, "scripts/ci/provision-platform-postgres.sql"), "utf8"),
+    readFile(resolve(root, "deploy/docker-compose.services.yml"), "utf8"),
+    readFile(resolve(root, "deployables.yaml"), "utf8"),
+  ]);
+  assert.match(workflow,
+    /DATABASE_URL_PLATFORM_ADMISSION_TEST:\s+postgresql:\/\/kt_pg_platform_admission_ci:/u);
+  assert.match(workflow,
+    /PLATFORM_DATABASE_ADMISSION_ROLE:\s+kt_pg_platform_admission_ci/u);
+  assert.match(provision, /CREATE ROLE kt_pg_platform_admission_ci\b/u);
+  assert.doesNotMatch(provision, /CREATE ROLE platform_admission\b/u);
+  assert.match(compose, /PLATFORM_DATABASE_ADMISSION_ROLE:\s+\$\{PLATFORM_DATABASE_ADMISSION_ROLE:\?required\}/u);
+  assert.doesNotMatch(compose, /PLATFORM_DATABASE_ADMISSION_ROLE:-platform_admission/u);
+  assert.match(deployables, /identityLifecycle:\s+run-scoped-leased-role/u);
+
+  const migrationPaths = await sourceTreeEntries("prisma/migrations");
+  const migrations = (await Promise.all(
+    migrationPaths.filter((path) => path.endsWith("/migration.sql"))
+      .map((path) => readFile(resolve(root, path), "utf8")),
+  )).join("\n");
+  assert.doesNotMatch(migrations, /\b(?:TO|FROM)\s+platform_admission\b/iu);
+  assert.doesNotMatch(migrations,
+    /SESSION_USER\s*(?:=|<>)\s*'platform_admission'|SESSION_USER\s+IN\s*\([^)]*'platform_admission'/iu);
 });
 
 test("artifact is built once from the repository-owned Dockerfile", async () => {
