@@ -11,8 +11,10 @@ const canonicalRoots = Object.freeze([
   "src/generated/schema",
 ]);
 const canonicalRuntimeMirrors = Object.freeze([
-  "src/generated/contracts/runtime/hub-storage.ts",
   "src/generated/contracts/runtime/platform-control.ts",
+]);
+const retiredRuntimeMirrors = Object.freeze([
+  "src/generated/contracts/runtime/hub-storage.ts",
   "src/generated/contracts/runtime/platform-runtime.ts",
 ]);
 const retiredRuntimeMirrorRoot = ["src", "generated", "contracts", "legacy"].join("/");
@@ -98,6 +100,9 @@ test("generated contracts have one canonical checked-in tree", async () => {
   }
   for (const mirror of canonicalRuntimeMirrors) {
     assert.equal(await exists(mirror), true, `${mirror} must be generated and tracked`);
+  }
+  for (const mirror of retiredRuntimeMirrors) {
+    assert.equal(await exists(mirror), false, `${mirror} must be deleted`);
   }
   assert.equal(await exists("src/generated/provenance.json"), true);
   assert.equal(

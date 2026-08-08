@@ -2,7 +2,7 @@
   "contractRevision": "kokoro.generated-artifact-provenance.v1",
   "boundaryId": "generated-kokoro-platform@v1",
   "consumerRepository": "kokoro-platform",
-  "sourceRootCommit": "d4eb9d66af9f403c043808a297e9c1ae29d7853b",
+  "sourceRootCommit": "4ad3356bb15ba745626f450c9fee369c2f266623",
   "sourceFiles": [
     {
       "path": "contract/buf.lock",
@@ -11,6 +11,10 @@
     {
       "path": "contract/buf.yaml",
       "sha256": "sha256:b71f20db373671d58f73156590cbeaf8fc1c470fe2fe1d69752808f0b4e80e1c"
+    },
+    {
+      "path": "contract/corpus/agent-core-freeze-v1.json",
+      "sha256": "sha256:b50c59abf4f7660de9fbe92ca04b640af110ed9200e6a2f18c027941901398b3"
     },
     {
       "path": "contract/corpus/interaction-identity-v2.json",
@@ -22,7 +26,7 @@
     },
     {
       "path": "contract/corpus/presentation-v1.json",
-      "sha256": "sha256:692b98d30fea9ed7e5a81239ea0e368add84fba685bc70d10f29eb3201661706"
+      "sha256": "sha256:cd1004f033ec135619b16238fa865fa772b5eb0c5ccef09904d3ec523a1f893d"
     },
     {
       "path": "contract/corpus/projection-integrity-v1.json",
@@ -46,11 +50,11 @@
     },
     {
       "path": "contract/generate.mjs",
-      "sha256": "sha256:54afdeae2b68426726c629a411f4db2f059dfab9a8518d8da8e4ebc6a9efa5fb"
+      "sha256": "sha256:0476a14b5d28364697cc229306ab72418a3b95ac2534f560c636ef40d14b1711"
     },
     {
       "path": "contract/generate.py",
-      "sha256": "sha256:90942812f572508ae7e05cfbb7ce04520514747854d86e92e566c6f9ad3745c6"
+      "sha256": "sha256:3e664a6a07c9506de185f013b91c910072d72598ea7c2f9da3fa0ab8eec9d45b"
     },
     {
       "path": "contract/lib/committed-worktree.mjs",
@@ -58,7 +62,7 @@
     },
     {
       "path": "contract/lib/generation/consumer-manifest.mjs",
-      "sha256": "sha256:245f3a29042c70adbd99e522b7ea5e6a66f7f8d1bc27b0b29b4cc1d899e17498"
+      "sha256": "sha256:d7c03457804c4921d62c2c5fe79e5200fe9b6ad853f79ae0d8f2dee752f1f1e3"
     },
     {
       "path": "contract/lib/generation/output-transaction.mjs",
@@ -66,7 +70,7 @@
     },
     {
       "path": "contract/lib/generation/presentation-typescript.mjs",
-      "sha256": "sha256:e59f1c88deb29fc0719b159fb9b09a3a49dd3b0d226b88b9bc0a2b1d25607c60"
+      "sha256": "sha256:7d20f54f8e1f42a7a2ca8a7b1aec0a40060435468648c5db753b7b30be5786ff"
     },
     {
       "path": "contract/lib/generation/stage-consumer.mjs",
@@ -270,11 +274,11 @@
     },
     {
       "path": "contract/registry/generated-consumers.schema.json",
-      "sha256": "sha256:f07aabfee5de36810c99c8dc999c0c544c7484d193f8f2d57bcd73ada794517d"
+      "sha256": "sha256:721afc9e8e142744eb5e74b9385e7877d139415150e99a2e8aaba9ae4ae317bd"
     },
     {
       "path": "contract/registry/generated-consumers.yaml",
-      "sha256": "sha256:0dabd9f7f713f1c42f21e0ab43af79c3c19d96eea4d6ce440e8429d14c805d26"
+      "sha256": "sha256:c8e8836147ae545e1383f9a731dbfae80f5a07c352e1a5d4a00f855a5018e48b"
     },
     {
       "path": "contract/registry/platform-session-authorization-v1.yaml",
@@ -294,11 +298,15 @@
     },
     {
       "path": "contract/registry/presentation/INDEX.md",
-      "sha256": "sha256:47e65a1cbbd71500cf74a34a7d79629f28f9d292ccd701a527b81677d57b8418"
+      "sha256": "sha256:5a667616bdaa24541fe8ec7b4a61822eeaf14f2fbe40444ef3620589a1008491"
     },
     {
       "path": "contract/registry/presentation/ag-ui-version-lock.yaml",
       "sha256": "sha256:2e7d950ab9f5d7f21067d21c9ca6baba3159facbc916b4fd95791cfd486d5462"
+    },
+    {
+      "path": "contract/registry/presentation/agent-core-freeze-v1.yaml",
+      "sha256": "sha256:8d4725a3aa8f77cfff2ce1af3d74f24082ca99b73f6bb341916930ed166a2f2c"
     },
     {
       "path": "contract/registry/presentation/state-policy-v1.yaml",
@@ -306,7 +314,7 @@
     },
     {
       "path": "contract/registry/presentation/stream-policy-v1.yaml",
-      "sha256": "sha256:d38a958b200d8f908572529da8a547cf96fdbab8031acd30d57e7dfe37b16717"
+      "sha256": "sha256:6223cdec8a737a1ff03f45d56838e4b41fb3991964d7da00d5883c281832067f"
     },
     {
       "path": "contract/registry/presentation/submission-policy-v1.yaml",
@@ -314,7 +322,7 @@
     },
     {
       "path": "contract/registry/presentation/wire-profile-v1.yaml",
-      "sha256": "sha256:3a1f39d054dc0384a3f7c67abf879ba21b313949e6e12f2eab57506eb5c7685b"
+      "sha256": "sha256:71726fd44d047ede36c4cf583472fafe905d2514472eee050504249674b7904c"
     },
     {
       "path": "contract/registry/root-contract-hard-cut-ledger-v1.yaml",
@@ -378,7 +386,7 @@
     },
     {
       "path": "contract/spec/presentation/ag-ui-frame-v1.yaml",
-      "sha256": "sha256:8e89177b3f5fcdb79f5fc0a26c46d8de6c504047ee181ae884103d401bdb61b7"
+      "sha256": "sha256:da030332d86eba33f0d9c0b610b40575429310abfab6cceb3c8765d56a4a77d0"
     },
     {
       "path": "contract/spec/presentation/ag-ui-submission-event-v1.yaml",
@@ -410,7 +418,7 @@
     },
     {
       "path": "contract/spec/presentation/stream-v1.yaml",
-      "sha256": "sha256:26459aa9c97ce31933dbef684265823252ea12c4756df323db0d6658af68f86c"
+      "sha256": "sha256:10e4f63e5908730d5889928845ec005a94c0ba3ee7b1eb978be48052d3e372c9"
     },
     {
       "path": "contract/spec/presentation/submission-v1.yaml",
@@ -729,16 +737,8 @@
       "sha256": "sha256:c3b299e388ccd4dc5a7cd1aae3946f719cf89eb77902c4e662e36b0f4080252f"
     },
     {
-      "path": "src/generated/contracts/runtime/hub-storage.ts",
-      "sha256": "sha256:5db1d85772d9bd838da9d51f7db4de5f66a455c328c60b5649809d37d03abb0a"
-    },
-    {
       "path": "src/generated/contracts/runtime/platform-control.ts",
-      "sha256": "sha256:12704d81be935f75c2740bdf2ce86f712923769f65e7974340b5a30ac50db61c"
-    },
-    {
-      "path": "src/generated/contracts/runtime/platform-runtime.ts",
-      "sha256": "sha256:e02be7ce45fcc550cbc26ce5463ca990e8acdf3f198df22c97a40841df59057c"
+      "sha256": "sha256:2e3301aa5eec7c33dfb9a700f6fc69d52a79eb3c40b39b8b557ae3880ac89837"
     },
     {
       "path": "src/generated/contracts/session-admission-owner@v1/metadata.ts",
@@ -985,5 +985,5 @@
       "sha256": "sha256:5146ef2e810c42d221f63df7eea17921b69c65329e60a3ee60024c4730228c00"
     }
   ],
-  "manifestDigest": "sha256:4acb3b3dac0aa55a4c759129dc24ec28592090e239d387266e19f79a1c6d9c01"
+  "manifestDigest": "sha256:0262a86128884b898cea19c3a6e492b3fa83eb1104cb0bf85303bea7484f2b8e"
 }
