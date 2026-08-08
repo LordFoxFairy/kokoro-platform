@@ -289,11 +289,225 @@ function commandEnvelopeV2Digest(input: CommandEnvelopeInput): string {
 
 import {
   RecordReleaseEvidenceEffectSchema,
+  ReleaseEvidenceCheckerRole,
+  ReleaseEvidenceDecisionState,
+  ReleaseEvidenceKind,
   ReleaseEvidenceProducerRole,
+  ReleaseEvidenceSignatureAlgorithm,
   WorkloadAuthorizationState,
   type AttestedReleaseEvidenceContext,
+  type ReleaseEvidenceDecisionMaterial,
   type RecordReleaseEvidenceEffect,
+  type SignedReleaseEvidenceDecision,
 } from "../../proto/kokoro/platform/site/v1/site_publication_pb.js";
+
+const RELEASE_EVIDENCE_PROVENANCE_PAYLOAD_TYPE = "application/vnd.in-toto+json";
+const RELEASE_EVIDENCE_DECISION_PAYLOAD_TYPE =
+  "application/vnd.kokoro.release-evidence-decision.v1+json";
+
+function assertReleaseEvidenceDigestMatch(label: string, declared: string, verified: string): string {
+  const digest = assertAxisMatch(label, declared, verified);
+  if (!/^sha256:[0-9a-f]{64}$/u.test(digest)) {
+    throw new Error("command_envelope_sha256_invalid:" + label);
+  }
+  return digest;
+}
+
+function requiredReleaseEvidenceDigest(label: string, value: string): string {
+  if (!/^sha256:[0-9a-f]{64}$/u.test(value)) {
+    throw new Error("command_envelope_sha256_invalid:" + label);
+  }
+  return value;
+}
+
+function requiredReleaseEvidenceString(label: string, value: string): string {
+  const text = requiredAxis(label, value);
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = text.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) {
+        throw new Error("release_evidence_decision_jcs_invalid:" + label);
+      }
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      throw new Error("release_evidence_decision_jcs_invalid:" + label);
+    }
+  }
+  return text;
+}
+
+interface ReleaseEvidenceCanonicalObject {
+  readonly [key: string]: ReleaseEvidenceCanonicalJson;
+}
+
+type ReleaseEvidenceCanonicalJson =
+  | string
+  | readonly ReleaseEvidenceCanonicalJson[]
+  | ReleaseEvidenceCanonicalObject;
+
+function canonicalReleaseEvidenceJson(value: ReleaseEvidenceCanonicalJson): string {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return "[" + value.map(canonicalReleaseEvidenceJson).join(",") + "]";
+  }
+  const fields = value as ReleaseEvidenceCanonicalObject;
+  return "{" + Object.keys(fields).sort(compare).map((key) => (
+    JSON.stringify(key) + ":" + canonicalReleaseEvidenceJson(fields[key]!)
+  )).join(",") + "}";
+}
+
+function releaseEvidenceKind(kind: ReleaseEvidenceKind): string {
+  if (kind === ReleaseEvidenceKind.ARTIFACT_INSPECTION) return "artifact-inspection";
+  if (kind === ReleaseEvidenceKind.JOURNEY) return "journey";
+  if (kind === ReleaseEvidenceKind.SECURITY) return "security";
+  throw new Error("release_evidence_decision_kind_invalid");
+}
+
+function releaseEvidenceDecisionState(state: ReleaseEvidenceDecisionState): string {
+  if (state === ReleaseEvidenceDecisionState.PASSED) return "passed";
+  throw new Error("release_evidence_decision_state_invalid");
+}
+
+function releaseEvidenceCheckerRole(role: ReleaseEvidenceCheckerRole): string {
+  if (role === ReleaseEvidenceCheckerRole.ARTIFACT_INSPECTION) return "artifact-inspection";
+  if (role === ReleaseEvidenceCheckerRole.JOURNEY) return "journey";
+  if (role === ReleaseEvidenceCheckerRole.SECURITY) return "security";
+  throw new Error("release_evidence_checker_role_invalid");
+}
+
+function releaseEvidenceRevisionBinding(
+  label: string,
+  binding: Readonly<{ ref: string; revision: bigint; digest: string }> | undefined,
+): Readonly<Record<string, ReleaseEvidenceCanonicalJson>> {
+  if (binding === undefined) throw new Error("release_evidence_decision_material_required:" + label);
+  return {
+    digest: requiredReleaseEvidenceDigest(label + ".digest", binding.digest),
+    ref: requiredReleaseEvidenceString(label + ".ref", binding.ref),
+    revision: requiredUint64(label + ".revision", binding.revision).toString(),
+  };
+}
+
+function releaseEvidenceDecisionCanonicalValue(
+  material: ReleaseEvidenceDecisionMaterial,
+): Readonly<Record<string, ReleaseEvidenceCanonicalJson>> {
+  const candidate = material.candidate;
+  const checker = material.checkerTrust;
+  if (candidate === undefined || material.evidence === undefined || checker === undefined) {
+    throw new Error("release_evidence_decision_material_required");
+  }
+  return {
+    candidate: {
+      authorizationEpoch: requiredUint64(
+        "decision.candidate.authorizationEpoch",
+        candidate.candidateAuthorizationEpoch,
+      ).toString(),
+      digest: requiredReleaseEvidenceDigest("decision.candidate.digest", candidate.candidateDigest),
+      ref: requiredReleaseEvidenceString("decision.candidate.ref", candidate.candidateRef),
+      version: requiredUint64("decision.candidate.version", candidate.candidateVersion).toString(),
+    },
+    checkerTrust: {
+      checkerIdentityRef: requiredReleaseEvidenceString(
+        "decision.checkerTrust.checkerIdentityRef",
+        checker.checkerIdentityRef,
+      ),
+      checkerRegistration: releaseEvidenceRevisionBinding(
+        "decision.checkerTrust.checkerRegistration",
+        checker.checkerRegistration,
+      ),
+      role: releaseEvidenceCheckerRole(checker.role),
+      signingKeyFingerprint: requiredReleaseEvidenceDigest(
+        "decision.checkerTrust.signingKeyFingerprint",
+        checker.signingKeyFingerprint,
+      ),
+      signingKeyId: requiredReleaseEvidenceString(
+        "decision.checkerTrust.signingKeyId",
+        checker.signingKeyId,
+      ),
+      signingKeyVersion: requiredUint64(
+        "decision.checkerTrust.signingKeyVersion",
+        checker.signingKeyVersion,
+      ).toString(),
+      trustPolicyEpoch: requiredUint64(
+        "decision.checkerTrust.trustPolicyEpoch",
+        checker.trustPolicyEpoch,
+      ).toString(),
+    },
+    environment: requiredReleaseEvidenceString("decision.environment", material.environment),
+    evidence: releaseEvidenceRevisionBinding("decision.evidence", material.evidence),
+    kind: releaseEvidenceKind(material.kind),
+    schema: "kokoro.release-evidence-decision.v1",
+    siteId: requiredReleaseEvidenceString("decision.siteId", material.siteId),
+    state: releaseEvidenceDecisionState(material.state),
+    webArtifactDigest: requiredReleaseEvidenceDigest(
+      "decision.webArtifactDigest",
+      material.webArtifactDigest,
+    ),
+  };
+}
+
+export function releaseEvidenceDecisionCanonicalPayload(
+  material: ReleaseEvidenceDecisionMaterial,
+): Uint8Array {
+  return new TextEncoder().encode(canonicalReleaseEvidenceJson(
+    releaseEvidenceDecisionCanonicalValue(material),
+  ));
+}
+
+export function releaseEvidenceDecisionPayloadDigest(
+  material: ReleaseEvidenceDecisionMaterial,
+): string {
+  return "sha256:" + createHash("sha256")
+    .update(releaseEvidenceDecisionCanonicalPayload(material))
+    .digest("hex");
+}
+
+function releaseEvidenceBytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  return left.length === right.length && left.every((byte, index) => byte === right[index]);
+}
+
+function concatenateReleaseEvidenceBytes(parts: readonly Uint8Array[]): Uint8Array {
+  const length = parts.reduce((total, part) => total + part.length, 0);
+  const output = new Uint8Array(length);
+  let offset = 0;
+  for (const part of parts) {
+    output.set(part, offset);
+    offset += part.length;
+  }
+  return output;
+}
+
+export function releaseEvidenceDecisionSignaturePreimage(
+  decision: SignedReleaseEvidenceDecision,
+): Uint8Array {
+  const material = decision.material;
+  const attestation = decision.attestation;
+  if (material === undefined || material.checkerTrust === undefined || attestation === undefined) {
+    throw new Error("release_evidence_signed_decision_required");
+  }
+  if (
+    attestation.payloadType !== RELEASE_EVIDENCE_DECISION_PAYLOAD_TYPE ||
+    attestation.signatureAlgorithm !== ReleaseEvidenceSignatureAlgorithm.ED25519 ||
+    attestation.signature.length !== 64 ||
+    attestation.keyId !== material.checkerTrust.signingKeyId ||
+    attestation.keyVersion !== material.checkerTrust.signingKeyVersion
+  ) throw new Error("release_evidence_decision_attestation_invalid");
+  const payload = releaseEvidenceDecisionCanonicalPayload(material);
+  if (!releaseEvidenceBytesEqual(payload, attestation.canonicalPayload)) {
+    throw new Error("release_evidence_decision_payload_mismatch");
+  }
+  if (attestation.payloadDigest !== releaseEvidenceDecisionPayloadDigest(material)) {
+    throw new Error("release_evidence_decision_payload_digest_mismatch");
+  }
+  const encoder = new TextEncoder();
+  const payloadType = encoder.encode(attestation.payloadType);
+  return concatenateReleaseEvidenceBytes([
+    encoder.encode("DSSEv1 " + payloadType.length + " "),
+    payloadType,
+    encoder.encode(" " + payload.length + " "),
+    payload,
+  ]);
+}
 
 export type VerifiedReleaseEvidenceWorkloadAxes = Readonly<{
   workloadIdentityRef: string;
@@ -327,18 +541,37 @@ export function recordReleaseEvidenceRequestDigest(
   verified: VerifiedReleaseEvidenceWorkloadAxes,
 ): string {
   if (context.command === undefined || context.producerRegistration === undefined || context.workloadAttestation === undefined || context.workloadAuthorizationLiveRead === undefined) throw new Error("release_evidence_workload_context_required");
-  if (effect.candidate === undefined || effect.compiledWebManifest === undefined || effect.webArtifactProvenance === undefined || effect.artifactInspectionEvidence === undefined || effect.journeyEvidence === undefined || effect.securityEvidence === undefined) throw new Error("release_evidence_owner_bindings_required");
+  if (effect.candidate === undefined || effect.compiledWebManifest === undefined || effect.webArtifactProvenance === undefined || effect.artifactInspectionEvidence === undefined || effect.journeyEvidence === undefined || effect.securityEvidence === undefined || effect.provenanceAttestation === undefined) throw new Error("release_evidence_owner_bindings_required");
+  if (
+    effect.evidenceDecisions.length !== 3 ||
+    effect.evidenceDecisions.some((decision) => (
+      decision.material === undefined ||
+      decision.material.candidate === undefined ||
+      decision.material.evidence === undefined ||
+      decision.material.checkerTrust === undefined ||
+      decision.material.checkerTrust.checkerRegistration === undefined ||
+      decision.attestation === undefined
+    ))
+  ) throw new Error("release_evidence_signed_decisions_required");
+  if (
+    effect.provenanceAttestation.payloadType !== RELEASE_EVIDENCE_PROVENANCE_PAYLOAD_TYPE ||
+    effect.provenanceAttestation.signatureAlgorithm !== ReleaseEvidenceSignatureAlgorithm.ED25519 ||
+    effect.provenanceAttestation.signature.length !== 64
+  ) throw new Error("release_evidence_provenance_attestation_invalid");
+  effect.evidenceDecisions.forEach((decision) => {
+    releaseEvidenceDecisionSignaturePreimage(decision);
+  });
   const audience = assertAxisMatch("audience", context.audience, verified.audience);
   if (audience !== "kokoro.site-release-evidence-admission.v1") throw new Error("release_evidence_audience_invalid");
   const producerRegistration = context.producerRegistration;
   assertAxisMatch("producerRegistrationRef", producerRegistration.ref, verified.producerRegistrationRef);
   assertUint64Match("producerRegistrationRevision", producerRegistration.revision, verified.producerRegistrationRevision);
-  assertSha256Match("producerRegistrationDigest", producerRegistration.digest, verified.producerRegistrationDigest);
+  assertReleaseEvidenceDigestMatch("producerRegistrationDigest", producerRegistration.digest, verified.producerRegistrationDigest);
   if (context.producerRole !== ReleaseEvidenceProducerRole.WEB_ARTIFACT_PROVENANCE_ATTESTOR || context.producerRole !== verified.producerRole) throw new Error("release_evidence_producer_role_invalid");
   const workloadAttestation = context.workloadAttestation;
   assertAxisMatch("workloadAttestationRef", workloadAttestation.ref, verified.workloadAttestationRef);
   assertUint64Match("workloadAttestationRevision", workloadAttestation.revision, verified.workloadAttestationRevision);
-  assertSha256Match("workloadAttestationDigest", workloadAttestation.digest, verified.workloadAttestationDigest);
+  assertReleaseEvidenceDigestMatch("workloadAttestationDigest", workloadAttestation.digest, verified.workloadAttestationDigest);
   const workloadAuthorizationEpoch = assertUint64Match("workloadAuthorizationEpoch", context.workloadAuthorizationEpoch, verified.workloadAuthorizationEpoch);
   const workloadRevocationEpoch = assertUint64AllowZeroMatch("workloadRevocationEpoch", context.workloadRevocationEpoch, verified.workloadRevocationEpoch);
   if (
@@ -349,7 +582,7 @@ export function recordReleaseEvidenceRequestDigest(
   const workloadAuthorizationLiveRead = context.workloadAuthorizationLiveRead;
   assertAxisMatch("workloadAuthorizationLiveReadRef", workloadAuthorizationLiveRead.ref, verified.workloadAuthorizationLiveReadRef);
   assertUint64Match("workloadAuthorizationLiveReadRevision", workloadAuthorizationLiveRead.revision, verified.workloadAuthorizationLiveReadRevision);
-  assertSha256Match("workloadAuthorizationLiveReadDigest", workloadAuthorizationLiveRead.digest, verified.workloadAuthorizationLiveReadDigest);
+  assertReleaseEvidenceDigestMatch("workloadAuthorizationLiveReadDigest", workloadAuthorizationLiveRead.digest, verified.workloadAuthorizationLiveReadDigest);
   const workloadAuthorizationObservedAt = assertInstantMatch("workloadAuthorizationObservedAt", context.workloadAuthorizationObservedAt, verified.workloadAuthorizationObservedAt, true);
   const workloadAuthorizationValidUntil = assertInstantMatch("workloadAuthorizationValidUntil", context.workloadAuthorizationValidUntil, verified.workloadAuthorizationValidUntil, true);
   const authoritativeNow = optionalInstant("verified.authoritativeNow", verified.authoritativeNow);

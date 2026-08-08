@@ -20,7 +20,25 @@ describe("Site publication authority schema", () => {
     expect(sql).not.toContain("site_one_authorized_release_candidate");
     expect(sql).toContain("phase='pre-cas'");
     expect(sql.match(/FORCE ROW LEVEL SECURITY/gu)?.length).toBe(6);
-    expect(sql).not.toMatch(/\bBIGINT\b/u);
+    for (const column of [
+      "candidate_version",
+      "candidate_authorization_epoch",
+      "profile_revision",
+      "catalog_revision",
+      "authorization_epoch",
+      "revision",
+      "generation",
+      "active_release_revision",
+      "release_revision",
+      "certification_revocation_epoch",
+      "active_pointer_generation",
+    ]) {
+      expect(sql).not.toMatch(new RegExp(`^\\s*${column}\\s+BIGINT\\b`, "mu"));
+    }
+    const workloadBindingEpochCast =
+      "binding.binding_epoch=current_setting('app.workload_binding_epoch',true)::BIGINT";
+    expect(sql.split(workloadBindingEpochCast)).toHaveLength(5);
+    expect(sql.match(/\bBIGINT\b/gu)).toHaveLength(4);
     expect(sql).not.toContain("candidate_release_ref");
     expect(sql).not.toContain("expected_active_release_ref");
   });

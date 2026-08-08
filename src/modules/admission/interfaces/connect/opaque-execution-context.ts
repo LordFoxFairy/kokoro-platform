@@ -1,7 +1,7 @@
 import {
   executionContextIntentSchema,
   type ExecutionContextIntent,
-} from "../../../../generated/contracts/legacy/platform-control.js";
+} from "../../../../generated/contracts/runtime/platform-control.js";
 import type { OpaqueExecutionContextIntent } from "../../../../generated/proto/kokoro/platform/admission/v1/admission_pb.js";
 
 /**

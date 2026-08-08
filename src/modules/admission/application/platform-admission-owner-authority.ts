@@ -6,7 +6,7 @@ import type {
   McpGrant,
   Permissions,
   SkillGrant,
-} from "../../../generated/contracts/legacy/platform-control.js";
+} from "../../../generated/contracts/runtime/platform-control.js";
 import {
   AdmissionRetryClass,
   SafeAdmissionSnapshotSchema,

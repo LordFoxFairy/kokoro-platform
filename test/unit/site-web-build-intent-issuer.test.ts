@@ -134,7 +134,6 @@ function candidate(): SiteReleaseCandidateAuthority {
         }),
         commerceClosure: Object.freeze({
           offerRevisions: Object.freeze([binding("offer.main", digestA)]),
-          offerPriceRevisions: Object.freeze([binding("offer-price.main", digestA)]),
           entitlementTemplateRevisions: Object.freeze([binding("entitlement.main", digestA)]),
           creditProgramRevisions: Object.freeze([binding("credit-program.main", digestA)]),
           closureDigest: digestA,

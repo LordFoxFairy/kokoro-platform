@@ -475,7 +475,6 @@ function createFixture(): PublicationFixture {
     }),
     commerceClosure: Object.freeze({
       offerRevisions: Object.freeze([revision("offer")]),
-      offerPriceRevisions: Object.freeze([revision("offer-price")]),
       entitlementTemplateRevisions: Object.freeze([revision("entitlement")]),
       creditProgramRevisions: Object.freeze([revision("credit-program")]), closureDigest: digestA,
     }),
@@ -794,7 +793,6 @@ function wireSnapshot(snapshot: SiteEffectiveAccessSnapshot) {
       authorizationPolicy: wire(snapshot.authIdentityClosure.authorizationPolicy),
       closureDigest: snapshot.authIdentityClosure.closureDigest },
     commerceClosure: { offerRevisions: snapshot.commerceClosure.offerRevisions.map(wire),
-      offerPriceRevisions: snapshot.commerceClosure.offerPriceRevisions.map(wire),
       entitlementTemplateRevisions: snapshot.commerceClosure.entitlementTemplateRevisions.map(wire),
       creditProgramRevisions: snapshot.commerceClosure.creditProgramRevisions.map(wire),
       closureDigest: snapshot.commerceClosure.closureDigest },

@@ -10,7 +10,14 @@ const canonicalRoots = Object.freeze([
   "src/generated/proto",
   "src/generated/schema",
 ]);
+const canonicalRuntimeMirrors = Object.freeze([
+  "src/generated/contracts/runtime/hub-storage.ts",
+  "src/generated/contracts/runtime/platform-control.ts",
+  "src/generated/contracts/runtime/platform-runtime.ts",
+]);
+const retiredRuntimeMirrorRoot = ["src", "generated", "contracts", "legacy"].join("/");
 const legacyRoots = Object.freeze([
+  retiredRuntimeMirrorRoot,
   "kokoro-hub/src/interfaces/connect/generated-capability-catalog",
   "src/interfaces/connect/generated",
   "src/interfaces/connect/generated-admin-commerce",
@@ -59,6 +66,11 @@ const retiredHubConnectRuntimeSources = Object.freeze([
   "kokoro-hub/src/interfaces/connect/hub-connect-runtime.ts",
   "kokoro-hub/src/interfaces/connect/main.ts",
 ]);
+const hubOwnerLocalStorageContracts = Object.freeze([
+  "kokoro-hub/src/contract/mcp-secret-storage.ts",
+  "kokoro-hub/src/contract/mcp-storage.ts",
+  "kokoro-hub/src/contract/skill-curation-storage.ts",
+]);
 
 async function exists(path) {
   return access(resolve(root, path)).then(() => true, () => false);
@@ -83,6 +95,9 @@ test("generated contracts have one canonical checked-in tree", async () => {
       cwd: root,
     });
     assert.equal(ignored.status, 1, `${canonicalRoot} must be tracked rather than ignored`);
+  }
+  for (const mirror of canonicalRuntimeMirrors) {
+    assert.equal(await exists(mirror), true, `${mirror} must be generated and tracked`);
   }
   assert.equal(await exists("src/generated/provenance.json"), true);
   assert.equal(
@@ -109,6 +124,9 @@ test("generated contracts have one canonical checked-in tree", async () => {
   }
   for (const source of retiredHubConnectRuntimeSources) {
     assert.equal(await exists(source), false, `${source} must be moved to Platform`);
+  }
+  for (const source of hubOwnerLocalStorageContracts) {
+    assert.equal(await exists(source), true, `${source} remains owned by Hub`);
   }
   assert.equal(await exists("src/process/hub-connect.ts"), true);
   assert.doesNotMatch(
@@ -144,6 +162,7 @@ test("active code imports generated contracts only from the canonical tree", asy
       /(?:from\s+|import\s*\()(["'])(?<specifier>[^"']+)\1/gu,
     )].map((match) => match.groups?.specifier ?? "");
     if (specifiers.some((specifier) =>
+      specifier.includes(retiredRuntimeMirrorRoot.slice("src/".length)) ||
       /(?:interfaces\/(?:connect|http|json-schema)\/generated|generated-(?:admin|agent|asset|authorization|capability|commerce|media|model|product|session|site)|credit_catalog_pb)/u.test(specifier)
     )) violations.push(file);
   }

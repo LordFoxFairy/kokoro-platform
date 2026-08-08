@@ -3,7 +3,7 @@ import {
   runRequestSchema,
   type ExecutionContextIntent,
   type RunRequest,
-} from "../../../generated/contracts/legacy/platform-control.js";
+} from "../../../generated/contracts/runtime/platform-control.js";
 import { z } from "zod";
 
 export const MAX_GA_RUN_REQUEST_DRAFT_TTL_MS = 5 * 60 * 1_000;

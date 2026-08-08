@@ -5,14 +5,17 @@ import { describe, expect, it } from "vitest";
 describe("Platform runtime contract ownership", () => {
   it("makes Admission consume the canonical generated control contract", async () => {
     const [contract, draftFactory, admissionAuthority, hubServer] = await Promise.all([
-      readFile(resolve("src/generated/contracts/legacy/platform-control.ts"), "utf8"),
+      readFile(resolve("src/generated/contracts/runtime/platform-control.ts"), "utf8"),
       readFile(resolve("src/modules/admission/application/ga-run-request-draft-factory.ts"), "utf8"),
       readFile(resolve("src/modules/admission/application/platform-admission-owner-authority.ts"), "utf8"),
       readFile(resolve("kokoro-hub/src/interfaces/http/server.ts"), "utf8"),
     ]);
+    const retiredMirrorRoot = ["generated", "contracts", "legacy"].join("/");
     expect(contract).toContain("executionContextIntentSchema");
-    expect(draftFactory).toContain("generated/contracts/legacy/platform-control");
-    expect(admissionAuthority).toContain("generated/contracts/legacy/platform-control");
+    expect(draftFactory).toContain("generated/contracts/runtime/platform-control");
+    expect(admissionAuthority).toContain("generated/contracts/runtime/platform-control");
+    expect(draftFactory).not.toContain(retiredMirrorRoot);
+    expect(admissionAuthority).not.toContain(retiredMirrorRoot);
     expect(hubServer).toContain("@kokoro/platform-kit");
     expect(draftFactory).not.toMatch(/export const executionContextIntentSchema\s*=\s*z/u);
   });

@@ -278,7 +278,7 @@ export const CommandReceiptV2Schema: GenMessage<CommandReceiptV2> = /*@__PURE__*
 
 /**
  * This V2 type is intentionally separate from kokoro.common.v1.CommandDigestAlgorithm. V1 hashes
- * only a method Effect and remains byte-frozen for already published AdminAuth and Admission
+ * only a method Effect and remains byte-frozen for published Admission
  * consumers. New privileged commands must not represent this algorithm with a V1 enum value.
  *
  * @generated from enum kokoro.common.v2.CommandDigestAlgorithmV2

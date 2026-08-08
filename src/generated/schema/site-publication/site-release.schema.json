@@ -201,16 +201,12 @@
       "additionalProperties": false,
       "required": [
         "offerRevisions",
-        "offerPriceRevisions",
         "entitlementTemplateRevisions",
         "creditProgramRevisions",
         "closureDigest"
       ],
       "properties": {
         "offerRevisions": {
-          "$ref": "#/$defs/ownerRevisionBindingSet"
-        },
-        "offerPriceRevisions": {
           "$ref": "#/$defs/ownerRevisionBindingSet"
         },
         "entitlementTemplateRevisions": {

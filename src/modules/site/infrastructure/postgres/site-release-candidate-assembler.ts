@@ -79,7 +79,6 @@ function businessBindings(snapshot: SiteEffectiveAccessSnapshot) {
     }),
     commerceClosure: Object.freeze({
       offerRevisions: sorted(snapshot.commerceClosure.offerRevisions),
-      offerPriceRevisions: sorted(snapshot.commerceClosure.offerPriceRevisions),
       entitlementTemplateRevisions: sorted(snapshot.commerceClosure.entitlementTemplateRevisions),
       creditProgramRevisions: sorted(snapshot.commerceClosure.creditProgramRevisions),
       closureDigest: snapshot.commerceClosure.closureDigest,

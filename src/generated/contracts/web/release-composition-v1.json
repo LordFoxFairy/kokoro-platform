@@ -27,14 +27,14 @@
             "siteRelease": {
               "ref": "site-release.alpha.1",
               "revision": "1",
-              "digest": "sha256:6acb37edacec03f053e2b2daee6e1821a48b747b336148fecacec4ab69dcb99a"
+              "digest": "sha256:5111ee30a3d779214b40501e68924c86b6b6ee0e8abb0c71223a14af0295772e"
             },
             "candidate": {
               "siteReleaseCandidate": {
                 "ref": "release-candidate.alpha.1",
                 "version": "1",
                 "authorizationEpoch": "7",
-                "digest": "sha256:47a88ba0a762f703e2c39bdd35e489ac18eecd376687bca7625d3b894783e919"
+                "digest": "sha256:dcd86312ea2991f90efce4900f0f65f8b594b469fe7e6140303423bf4ad4cd02"
               },
               "state": "revoked"
             },
@@ -42,7 +42,7 @@
               "releaseCertification": {
                 "ref": "release-certification.alpha.1",
                 "revision": "1",
-                "digest": "sha256:07ae3d859d0aba8654d8aa088848e6389afe5b28df3fd3759bca910f333041d2"
+                "digest": "sha256:ed3fb11265efbaefaa020a1fbff2b34f99908c6598f3cd65792a744dd91e1271"
               },
               "state": "active",
               "revocationEpoch": "0",
@@ -70,7 +70,7 @@
               "keyStatus": "active"
             },
             "readAt": "2026-07-31T12:42:00.000Z",
-            "authorityMaterialDigest": "sha256:37d74fd05f219e85d956a6f1ab16a5b74037a7cf029bf1328716168f504c1651",
+            "authorityMaterialDigest": "sha256:b75eb031b0bcab18412369d70bf8396c1122e3aed2b544d44d6260e2aa7bd742",
             "activationAttempt": {
               "ref": "activation-attempt.alpha.1",
               "revision": "1",
@@ -91,9 +91,9 @@
                 "aggregateRef": "release-candidate.alpha.1",
                 "revision": "7",
                 "headEventRef": "event.candidate.before-cas.1",
-                "headDigest": "sha256:d6b61844611081b42befb9170d7269307f90e8c973d98d17a5473e31c738a091",
+                "headDigest": "sha256:6e5986b882ee64abcc7beb56e323ed2ac62d677d08d9f05e48aef3816342fdb5",
                 "queryDigest": "sha256:b8ccf288c638f91aa896bdcac59517fcb5109c9a6685892b49e576284aec5e1d",
-                "resultDigest": "sha256:bc36fbe98a403bc517725265ee76098dcf05d0a4b7516945d265e1d136ec267e",
+                "resultDigest": "sha256:7d091da7885ce38c0c2db2732dd675acbb6fd6d15043fbb184a72b696bb1ec9c",
                 "readReceiptRef": "read-receipt.candidate.blocked.1.1",
                 "observedAt": "2026-07-31T12:42:00.000Z",
                 "provider": {
@@ -120,18 +120,18 @@
                 "signature": {
                   "payloadType": "application/vnd.kokoro.owner-live-read-receipt.v1+json",
                   "keyId": "key.platform-site-live-read.1",
-                  "signatureBase64": "H00BCZqeUcj7wStbsXHTWOB1O+X62MKY6RrOv3TQUoQ8fxMT2YDST7BkUKpyX7ThNCiFXxh/voF+tpEAP1ufCQ=="
+                  "signatureBase64": "Ze4c4wf9njMTQzjAHTW3qVA13mDYvLQZW/YWPd+9mq3dWnXLM3w8kXdKoYkUrbotYvgrF6oL5+GT0m7qKY4fAQ=="
                 },
-                "ownerEventDigest": "sha256:b083dedb026de582571d1047633c33f33679d6d64e60207cfc30816f9d360cda"
+                "ownerEventDigest": "sha256:f687e4b96821b19f082726192ae8231175379b19f3192d0fbbc19fc6ab947e03"
               },
               {
                 "aggregateKind": "certification",
                 "aggregateRef": "release-certification.alpha.1",
                 "revision": "0",
                 "headEventRef": "event.certification.before-cas.1",
-                "headDigest": "sha256:c3afa196c4a439b69e44aeb294d5551ca570cf98ad98d6a3f6cf28b0b221d40f",
+                "headDigest": "sha256:310970e4de87ea5de16530996033a25aae12b9d4e84694171cd3138304aac977",
                 "queryDigest": "sha256:4d2fe154e4a5fd44261627825430f7ee1fbcfc15fb93dbedcfb7fbf8a301e61e",
-                "resultDigest": "sha256:01a30c8d67c8f3672f225d3d6af500399b25d0e36f3421e13cad84e0fbe4647c",
+                "resultDigest": "sha256:bea3e27c9129f042d875810cee2b120a8a386993baae8df37b636e3b2301c469",
                 "readReceiptRef": "read-receipt.certification.blocked.1.1",
                 "observedAt": "2026-07-31T12:42:00.000Z",
                 "provider": {
@@ -158,9 +158,9 @@
                 "signature": {
                   "payloadType": "application/vnd.kokoro.owner-live-read-receipt.v1+json",
                   "keyId": "key.release-certification-live-read.1",
-                  "signatureBase64": "1najdffoOblKwwbKDaJb67RQRU4Hcrr5b1ySZ/skBKkZAky/qRfs6OeyLTMyk554x5n5EciYSavmeJKLwj40BQ=="
+                  "signatureBase64": "z7H8lAw+PqYaQ7Wes+4QLYCkuv0zsEYm2Thy64WXV39w2NzdwK1Fh9tuMjgvjtK+dUA3tCltR697G8ScRONRCQ=="
                 },
-                "ownerEventDigest": "sha256:4a0fd120033669e3475d98405800bc0ed7f2c9b2e62bbaf417008c84c7dc3784"
+                "ownerEventDigest": "sha256:7f3acfa61a5351a0d7b68f31f92fbf99c5a275de43b4ed9a50cb44b38c3ca58a"
               },
               {
                 "aggregateKind": "producer-registry",
@@ -342,14 +342,14 @@
             "siteRelease": {
               "ref": "site-release.alpha.1",
               "revision": "1",
-              "digest": "sha256:6acb37edacec03f053e2b2daee6e1821a48b747b336148fecacec4ab69dcb99a"
+              "digest": "sha256:5111ee30a3d779214b40501e68924c86b6b6ee0e8abb0c71223a14af0295772e"
             },
             "candidate": {
               "siteReleaseCandidate": {
                 "ref": "release-candidate.alpha.1",
                 "version": "1",
                 "authorizationEpoch": "7",
-                "digest": "sha256:47a88ba0a762f703e2c39bdd35e489ac18eecd376687bca7625d3b894783e919"
+                "digest": "sha256:dcd86312ea2991f90efce4900f0f65f8b594b469fe7e6140303423bf4ad4cd02"
               },
               "state": "active"
             },
@@ -357,7 +357,7 @@
               "releaseCertification": {
                 "ref": "release-certification.alpha.1",
                 "revision": "1",
-                "digest": "sha256:07ae3d859d0aba8654d8aa088848e6389afe5b28df3fd3759bca910f333041d2"
+                "digest": "sha256:ed3fb11265efbaefaa020a1fbff2b34f99908c6598f3cd65792a744dd91e1271"
               },
               "state": "revoked",
               "revocationEpoch": "1",
@@ -385,7 +385,7 @@
               "keyStatus": "active"
             },
             "readAt": "2026-07-31T12:42:00.000Z",
-            "authorityMaterialDigest": "sha256:7830c33649f62d81599606467bd0cfc85cac50e7fa63dcaf8be2e9c204c42647",
+            "authorityMaterialDigest": "sha256:9461d63a969ec792df712e473f2102bf87c530f64f3700a8824f9bbbfb4aff74",
             "activationAttempt": {
               "ref": "activation-attempt.alpha.1",
               "revision": "1",
@@ -406,9 +406,9 @@
                 "aggregateRef": "release-candidate.alpha.1",
                 "revision": "7",
                 "headEventRef": "event.candidate.before-cas.1",
-                "headDigest": "sha256:cfc25c1508a270aa78f0bcc375bd5b2f9ae08ecf64d59688e14865c2b6eee106",
+                "headDigest": "sha256:cc74300016d0da9ac6823b2a871fa10de5ddb032d10859b029e5f332b7f8e0ed",
                 "queryDigest": "sha256:b8ccf288c638f91aa896bdcac59517fcb5109c9a6685892b49e576284aec5e1d",
-                "resultDigest": "sha256:7e14dc0f55356467c07c7090e8a17a8dbe92eb01d44d4c6406410bf54f4fcf8f",
+                "resultDigest": "sha256:a5912ce0b34c5a7f928c3180607599c9a9a7edcc0366a2c3989f0d802e53ae88",
                 "readReceiptRef": "read-receipt.candidate.blocked.2.1",
                 "observedAt": "2026-07-31T12:42:00.000Z",
                 "provider": {
@@ -435,18 +435,18 @@
                 "signature": {
                   "payloadType": "application/vnd.kokoro.owner-live-read-receipt.v1+json",
                   "keyId": "key.platform-site-live-read.1",
-                  "signatureBase64": "DZJpqNvKLhWaWTv+CtBt63SuWQZTpwbG6Cc7z2pBcCwq2w7FYCC7PN7R7OCd0JyL+d9NJBxxv5kO+FfysYgfDA=="
+                  "signatureBase64": "+8ZeDmavmobl5smUshds9EhC5G7xYqLC/y4HN9ndP0vqzEI/ExgkUA2PyALNClEXT51ry2dz/WD+iETvxq0tAg=="
                 },
-                "ownerEventDigest": "sha256:f43e497a257a662ae696a02bc6cd7fd3c8b36d2f5206dda0ffdd62a05721be19"
+                "ownerEventDigest": "sha256:3c7203c4af1720f11b6e9a34ecb279ebcbacb2638a55bd899fd9eb387699d32e"
               },
               {
                 "aggregateKind": "certification",
                 "aggregateRef": "release-certification.alpha.1",
                 "revision": "1",
                 "headEventRef": "event.certification.before-cas.1",
-                "headDigest": "sha256:b92bb988fe87e458fcfb345112ab8d45ae51f6707775191f20e6ac2e51749cda",
+                "headDigest": "sha256:f952b14997632b33da543f013f6c9f9f66a44dab542e3260e0bd4d0e4bb5e67f",
                 "queryDigest": "sha256:4d2fe154e4a5fd44261627825430f7ee1fbcfc15fb93dbedcfb7fbf8a301e61e",
-                "resultDigest": "sha256:2ee62a118febf693454a2389a10062f0eef3f0b0fbc58f67615204c0ffb85868",
+                "resultDigest": "sha256:2d269cba6df806b809b59808f40d14b259a433233df5e04bc5e69e1f7c71b561",
                 "readReceiptRef": "read-receipt.certification.blocked.2.1",
                 "observedAt": "2026-07-31T12:42:00.000Z",
                 "provider": {
@@ -473,9 +473,9 @@
                 "signature": {
                   "payloadType": "application/vnd.kokoro.owner-live-read-receipt.v1+json",
                   "keyId": "key.release-certification-live-read.1",
-                  "signatureBase64": "Czb3OOlcp4LM8Yb/c9FnNdl+0tbbJS5omC/JCYuj5kOMRyy+SQLUJwrrQx2lrLZxY9sSWcsTwzyVB5DfBKu9Dg=="
+                  "signatureBase64": "yeve72HqH5MFG5CY6NQdNMiEKD33ckPkw5/NET8ey2YaDRZlgoxP25Lma0oqVtm+D6Ezcg2OjeUXI9KAMbQRAw=="
                 },
-                "ownerEventDigest": "sha256:d78931a0382664a24619432e94d4c3046dde55cb70a71a7819819bf854fd130f"
+                "ownerEventDigest": "sha256:7b62d3240dc6405e1d89861a7ebb7c9d59d1ccd1dc836de51a033868a3bffad1"
               },
               {
                 "aggregateKind": "producer-registry",
@@ -657,14 +657,14 @@
             "siteRelease": {
               "ref": "site-release.alpha.1",
               "revision": "1",
-              "digest": "sha256:6acb37edacec03f053e2b2daee6e1821a48b747b336148fecacec4ab69dcb99a"
+              "digest": "sha256:5111ee30a3d779214b40501e68924c86b6b6ee0e8abb0c71223a14af0295772e"
             },
             "candidate": {
               "siteReleaseCandidate": {
                 "ref": "release-candidate.alpha.1",
                 "version": "1",
                 "authorizationEpoch": "7",
-                "digest": "sha256:47a88ba0a762f703e2c39bdd35e489ac18eecd376687bca7625d3b894783e919"
+                "digest": "sha256:dcd86312ea2991f90efce4900f0f65f8b594b469fe7e6140303423bf4ad4cd02"
               },
               "state": "active"
             },
@@ -672,7 +672,7 @@
               "releaseCertification": {
                 "ref": "release-certification.alpha.1",
                 "revision": "1",
-                "digest": "sha256:07ae3d859d0aba8654d8aa088848e6389afe5b28df3fd3759bca910f333041d2"
+                "digest": "sha256:ed3fb11265efbaefaa020a1fbff2b34f99908c6598f3cd65792a744dd91e1271"
               },
               "state": "active",
               "revocationEpoch": "0",
@@ -700,7 +700,7 @@
               "keyStatus": "revoked"
             },
             "readAt": "2026-07-31T12:42:00.000Z",
-            "authorityMaterialDigest": "sha256:bad52d439a95db5a8a5baefb80cb0927abae153e7c28b3e32e00e850847446d6",
+            "authorityMaterialDigest": "sha256:6c541df02c3ebb3f60482744a62c1acd38d4343d0694ee1ef37bd69c7e3fd09e",
             "activationAttempt": {
               "ref": "activation-attempt.alpha.1",
               "revision": "1",
@@ -721,9 +721,9 @@
                 "aggregateRef": "release-candidate.alpha.1",
                 "revision": "7",
                 "headEventRef": "event.candidate.before-cas.1",
-                "headDigest": "sha256:cfc25c1508a270aa78f0bcc375bd5b2f9ae08ecf64d59688e14865c2b6eee106",
+                "headDigest": "sha256:cc74300016d0da9ac6823b2a871fa10de5ddb032d10859b029e5f332b7f8e0ed",
                 "queryDigest": "sha256:b8ccf288c638f91aa896bdcac59517fcb5109c9a6685892b49e576284aec5e1d",
-                "resultDigest": "sha256:7e14dc0f55356467c07c7090e8a17a8dbe92eb01d44d4c6406410bf54f4fcf8f",
+                "resultDigest": "sha256:a5912ce0b34c5a7f928c3180607599c9a9a7edcc0366a2c3989f0d802e53ae88",
                 "readReceiptRef": "read-receipt.candidate.blocked.3.1",
                 "observedAt": "2026-07-31T12:42:00.000Z",
                 "provider": {
@@ -750,18 +750,18 @@
                 "signature": {
                   "payloadType": "application/vnd.kokoro.owner-live-read-receipt.v1+json",
                   "keyId": "key.platform-site-live-read.1",
-                  "signatureBase64": "2U/mgYDP04RifLH5TThf0IgKEO17m2PKUX4Bg+onF0MUe6emu+3jvhREra7Rqhvw6KTmIprJRI46xk29+/EjDw=="
+                  "signatureBase64": "4+zlrEef0mbIjOdFD7njAUnP3VCJ5vxxkPTAwRlHiXISAzsJfLdcJm2Jlb5TKbF7OPpfmMxz4BLT58GAa2U/Bw=="
                 },
-                "ownerEventDigest": "sha256:f43e497a257a662ae696a02bc6cd7fd3c8b36d2f5206dda0ffdd62a05721be19"
+                "ownerEventDigest": "sha256:3c7203c4af1720f11b6e9a34ecb279ebcbacb2638a55bd899fd9eb387699d32e"
               },
               {
                 "aggregateKind": "certification",
                 "aggregateRef": "release-certification.alpha.1",
                 "revision": "0",
                 "headEventRef": "event.certification.before-cas.1",
-                "headDigest": "sha256:c3afa196c4a439b69e44aeb294d5551ca570cf98ad98d6a3f6cf28b0b221d40f",
+                "headDigest": "sha256:310970e4de87ea5de16530996033a25aae12b9d4e84694171cd3138304aac977",
                 "queryDigest": "sha256:4d2fe154e4a5fd44261627825430f7ee1fbcfc15fb93dbedcfb7fbf8a301e61e",
-                "resultDigest": "sha256:01a30c8d67c8f3672f225d3d6af500399b25d0e36f3421e13cad84e0fbe4647c",
+                "resultDigest": "sha256:bea3e27c9129f042d875810cee2b120a8a386993baae8df37b636e3b2301c469",
                 "readReceiptRef": "read-receipt.certification.blocked.3.1",
                 "observedAt": "2026-07-31T12:42:00.000Z",
                 "provider": {
@@ -788,9 +788,9 @@
                 "signature": {
                   "payloadType": "application/vnd.kokoro.owner-live-read-receipt.v1+json",
                   "keyId": "key.release-certification-live-read.1",
-                  "signatureBase64": "iZvjK3gwRsj6FEJ7HA0cXbk084zqFnR8xjedTxAvwgeI0koJmzXMEVj0gzSIcUj909a9sG2yFCRyHbWT9ugWCg=="
+                  "signatureBase64": "bP5UfBOFfB4MPZTU3yMi6+Zx3djVBHxTN5hQRxEg3iAakOOqTPjH/BtDjzvseRA8SnD/XOjY2BEH4U2GTHj1Cg=="
                 },
-                "ownerEventDigest": "sha256:4a0fd120033669e3475d98405800bc0ed7f2c9b2e62bbaf417008c84c7dc3784"
+                "ownerEventDigest": "sha256:7f3acfa61a5351a0d7b68f31f92fbf99c5a275de43b4ed9a50cb44b38c3ca58a"
               },
               {
                 "aggregateKind": "producer-registry",
@@ -972,14 +972,14 @@
             "siteRelease": {
               "ref": "site-release.alpha.1",
               "revision": "1",
-              "digest": "sha256:6acb37edacec03f053e2b2daee6e1821a48b747b336148fecacec4ab69dcb99a"
+              "digest": "sha256:5111ee30a3d779214b40501e68924c86b6b6ee0e8abb0c71223a14af0295772e"
             },
             "candidate": {
               "siteReleaseCandidate": {
                 "ref": "release-candidate.alpha.1",
                 "version": "1",
                 "authorizationEpoch": "7",
-                "digest": "sha256:47a88ba0a762f703e2c39bdd35e489ac18eecd376687bca7625d3b894783e919"
+                "digest": "sha256:dcd86312ea2991f90efce4900f0f65f8b594b469fe7e6140303423bf4ad4cd02"
               },
               "state": "active"
             },
@@ -987,7 +987,7 @@
               "releaseCertification": {
                 "ref": "release-certification.alpha.1",
                 "revision": "1",
-                "digest": "sha256:07ae3d859d0aba8654d8aa088848e6389afe5b28df3fd3759bca910f333041d2"
+                "digest": "sha256:ed3fb11265efbaefaa020a1fbff2b34f99908c6598f3cd65792a744dd91e1271"
               },
               "state": "active",
               "revocationEpoch": "0",
@@ -1015,7 +1015,7 @@
               "keyStatus": "suspended"
             },
             "readAt": "2026-07-31T12:42:00.000Z",
-            "authorityMaterialDigest": "sha256:28935a97efe4def90b3303fd45ff1803ef2955612e5214950203134501c27b8a",
+            "authorityMaterialDigest": "sha256:3ffd15af9e3ef3a5949a3c2a195aa80db386515a2c85a3ffb859ce36a5ca5ea4",
             "activationAttempt": {
               "ref": "activation-attempt.alpha.1",
               "revision": "1",
@@ -1036,9 +1036,9 @@
                 "aggregateRef": "release-candidate.alpha.1",
                 "revision": "7",
                 "headEventRef": "event.candidate.before-cas.1",
-                "headDigest": "sha256:cfc25c1508a270aa78f0bcc375bd5b2f9ae08ecf64d59688e14865c2b6eee106",
+                "headDigest": "sha256:cc74300016d0da9ac6823b2a871fa10de5ddb032d10859b029e5f332b7f8e0ed",
                 "queryDigest": "sha256:b8ccf288c638f91aa896bdcac59517fcb5109c9a6685892b49e576284aec5e1d",
-                "resultDigest": "sha256:7e14dc0f55356467c07c7090e8a17a8dbe92eb01d44d4c6406410bf54f4fcf8f",
+                "resultDigest": "sha256:a5912ce0b34c5a7f928c3180607599c9a9a7edcc0366a2c3989f0d802e53ae88",
                 "readReceiptRef": "read-receipt.candidate.blocked.4.1",
                 "observedAt": "2026-07-31T12:42:00.000Z",
                 "provider": {
@@ -1065,18 +1065,18 @@
                 "signature": {
                   "payloadType": "application/vnd.kokoro.owner-live-read-receipt.v1+json",
                   "keyId": "key.platform-site-live-read.1",
-                  "signatureBase64": "WjzyJZ+bIrloRDNQBSmfCdvSV596Y5wUcnnldOEiYj+HHxAFJsH0UZEJzNeLkNOVj/yCCgOgxg+qUuDf0pUqCg=="
+                  "signatureBase64": "YtuR4tpO9POoLbZ5WZav3m6PYxzLhxDqVC/uAX1yhfi9+4dUG+ckapESrBrv//OHyU4eir8BaasOi5+UY5ivBw=="
                 },
-                "ownerEventDigest": "sha256:f43e497a257a662ae696a02bc6cd7fd3c8b36d2f5206dda0ffdd62a05721be19"
+                "ownerEventDigest": "sha256:3c7203c4af1720f11b6e9a34ecb279ebcbacb2638a55bd899fd9eb387699d32e"
               },
               {
                 "aggregateKind": "certification",
                 "aggregateRef": "release-certification.alpha.1",
                 "revision": "0",
                 "headEventRef": "event.certification.before-cas.1",
-                "headDigest": "sha256:c3afa196c4a439b69e44aeb294d5551ca570cf98ad98d6a3f6cf28b0b221d40f",
+                "headDigest": "sha256:310970e4de87ea5de16530996033a25aae12b9d4e84694171cd3138304aac977",
                 "queryDigest": "sha256:4d2fe154e4a5fd44261627825430f7ee1fbcfc15fb93dbedcfb7fbf8a301e61e",
-                "resultDigest": "sha256:01a30c8d67c8f3672f225d3d6af500399b25d0e36f3421e13cad84e0fbe4647c",
+                "resultDigest": "sha256:bea3e27c9129f042d875810cee2b120a8a386993baae8df37b636e3b2301c469",
                 "readReceiptRef": "read-receipt.certification.blocked.4.1",
                 "observedAt": "2026-07-31T12:42:00.000Z",
                 "provider": {
@@ -1103,9 +1103,9 @@
                 "signature": {
                   "payloadType": "application/vnd.kokoro.owner-live-read-receipt.v1+json",
                   "keyId": "key.release-certification-live-read.1",
-                  "signatureBase64": "S47CAjuRrrnTzN3JXBvXCv4Y5XmsXE03MEzQvxsxejGbjk1JtqLFFVsiiUMLxl7PaPpS8w//4qwGwcLao60DDQ=="
+                  "signatureBase64": "LjhBy0gEqYHlt5Y2bHRpXUEmCmWP8XoLyc1hxDwEWsNorzz6K+Sv+CVMGHeasJutj+rJsvmZCZAJvNpqoDAKDg=="
                 },
-                "ownerEventDigest": "sha256:4a0fd120033669e3475d98405800bc0ed7f2c9b2e62bbaf417008c84c7dc3784"
+                "ownerEventDigest": "sha256:7f3acfa61a5351a0d7b68f31f92fbf99c5a275de43b4ed9a50cb44b38c3ca58a"
               },
               {
                 "aggregateKind": "producer-registry",
@@ -1287,14 +1287,14 @@
             "siteRelease": {
               "ref": "site-release.alpha.1",
               "revision": "1",
-              "digest": "sha256:6acb37edacec03f053e2b2daee6e1821a48b747b336148fecacec4ab69dcb99a"
+              "digest": "sha256:5111ee30a3d779214b40501e68924c86b6b6ee0e8abb0c71223a14af0295772e"
             },
             "candidate": {
               "siteReleaseCandidate": {
                 "ref": "release-candidate.alpha.1",
                 "version": "1",
                 "authorizationEpoch": "7",
-                "digest": "sha256:47a88ba0a762f703e2c39bdd35e489ac18eecd376687bca7625d3b894783e919"
+                "digest": "sha256:dcd86312ea2991f90efce4900f0f65f8b594b469fe7e6140303423bf4ad4cd02"
               },
               "state": "active"
             },
@@ -1302,7 +1302,7 @@
               "releaseCertification": {
                 "ref": "release-certification.alpha.1",
                 "revision": "1",
-                "digest": "sha256:07ae3d859d0aba8654d8aa088848e6389afe5b28df3fd3759bca910f333041d2"
+                "digest": "sha256:ed3fb11265efbaefaa020a1fbff2b34f99908c6598f3cd65792a744dd91e1271"
               },
               "state": "active",
               "revocationEpoch": "0",
@@ -1330,7 +1330,7 @@
               "keyStatus": "active"
             },
             "readAt": "2026-07-31T12:42:00.000Z",
-            "authorityMaterialDigest": "sha256:3e00797cebb16b145ba36634ad2ea8e617bd8b4100e3b9a9417f8d747a3e6485",
+            "authorityMaterialDigest": "sha256:b5c72206ed0f93a9b437891758a951d03cd8b88ddc96afb91c01509099b1a3c8",
             "activationAttempt": {
               "ref": "activation-attempt.alpha.1",
               "revision": "1",
@@ -1351,9 +1351,9 @@
                 "aggregateRef": "release-candidate.alpha.1",
                 "revision": "7",
                 "headEventRef": "event.candidate.before-cas.1",
-                "headDigest": "sha256:cfc25c1508a270aa78f0bcc375bd5b2f9ae08ecf64d59688e14865c2b6eee106",
+                "headDigest": "sha256:cc74300016d0da9ac6823b2a871fa10de5ddb032d10859b029e5f332b7f8e0ed",
                 "queryDigest": "sha256:b8ccf288c638f91aa896bdcac59517fcb5109c9a6685892b49e576284aec5e1d",
-                "resultDigest": "sha256:7e14dc0f55356467c07c7090e8a17a8dbe92eb01d44d4c6406410bf54f4fcf8f",
+                "resultDigest": "sha256:a5912ce0b34c5a7f928c3180607599c9a9a7edcc0366a2c3989f0d802e53ae88",
                 "readReceiptRef": "read-receipt.candidate.blocked.5.1",
                 "observedAt": "2026-07-31T12:42:00.000Z",
                 "provider": {
@@ -1380,18 +1380,18 @@
                 "signature": {
                   "payloadType": "application/vnd.kokoro.owner-live-read-receipt.v1+json",
                   "keyId": "key.platform-site-live-read.1",
-                  "signatureBase64": "i9S0tpcbYFxUaRmAsaK+uU6GxSaoTYOnzQv6brujJq8A7mI8kdulSJ73PVvcqHZj+BY0lLuJVagsuXilMetiCw=="
+                  "signatureBase64": "KjtvuKMeGK33MXp0vjYgcwIIlaEdJHZalltawiVlKsvvk1km9SugLzK7BduynlNZgvAKXu6GQLuYojW8L9IuCg=="
                 },
-                "ownerEventDigest": "sha256:f43e497a257a662ae696a02bc6cd7fd3c8b36d2f5206dda0ffdd62a05721be19"
+                "ownerEventDigest": "sha256:3c7203c4af1720f11b6e9a34ecb279ebcbacb2638a55bd899fd9eb387699d32e"
               },
               {
                 "aggregateKind": "certification",
                 "aggregateRef": "release-certification.alpha.1",
                 "revision": "0",
                 "headEventRef": "event.certification.before-cas.1",
-                "headDigest": "sha256:c3afa196c4a439b69e44aeb294d5551ca570cf98ad98d6a3f6cf28b0b221d40f",
+                "headDigest": "sha256:310970e4de87ea5de16530996033a25aae12b9d4e84694171cd3138304aac977",
                 "queryDigest": "sha256:4d2fe154e4a5fd44261627825430f7ee1fbcfc15fb93dbedcfb7fbf8a301e61e",
-                "resultDigest": "sha256:01a30c8d67c8f3672f225d3d6af500399b25d0e36f3421e13cad84e0fbe4647c",
+                "resultDigest": "sha256:bea3e27c9129f042d875810cee2b120a8a386993baae8df37b636e3b2301c469",
                 "readReceiptRef": "read-receipt.certification.blocked.5.1",
                 "observedAt": "2026-07-31T12:42:00.000Z",
                 "provider": {
@@ -1418,9 +1418,9 @@
                 "signature": {
                   "payloadType": "application/vnd.kokoro.owner-live-read-receipt.v1+json",
                   "keyId": "key.release-certification-live-read.1",
-                  "signatureBase64": "dg40KsP5fgJ5zrk01m9Qc+ikRRjhLP6tEb2e9fyrlyE063fOUK/yjRXIY4M2pWhfmYyXpcA9snwwoE/ODeArCw=="
+                  "signatureBase64": "slQjP48G2IsGCISBm9qjwSHZyCaTEr6J0Q9PUVp+o5X+YGiOQiV1Yc3MPHAZULRyqmTpno4Y9cjhME8ScY6UCA=="
                 },
-                "ownerEventDigest": "sha256:4a0fd120033669e3475d98405800bc0ed7f2c9b2e62bbaf417008c84c7dc3784"
+                "ownerEventDigest": "sha256:7f3acfa61a5351a0d7b68f31f92fbf99c5a275de43b4ed9a50cb44b38c3ca58a"
               },
               {
                 "aggregateKind": "producer-registry",
@@ -1602,14 +1602,14 @@
             "siteRelease": {
               "ref": "site-release.alpha.1",
               "revision": "1",
-              "digest": "sha256:6acb37edacec03f053e2b2daee6e1821a48b747b336148fecacec4ab69dcb99a"
+              "digest": "sha256:5111ee30a3d779214b40501e68924c86b6b6ee0e8abb0c71223a14af0295772e"
             },
             "candidate": {
               "siteReleaseCandidate": {
                 "ref": "release-candidate.alpha.1",
                 "version": "1",
                 "authorizationEpoch": "7",
-                "digest": "sha256:47a88ba0a762f703e2c39bdd35e489ac18eecd376687bca7625d3b894783e919"
+                "digest": "sha256:dcd86312ea2991f90efce4900f0f65f8b594b469fe7e6140303423bf4ad4cd02"
               },
               "state": "active"
             },
@@ -1617,7 +1617,7 @@
               "releaseCertification": {
                 "ref": "release-certification.alpha.1",
                 "revision": "1",
-                "digest": "sha256:07ae3d859d0aba8654d8aa088848e6389afe5b28df3fd3759bca910f333041d2"
+                "digest": "sha256:ed3fb11265efbaefaa020a1fbff2b34f99908c6598f3cd65792a744dd91e1271"
               },
               "state": "active",
               "revocationEpoch": "0",
@@ -1645,7 +1645,7 @@
               "keyStatus": "active"
             },
             "readAt": "2026-07-31T12:42:00.000Z",
-            "authorityMaterialDigest": "sha256:cd9f36390ead3b367623c3fe1693509c3b296de6ab1bfc4f22d5934600526341",
+            "authorityMaterialDigest": "sha256:f4bf8034af340aa81c46d080666a3eba5aeafe43f2c3112afc7354d5cf5eda00",
             "activationAttempt": {
               "ref": "activation-attempt.alpha.1",
               "revision": "1",
@@ -1666,9 +1666,9 @@
                 "aggregateRef": "release-candidate.alpha.1",
                 "revision": "7",
                 "headEventRef": "event.candidate.before-cas.1",
-                "headDigest": "sha256:cfc25c1508a270aa78f0bcc375bd5b2f9ae08ecf64d59688e14865c2b6eee106",
+                "headDigest": "sha256:cc74300016d0da9ac6823b2a871fa10de5ddb032d10859b029e5f332b7f8e0ed",
                 "queryDigest": "sha256:b8ccf288c638f91aa896bdcac59517fcb5109c9a6685892b49e576284aec5e1d",
-                "resultDigest": "sha256:7e14dc0f55356467c07c7090e8a17a8dbe92eb01d44d4c6406410bf54f4fcf8f",
+                "resultDigest": "sha256:a5912ce0b34c5a7f928c3180607599c9a9a7edcc0366a2c3989f0d802e53ae88",
                 "readReceiptRef": "read-receipt.candidate.blocked.6.1",
                 "observedAt": "2026-07-31T12:42:00.000Z",
                 "provider": {
@@ -1695,18 +1695,18 @@
                 "signature": {
                   "payloadType": "application/vnd.kokoro.owner-live-read-receipt.v1+json",
                   "keyId": "key.platform-site-live-read.1",
-                  "signatureBase64": "WHhcd7Y2sEdid7qewxbtgi8YDy2Rd8SjTfE/QMn0bQrlK0WPT8S+ozfelyO7Gwy4M4TVUvc0Q53Z4nuG2dMGDg=="
+                  "signatureBase64": "8lEdVJtVNqHQIWWJoQv1XlatFfQQFZ5TsVQwaLN+asRPVbKUJh516RGkQ7PLeS/8Sau+7MRsqjXHPJuRBKBYDA=="
                 },
-                "ownerEventDigest": "sha256:f43e497a257a662ae696a02bc6cd7fd3c8b36d2f5206dda0ffdd62a05721be19"
+                "ownerEventDigest": "sha256:3c7203c4af1720f11b6e9a34ecb279ebcbacb2638a55bd899fd9eb387699d32e"
               },
               {
                 "aggregateKind": "certification",
                 "aggregateRef": "release-certification.alpha.1",
                 "revision": "0",
                 "headEventRef": "event.certification.before-cas.1",
-                "headDigest": "sha256:c3afa196c4a439b69e44aeb294d5551ca570cf98ad98d6a3f6cf28b0b221d40f",
+                "headDigest": "sha256:310970e4de87ea5de16530996033a25aae12b9d4e84694171cd3138304aac977",
                 "queryDigest": "sha256:4d2fe154e4a5fd44261627825430f7ee1fbcfc15fb93dbedcfb7fbf8a301e61e",
-                "resultDigest": "sha256:01a30c8d67c8f3672f225d3d6af500399b25d0e36f3421e13cad84e0fbe4647c",
+                "resultDigest": "sha256:bea3e27c9129f042d875810cee2b120a8a386993baae8df37b636e3b2301c469",
                 "readReceiptRef": "read-receipt.certification.blocked.6.1",
                 "observedAt": "2026-07-31T12:42:00.000Z",
                 "provider": {
@@ -1733,9 +1733,9 @@
                 "signature": {
                   "payloadType": "application/vnd.kokoro.owner-live-read-receipt.v1+json",
                   "keyId": "key.release-certification-live-read.1",
-                  "signatureBase64": "GarYO6Frb2fzpRaAdC+eW0JGHIgZ6T8AXpZ58CNueZPHPtoyN2O25ppPPb49yxj0k1qngXZXsPvA7f7Fe9iaAg=="
+                  "signatureBase64": "flwnwJrw+0ulU/XlTHXboorygD/TkdmcgDp3vkuEOaO64T/TCYZFup/QY7f4mCg5HwGYE6vvs4E2NFe1OGykDQ=="
                 },
-                "ownerEventDigest": "sha256:4a0fd120033669e3475d98405800bc0ed7f2c9b2e62bbaf417008c84c7dc3784"
+                "ownerEventDigest": "sha256:7f3acfa61a5351a0d7b68f31f92fbf99c5a275de43b4ed9a50cb44b38c3ca58a"
               },
               {
                 "aggregateKind": "producer-registry",
@@ -1917,14 +1917,14 @@
             "siteRelease": {
               "ref": "site-release.alpha.1",
               "revision": "1",
-              "digest": "sha256:6acb37edacec03f053e2b2daee6e1821a48b747b336148fecacec4ab69dcb99a"
+              "digest": "sha256:5111ee30a3d779214b40501e68924c86b6b6ee0e8abb0c71223a14af0295772e"
             },
             "candidate": {
               "siteReleaseCandidate": {
                 "ref": "release-candidate.alpha.1",
                 "version": "1",
                 "authorizationEpoch": "7",
-                "digest": "sha256:47a88ba0a762f703e2c39bdd35e489ac18eecd376687bca7625d3b894783e919"
+                "digest": "sha256:dcd86312ea2991f90efce4900f0f65f8b594b469fe7e6140303423bf4ad4cd02"
               },
               "state": "active"
             },
@@ -1932,7 +1932,7 @@
               "releaseCertification": {
                 "ref": "release-certification.alpha.1",
                 "revision": "1",
-                "digest": "sha256:07ae3d859d0aba8654d8aa088848e6389afe5b28df3fd3759bca910f333041d2"
+                "digest": "sha256:ed3fb11265efbaefaa020a1fbff2b34f99908c6598f3cd65792a744dd91e1271"
               },
               "state": "active",
               "revocationEpoch": "0",
@@ -1960,7 +1960,7 @@
               "keyStatus": "active"
             },
             "readAt": "2026-08-01T12:35:00.000Z",
-            "authorityMaterialDigest": "sha256:4ef882f2a9f1480ca2ac540bc052035f064ce98fc46a9fa7adb5abd07ba107bd",
+            "authorityMaterialDigest": "sha256:72a5041040277aff13a344970ec843ba27837e30ad7930f80b59cf0bedcf18a7",
             "activationAttempt": {
               "ref": "activation-attempt.alpha.1",
               "revision": "1",
@@ -1981,9 +1981,9 @@
                 "aggregateRef": "release-candidate.alpha.1",
                 "revision": "7",
                 "headEventRef": "event.candidate.before-cas.1",
-                "headDigest": "sha256:cfc25c1508a270aa78f0bcc375bd5b2f9ae08ecf64d59688e14865c2b6eee106",
+                "headDigest": "sha256:cc74300016d0da9ac6823b2a871fa10de5ddb032d10859b029e5f332b7f8e0ed",
                 "queryDigest": "sha256:b8ccf288c638f91aa896bdcac59517fcb5109c9a6685892b49e576284aec5e1d",
-                "resultDigest": "sha256:7e14dc0f55356467c07c7090e8a17a8dbe92eb01d44d4c6406410bf54f4fcf8f",
+                "resultDigest": "sha256:a5912ce0b34c5a7f928c3180607599c9a9a7edcc0366a2c3989f0d802e53ae88",
                 "readReceiptRef": "read-receipt.candidate.blocked.7.1",
                 "observedAt": "2026-08-01T12:35:00.000Z",
                 "provider": {
@@ -2010,18 +2010,18 @@
                 "signature": {
                   "payloadType": "application/vnd.kokoro.owner-live-read-receipt.v1+json",
                   "keyId": "key.platform-site-live-read.1",
-                  "signatureBase64": "Nj4w2SOlw9TcTV1EPyzcxqVIRKvpu4O1+jDX3auUvCuJE0rtpTLgnhhBD1/GMCVEGkoOadQ465mNvDQJ2dRNDw=="
+                  "signatureBase64": "9/36APdD/4fF5472EDGptYXc8P0tyQLVLz2FTPJSvL+GNHdgZAP6ZOmOXfPjEs2wK2l5uqV2/7AYhGRgrzpNDQ=="
                 },
-                "ownerEventDigest": "sha256:f43e497a257a662ae696a02bc6cd7fd3c8b36d2f5206dda0ffdd62a05721be19"
+                "ownerEventDigest": "sha256:3c7203c4af1720f11b6e9a34ecb279ebcbacb2638a55bd899fd9eb387699d32e"
               },
               {
                 "aggregateKind": "certification",
                 "aggregateRef": "release-certification.alpha.1",
                 "revision": "0",
                 "headEventRef": "event.certification.before-cas.1",
-                "headDigest": "sha256:c3afa196c4a439b69e44aeb294d5551ca570cf98ad98d6a3f6cf28b0b221d40f",
+                "headDigest": "sha256:310970e4de87ea5de16530996033a25aae12b9d4e84694171cd3138304aac977",
                 "queryDigest": "sha256:4d2fe154e4a5fd44261627825430f7ee1fbcfc15fb93dbedcfb7fbf8a301e61e",
-                "resultDigest": "sha256:01a30c8d67c8f3672f225d3d6af500399b25d0e36f3421e13cad84e0fbe4647c",
+                "resultDigest": "sha256:bea3e27c9129f042d875810cee2b120a8a386993baae8df37b636e3b2301c469",
                 "readReceiptRef": "read-receipt.certification.blocked.7.1",
                 "observedAt": "2026-08-01T12:35:00.000Z",
                 "provider": {
@@ -2048,9 +2048,9 @@
                 "signature": {
                   "payloadType": "application/vnd.kokoro.owner-live-read-receipt.v1+json",
                   "keyId": "key.release-certification-live-read.1",
-                  "signatureBase64": "5jouW9zAGXhIHsqPRaU2LtJ/je/nKAR0cH3RSDHbNbDb9fd3bJopqjTh9ov0ZKcL5gVanluNIa0lp6VJ69OnDA=="
+                  "signatureBase64": "HdsoUUYEg3wPFyFaafTxHjiDawfAXkRVcMYQdcjNNcwddflNmwMimBnE2S4syN4cgqzCIbbXIgesjC/BGbNbCQ=="
                 },
-                "ownerEventDigest": "sha256:4a0fd120033669e3475d98405800bc0ed7f2c9b2e62bbaf417008c84c7dc3784"
+                "ownerEventDigest": "sha256:7f3acfa61a5351a0d7b68f31f92fbf99c5a275de43b4ed9a50cb44b38c3ca58a"
               },
               {
                 "aggregateKind": "producer-registry",
@@ -2464,13 +2464,6 @@
                 "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
               }
             ],
-            "offerPriceRevisions": [
-              {
-                "ref": "offer-price.redeem-first.usd.1",
-                "revision": "1",
-                "digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
-              }
-            ],
             "entitlementTemplateRevisions": [
               {
                 "ref": "entitlement-template.redeem-first.2",
@@ -2485,7 +2478,7 @@
                 "digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
               }
             ],
-            "closureDigest": "sha256:43c9d88edf98a593687514d00767449655c8ce2e894acb56a461e9ea9641e13b"
+            "closureDigest": "sha256:5886974e6456b562b4de45982911ab1765d3708a6a46762a720c07119c14cb2a"
           },
           "hubClosure": {
             "capabilityAssignment": {
@@ -2535,7 +2528,7 @@
           "ref": "release-candidate.alpha.1",
           "version": "1",
           "authorizationEpoch": "7",
-          "digest": "sha256:47a88ba0a762f703e2c39bdd35e489ac18eecd376687bca7625d3b894783e919"
+          "digest": "sha256:dcd86312ea2991f90efce4900f0f65f8b594b469fe7e6140303423bf4ad4cd02"
         },
         "launchProductProfile": {
           "ref": "launch-profile.redeem-first.1",
@@ -2862,7 +2855,7 @@
           "ref": "release-candidate.alpha.1",
           "version": "1",
           "authorizationEpoch": "7",
-          "digest": "sha256:47a88ba0a762f703e2c39bdd35e489ac18eecd376687bca7625d3b894783e919"
+          "digest": "sha256:dcd86312ea2991f90efce4900f0f65f8b594b469fe7e6140303423bf4ad4cd02"
         },
         "siteRef": "site.alpha",
         "environment": "production",
@@ -2884,7 +2877,7 @@
         "surfaceInventory": {
           "ref": "inventory.site-alpha.1",
           "revision": "1",
-          "digest": "sha256:f1e5fadf37ea3568a67de9a0fa9f8772ed6d943cae9ed1219c0d2f167c2d2c17"
+          "digest": "sha256:487517dd937921958d078062e9132e2eb7ee31f0bfec45d2139a11965f28ef2a"
         },
         "webCompositionRegistry": {
           "ref": "web-registry.core.1",
@@ -3003,13 +2996,6 @@
                 "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
               }
             ],
-            "offerPriceRevisions": [
-              {
-                "ref": "offer-price.redeem-first.usd.1",
-                "revision": "1",
-                "digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
-              }
-            ],
             "entitlementTemplateRevisions": [
               {
                 "ref": "entitlement-template.redeem-first.2",
@@ -3024,7 +3010,7 @@
                 "digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
               }
             ],
-            "closureDigest": "sha256:43c9d88edf98a593687514d00767449655c8ce2e894acb56a461e9ea9641e13b"
+            "closureDigest": "sha256:5886974e6456b562b4de45982911ab1765d3708a6a46762a720c07119c14cb2a"
           },
           "hubClosure": {
             "capabilityAssignment": {
@@ -3059,7 +3045,7 @@
           "ref": "release-candidate.alpha.1",
           "version": "1",
           "authorizationEpoch": "7",
-          "digest": "sha256:47a88ba0a762f703e2c39bdd35e489ac18eecd376687bca7625d3b894783e919"
+          "digest": "sha256:dcd86312ea2991f90efce4900f0f65f8b594b469fe7e6140303423bf4ad4cd02"
         },
         "compilerRevisionRef": "web-compiler.next16.1",
         "registry": {
@@ -3075,7 +3061,7 @@
         "surfaceInventory": {
           "ref": "inventory.site-alpha.1",
           "revision": "1",
-          "digest": "sha256:f1e5fadf37ea3568a67de9a0fa9f8772ed6d943cae9ed1219c0d2f167c2d2c17"
+          "digest": "sha256:487517dd937921958d078062e9132e2eb7ee31f0bfec45d2139a11965f28ef2a"
         },
         "toolchain": {
           "ref": "web-toolchain.next16.1",
@@ -3271,7 +3257,7 @@
         "webBuildIntent": {
           "ref": "web-build-intent.alpha.1",
           "revision": "1",
-          "digest": "sha256:af6df7af67eeb074dd743116999d3c503d1bdb6598f72661dafba502453bea34"
+          "digest": "sha256:f66ca2e160cedca0699315a8c8269fb03b4bbaeaaae63060ee4af8be8b85ceef"
         }
       }
     },
@@ -3303,18 +3289,18 @@
               "webBuildIntent": {
                 "ref": "web-build-intent.alpha.1",
                 "revision": "1",
-                "digest": "sha256:af6df7af67eeb074dd743116999d3c503d1bdb6598f72661dafba502453bea34"
+                "digest": "sha256:f66ca2e160cedca0699315a8c8269fb03b4bbaeaaae63060ee4af8be8b85ceef"
               },
               "compiledWebManifest": {
                 "ref": "compiled-web-manifest.alpha.1",
                 "revision": "1",
-                "digest": "sha256:dd8cb26c289b36b255c6dafba58c4d0b2a71198eee10c014abcaa02c77bc5b1f"
+                "digest": "sha256:f522502015538aa3997cca3e009f851b1ea7f1df63a2ee6b847ab4cfa0d109c4"
               },
               "siteReleaseCandidate": {
                 "ref": "release-candidate.alpha.1",
                 "version": "1",
                 "authorizationEpoch": "7",
-                "digest": "sha256:47a88ba0a762f703e2c39bdd35e489ac18eecd376687bca7625d3b894783e919"
+                "digest": "sha256:dcd86312ea2991f90efce4900f0f65f8b594b469fe7e6140303423bf4ad4cd02"
               }
             },
             "resolvedDependencies": [
@@ -3466,7 +3452,7 @@
           "ref": "release-candidate.alpha.1",
           "version": "1",
           "authorizationEpoch": "7",
-          "digest": "sha256:47a88ba0a762f703e2c39bdd35e489ac18eecd376687bca7625d3b894783e919"
+          "digest": "sha256:dcd86312ea2991f90efce4900f0f65f8b594b469fe7e6140303423bf4ad4cd02"
         },
         "certificationRevocationEpoch": "0",
         "launchProductProfile": {
@@ -3482,22 +3468,22 @@
         "surfaceInventory": {
           "ref": "inventory.site-alpha.1",
           "revision": "1",
-          "digest": "sha256:f1e5fadf37ea3568a67de9a0fa9f8772ed6d943cae9ed1219c0d2f167c2d2c17"
+          "digest": "sha256:487517dd937921958d078062e9132e2eb7ee31f0bfec45d2139a11965f28ef2a"
         },
         "webBuildIntent": {
           "ref": "web-build-intent.alpha.1",
           "revision": "1",
-          "digest": "sha256:af6df7af67eeb074dd743116999d3c503d1bdb6598f72661dafba502453bea34"
+          "digest": "sha256:f66ca2e160cedca0699315a8c8269fb03b4bbaeaaae63060ee4af8be8b85ceef"
         },
         "compiledWebManifest": {
           "ref": "compiled-web-manifest.alpha.1",
           "revision": "1",
-          "digest": "sha256:dd8cb26c289b36b255c6dafba58c4d0b2a71198eee10c014abcaa02c77bc5b1f"
+          "digest": "sha256:f522502015538aa3997cca3e009f851b1ea7f1df63a2ee6b847ab4cfa0d109c4"
         },
         "webArtifactProvenance": {
           "ref": "web-artifact-provenance.alpha.1",
           "revision": "1",
-          "digest": "sha256:89be0e2a1014af681530dc0b527f7983e56f9172a0cf31e60dd938ff35aecda2"
+          "digest": "sha256:1d612a936a6e748ca33ddfaef10677948c7ba0a66d445d33c5c936debc5d03c1"
         },
         "webArtifactDigest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
         "evidenceBundle": {
@@ -3546,7 +3532,7 @@
           "ref": "release-candidate.alpha.1",
           "version": "1",
           "authorizationEpoch": "7",
-          "digest": "sha256:47a88ba0a762f703e2c39bdd35e489ac18eecd376687bca7625d3b894783e919"
+          "digest": "sha256:dcd86312ea2991f90efce4900f0f65f8b594b469fe7e6140303423bf4ad4cd02"
         },
         "certificationRevocationEpoch": "0",
         "launchProductProfile": {
@@ -3562,22 +3548,22 @@
         "surfaceInventory": {
           "ref": "inventory.site-alpha.1",
           "revision": "1",
-          "digest": "sha256:f1e5fadf37ea3568a67de9a0fa9f8772ed6d943cae9ed1219c0d2f167c2d2c17"
+          "digest": "sha256:487517dd937921958d078062e9132e2eb7ee31f0bfec45d2139a11965f28ef2a"
         },
         "webBuildIntent": {
           "ref": "web-build-intent.alpha.1",
           "revision": "1",
-          "digest": "sha256:af6df7af67eeb074dd743116999d3c503d1bdb6598f72661dafba502453bea34"
+          "digest": "sha256:f66ca2e160cedca0699315a8c8269fb03b4bbaeaaae63060ee4af8be8b85ceef"
         },
         "compiledWebManifest": {
           "ref": "compiled-web-manifest.alpha.1",
           "revision": "1",
-          "digest": "sha256:dd8cb26c289b36b255c6dafba58c4d0b2a71198eee10c014abcaa02c77bc5b1f"
+          "digest": "sha256:f522502015538aa3997cca3e009f851b1ea7f1df63a2ee6b847ab4cfa0d109c4"
         },
         "webArtifactProvenance": {
           "ref": "web-artifact-provenance.alpha.1",
           "revision": "1",
-          "digest": "sha256:89be0e2a1014af681530dc0b527f7983e56f9172a0cf31e60dd938ff35aecda2"
+          "digest": "sha256:1d612a936a6e748ca33ddfaef10677948c7ba0a66d445d33c5c936debc5d03c1"
         },
         "webArtifactDigest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
         "evidenceBundle": {
@@ -3622,13 +3608,13 @@
         "releaseCertification": {
           "ref": "release-certification.obsolete.1",
           "revision": "1",
-          "digest": "sha256:d602367dc4ee10055ddd26b1c3403abb8ae6db5b6197d6de0a0e01d5da5c3b2a"
+          "digest": "sha256:8383d114c88652030dddb4dffda52bfdc9db46601c2c11d1ed12c278d690789e"
         },
         "siteReleaseCandidate": {
           "ref": "release-candidate.alpha.1",
           "version": "1",
           "authorizationEpoch": "7",
-          "digest": "sha256:47a88ba0a762f703e2c39bdd35e489ac18eecd376687bca7625d3b894783e919"
+          "digest": "sha256:dcd86312ea2991f90efce4900f0f65f8b594b469fe7e6140303423bf4ad4cd02"
         },
         "certificationRevocationEpoch": "1",
         "environment": "production",
@@ -3673,7 +3659,7 @@
           "ref": "release-candidate.alpha.1",
           "version": "1",
           "authorizationEpoch": "7",
-          "digest": "sha256:47a88ba0a762f703e2c39bdd35e489ac18eecd376687bca7625d3b894783e919"
+          "digest": "sha256:dcd86312ea2991f90efce4900f0f65f8b594b469fe7e6140303423bf4ad4cd02"
         },
         "launchProductProfile": {
           "ref": "launch-profile.redeem-first.1",
@@ -3688,28 +3674,28 @@
         "surfaceInventory": {
           "ref": "inventory.site-alpha.1",
           "revision": "1",
-          "digest": "sha256:f1e5fadf37ea3568a67de9a0fa9f8772ed6d943cae9ed1219c0d2f167c2d2c17"
+          "digest": "sha256:487517dd937921958d078062e9132e2eb7ee31f0bfec45d2139a11965f28ef2a"
         },
         "webBuildIntent": {
           "ref": "web-build-intent.alpha.1",
           "revision": "1",
-          "digest": "sha256:af6df7af67eeb074dd743116999d3c503d1bdb6598f72661dafba502453bea34"
+          "digest": "sha256:f66ca2e160cedca0699315a8c8269fb03b4bbaeaaae63060ee4af8be8b85ceef"
         },
         "compiledWebManifest": {
           "ref": "compiled-web-manifest.alpha.1",
           "revision": "1",
-          "digest": "sha256:dd8cb26c289b36b255c6dafba58c4d0b2a71198eee10c014abcaa02c77bc5b1f"
+          "digest": "sha256:f522502015538aa3997cca3e009f851b1ea7f1df63a2ee6b847ab4cfa0d109c4"
         },
         "webArtifactProvenance": {
           "ref": "web-artifact-provenance.alpha.1",
           "revision": "1",
-          "digest": "sha256:89be0e2a1014af681530dc0b527f7983e56f9172a0cf31e60dd938ff35aecda2"
+          "digest": "sha256:1d612a936a6e748ca33ddfaef10677948c7ba0a66d445d33c5c936debc5d03c1"
         },
         "webArtifactDigest": "sha256:c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
         "releaseCertification": {
           "ref": "release-certification.alpha.1",
           "revision": "1",
-          "digest": "sha256:07ae3d859d0aba8654d8aa088848e6389afe5b28df3fd3759bca910f333041d2"
+          "digest": "sha256:ed3fb11265efbaefaa020a1fbff2b34f99908c6598f3cd65792a744dd91e1271"
         },
         "certificationRevocationEpoch": "0",
         "businessBindings": {
@@ -3769,13 +3755,6 @@
                 "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
               }
             ],
-            "offerPriceRevisions": [
-              {
-                "ref": "offer-price.redeem-first.usd.1",
-                "revision": "1",
-                "digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
-              }
-            ],
             "entitlementTemplateRevisions": [
               {
                 "ref": "entitlement-template.redeem-first.2",
@@ -3790,7 +3769,7 @@
                 "digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
               }
             ],
-            "closureDigest": "sha256:43c9d88edf98a593687514d00767449655c8ce2e894acb56a461e9ea9641e13b"
+            "closureDigest": "sha256:5886974e6456b562b4de45982911ab1765d3708a6a46762a720c07119c14cb2a"
           },
           "hubClosure": {
             "capabilityAssignment": {
@@ -3815,7 +3794,7 @@
           "compiledWebManifest": {
             "ref": "compiled-web-manifest.alpha.1",
             "revision": "1",
-            "digest": "sha256:dd8cb26c289b36b255c6dafba58c4d0b2a71198eee10c014abcaa02c77bc5b1f"
+            "digest": "sha256:f522502015538aa3997cca3e009f851b1ea7f1df63a2ee6b847ab4cfa0d109c4"
           },
           "productSurfaceCatalog": {
             "ref": "catalog.core.1",
@@ -3825,7 +3804,7 @@
           "surfaceInventory": {
             "ref": "inventory.site-alpha.1",
             "revision": "1",
-            "digest": "sha256:f1e5fadf37ea3568a67de9a0fa9f8772ed6d943cae9ed1219c0d2f167c2d2c17"
+            "digest": "sha256:487517dd937921958d078062e9132e2eb7ee31f0bfec45d2139a11965f28ef2a"
           },
           "webCompositionRegistry": {
             "ref": "web-registry.core.1",
@@ -3863,14 +3842,14 @@
         "siteRelease": {
           "ref": "site-release.alpha.1",
           "revision": "1",
-          "digest": "sha256:6acb37edacec03f053e2b2daee6e1821a48b747b336148fecacec4ab69dcb99a"
+          "digest": "sha256:5111ee30a3d779214b40501e68924c86b6b6ee0e8abb0c71223a14af0295772e"
         },
         "candidate": {
           "siteReleaseCandidate": {
             "ref": "release-candidate.alpha.1",
             "version": "1",
             "authorizationEpoch": "7",
-            "digest": "sha256:47a88ba0a762f703e2c39bdd35e489ac18eecd376687bca7625d3b894783e919"
+            "digest": "sha256:dcd86312ea2991f90efce4900f0f65f8b594b469fe7e6140303423bf4ad4cd02"
           },
           "state": "active"
         },
@@ -3878,7 +3857,7 @@
           "releaseCertification": {
             "ref": "release-certification.alpha.1",
             "revision": "1",
-            "digest": "sha256:07ae3d859d0aba8654d8aa088848e6389afe5b28df3fd3759bca910f333041d2"
+            "digest": "sha256:ed3fb11265efbaefaa020a1fbff2b34f99908c6598f3cd65792a744dd91e1271"
           },
           "state": "active",
           "revocationEpoch": "0",
@@ -3906,7 +3885,7 @@
           "keyStatus": "active"
         },
         "readAt": "2026-07-31T12:41:00.000Z",
-        "authorityMaterialDigest": "sha256:e278f06ac27985f98bd13a3f11ae3107295caaa5ced8b32316532b7f00113b0f",
+        "authorityMaterialDigest": "sha256:ccfacab6e8f9c86cee2444d6ff6ceb0fa305649a3d653f6f8a7cc951615dd4d8",
         "activationAttempt": {
           "ref": "activation-attempt.alpha.1",
           "revision": "1",
@@ -3927,9 +3906,9 @@
             "aggregateRef": "release-candidate.alpha.1",
             "revision": "7",
             "headEventRef": "event.candidate.begin.1",
-            "headDigest": "sha256:f2efb9bae120f00b2d809ef5fb63ee993cbacfc1161de8056786d3c6066f4a2f",
+            "headDigest": "sha256:95c1c8e89c498d34dd2b9dd1bf315d98cbdfa65144ce460c7ad7add96ed33a7a",
             "queryDigest": "sha256:95a27800f2282194a2961d29659eb154b4779534614b54f9d58ec7547e97a508",
-            "resultDigest": "sha256:7e14dc0f55356467c07c7090e8a17a8dbe92eb01d44d4c6406410bf54f4fcf8f",
+            "resultDigest": "sha256:a5912ce0b34c5a7f928c3180607599c9a9a7edcc0366a2c3989f0d802e53ae88",
             "readReceiptRef": "read-receipt.candidate.begin.1",
             "observedAt": "2026-07-31T12:41:00.000Z",
             "provider": {
@@ -3956,18 +3935,18 @@
             "signature": {
               "payloadType": "application/vnd.kokoro.owner-live-read-receipt.v1+json",
               "keyId": "key.platform-site-live-read.1",
-              "signatureBase64": "6aD6naeC/9B1wV3t6Q5fnLKryNxA5vMftx4sOVhW1d1TE0zcfaSe1bitciAFOdV77ysmJrqhUdRzeG3/DiT3Bw=="
+              "signatureBase64": "ZBddXjKFbtOhiwdJqJWaxxfWPeTBlKaXjeQsEvx0WAcsuzDLuNKJ4BeAc3ShpfgkZGzLg/rPndpWqquIdwUsAQ=="
             },
-            "ownerEventDigest": "sha256:70fc9e89b8fa11bf2a8213f017f587ea5e2006fd8a15a00b647ada3e5a655be7"
+            "ownerEventDigest": "sha256:617b395fcaa5c3f9fa158bce528324484df7d58eae793f1c9767619aed10cecb"
           },
           {
             "aggregateKind": "certification",
             "aggregateRef": "release-certification.alpha.1",
             "revision": "0",
             "headEventRef": "event.certification.begin.1",
-            "headDigest": "sha256:db5abd399e68f7b3b66273812c8b3faeeb07b2d173b87a1d304d0eee0ac521c8",
+            "headDigest": "sha256:2bca94baa3ec8ee2d9ee32506ea94bce598dd382e5227abb27308cdbfa0f08d2",
             "queryDigest": "sha256:c88c4f484233fbbe1b7f88e541f5497f566046f54208d5a9afd907ce0ed68225",
-            "resultDigest": "sha256:01a30c8d67c8f3672f225d3d6af500399b25d0e36f3421e13cad84e0fbe4647c",
+            "resultDigest": "sha256:bea3e27c9129f042d875810cee2b120a8a386993baae8df37b636e3b2301c469",
             "readReceiptRef": "read-receipt.certification.begin.1",
             "observedAt": "2026-07-31T12:41:00.000Z",
             "provider": {
@@ -3994,9 +3973,9 @@
             "signature": {
               "payloadType": "application/vnd.kokoro.owner-live-read-receipt.v1+json",
               "keyId": "key.release-certification-live-read.1",
-              "signatureBase64": "/kWZxwkNLBtmspR2XWnxWOKrMzpUqXFMDdmLks1j3dZz0l3g9y/+cm8TDIhv3ytX4/s/IKDW+mKXYAZx8z3ACw=="
+              "signatureBase64": "1x5K/7aXxwvNMp9i1dAVs0SDMdASfS5ALjkoB0CENwaxzuMjseYLs7xzcTyTqPzRdN2Z+nZuYy9jdtRVF7fpBw=="
             },
-            "ownerEventDigest": "sha256:0a3976b4c159cb7ad81455b2272b3bc129687e6ece08c45878cfc72ac6a17294"
+            "ownerEventDigest": "sha256:1d1fe63079701dc46234af5abfaf1eb265910951195476d17a49c85d01223464"
           },
           {
             "aggregateKind": "producer-registry",
@@ -4178,14 +4157,14 @@
         "siteRelease": {
           "ref": "site-release.alpha.1",
           "revision": "1",
-          "digest": "sha256:6acb37edacec03f053e2b2daee6e1821a48b747b336148fecacec4ab69dcb99a"
+          "digest": "sha256:5111ee30a3d779214b40501e68924c86b6b6ee0e8abb0c71223a14af0295772e"
         },
         "candidate": {
           "siteReleaseCandidate": {
             "ref": "release-candidate.alpha.1",
             "version": "1",
             "authorizationEpoch": "7",
-            "digest": "sha256:47a88ba0a762f703e2c39bdd35e489ac18eecd376687bca7625d3b894783e919"
+            "digest": "sha256:dcd86312ea2991f90efce4900f0f65f8b594b469fe7e6140303423bf4ad4cd02"
           },
           "state": "active"
         },
@@ -4193,7 +4172,7 @@
           "releaseCertification": {
             "ref": "release-certification.alpha.1",
             "revision": "1",
-            "digest": "sha256:07ae3d859d0aba8654d8aa088848e6389afe5b28df3fd3759bca910f333041d2"
+            "digest": "sha256:ed3fb11265efbaefaa020a1fbff2b34f99908c6598f3cd65792a744dd91e1271"
           },
           "state": "active",
           "revocationEpoch": "0",
@@ -4221,7 +4200,7 @@
           "keyStatus": "active"
         },
         "readAt": "2026-07-31T12:42:00.000Z",
-        "authorityMaterialDigest": "sha256:8189f06572319e5a530b79cd3e92903c6139eec82bca7aed859c5bf916ab1866",
+        "authorityMaterialDigest": "sha256:328aaea906330c8b5840001295d96a2972d3b7412f0f0b1a884a6348ce129d3d",
         "activationAttempt": {
           "ref": "activation-attempt.alpha.1",
           "revision": "1",
@@ -4242,9 +4221,9 @@
             "aggregateRef": "release-candidate.alpha.1",
             "revision": "7",
             "headEventRef": "event.candidate.before-cas.1",
-            "headDigest": "sha256:cfc25c1508a270aa78f0bcc375bd5b2f9ae08ecf64d59688e14865c2b6eee106",
+            "headDigest": "sha256:cc74300016d0da9ac6823b2a871fa10de5ddb032d10859b029e5f332b7f8e0ed",
             "queryDigest": "sha256:b8ccf288c638f91aa896bdcac59517fcb5109c9a6685892b49e576284aec5e1d",
-            "resultDigest": "sha256:7e14dc0f55356467c07c7090e8a17a8dbe92eb01d44d4c6406410bf54f4fcf8f",
+            "resultDigest": "sha256:a5912ce0b34c5a7f928c3180607599c9a9a7edcc0366a2c3989f0d802e53ae88",
             "readReceiptRef": "read-receipt.candidate.before-cas.1",
             "observedAt": "2026-07-31T12:42:00.000Z",
             "provider": {
@@ -4271,18 +4250,18 @@
             "signature": {
               "payloadType": "application/vnd.kokoro.owner-live-read-receipt.v1+json",
               "keyId": "key.platform-site-live-read.1",
-              "signatureBase64": "RuIBRF8Ru+QAum/SU1IKE+5STtuXd2MAJLthrl6Mu3gVHawpjOyFyrnbZPHbYFkAWsGmeCk+aXFhUzAtwRAVAw=="
+              "signatureBase64": "obv3lDI968kjSN+LOhO3PcwWQb6XhIhAToh4bs6LxPD+YMX+NV+afIWV7eQERJaWQYGdUANuDxsQPjc50RZXCQ=="
             },
-            "ownerEventDigest": "sha256:f43e497a257a662ae696a02bc6cd7fd3c8b36d2f5206dda0ffdd62a05721be19"
+            "ownerEventDigest": "sha256:3c7203c4af1720f11b6e9a34ecb279ebcbacb2638a55bd899fd9eb387699d32e"
           },
           {
             "aggregateKind": "certification",
             "aggregateRef": "release-certification.alpha.1",
             "revision": "0",
             "headEventRef": "event.certification.before-cas.1",
-            "headDigest": "sha256:c3afa196c4a439b69e44aeb294d5551ca570cf98ad98d6a3f6cf28b0b221d40f",
+            "headDigest": "sha256:310970e4de87ea5de16530996033a25aae12b9d4e84694171cd3138304aac977",
             "queryDigest": "sha256:4d2fe154e4a5fd44261627825430f7ee1fbcfc15fb93dbedcfb7fbf8a301e61e",
-            "resultDigest": "sha256:01a30c8d67c8f3672f225d3d6af500399b25d0e36f3421e13cad84e0fbe4647c",
+            "resultDigest": "sha256:bea3e27c9129f042d875810cee2b120a8a386993baae8df37b636e3b2301c469",
             "readReceiptRef": "read-receipt.certification.before-cas.1",
             "observedAt": "2026-07-31T12:42:00.000Z",
             "provider": {
@@ -4309,9 +4288,9 @@
             "signature": {
               "payloadType": "application/vnd.kokoro.owner-live-read-receipt.v1+json",
               "keyId": "key.release-certification-live-read.1",
-              "signatureBase64": "d79rYOE1AxjtVwYQxAe0N4LUCNvF35QkhOdV0zc9rFtXzydeaVifF4mkmAwK3v5mljmI62nJmD++S8ioSgLhCQ=="
+              "signatureBase64": "zmNE9JqYzfOdBXdWypq/yflJCLXaN+/wXOnNu/2nekvEaBYggzKxJTseRPwWCeshNpJL4N+qSHPYsDJHi6XlDw=="
             },
-            "ownerEventDigest": "sha256:4a0fd120033669e3475d98405800bc0ed7f2c9b2e62bbaf417008c84c7dc3784"
+            "ownerEventDigest": "sha256:7f3acfa61a5351a0d7b68f31f92fbf99c5a275de43b4ed9a50cb44b38c3ca58a"
           },
           {
             "aggregateKind": "producer-registry",
@@ -4492,21 +4471,21 @@
         "siteRelease": {
           "ref": "site-release.alpha.1",
           "revision": "1",
-          "digest": "sha256:6acb37edacec03f053e2b2daee6e1821a48b747b336148fecacec4ab69dcb99a"
+          "digest": "sha256:5111ee30a3d779214b40501e68924c86b6b6ee0e8abb0c71223a14af0295772e"
         },
         "beginAuthoritySnapshot": {
           "ref": "activation-snapshot.alpha.begin.1",
           "revision": "1",
-          "digest": "sha256:5e4b774d1068864e8c75c7dcae46fd2c98414e5dfdc8f1e47811fdf576bd8112"
+          "digest": "sha256:f3ab3968df9692e386ff48735e5b5a83cf8032ac7270b928f7e3b0c7d278ac12"
         },
         "immediateBeforePointerCasAuthoritySnapshot": {
           "ref": "activation-snapshot.alpha.before-cas.1",
           "revision": "1",
-          "digest": "sha256:0fadc549676e45ec4a9893e7a7b9e9ff29e0ebbcbfcfc10344fdb89c35954869"
+          "digest": "sha256:14d379324fd74d733a6d2b9585ab4e64bfd428098ca686329149245ccb29623a"
         },
         "decision": "eligible",
         "evaluatedAt": "2026-07-31T12:42:00.001Z",
-        "eligibilityMaterialDigest": "sha256:1c813fe809a1bf29a7ede58e9d77bab0bf2db176e1a845d137336d9244ae16ee",
+        "eligibilityMaterialDigest": "sha256:dff831a42ff87542b8d194fdea6d2f990c9730a67740a667c985b8d98b57b4bc",
         "activationAttempt": {
           "ref": "activation-attempt.alpha.1",
           "revision": "1",
@@ -4549,12 +4528,12 @@
     {
       "id": "jcs-candidate",
       "caseId": "candidate-site-alpha",
-      "expectedDigest": "sha256:47a88ba0a762f703e2c39bdd35e489ac18eecd376687bca7625d3b894783e919"
+      "expectedDigest": "sha256:dcd86312ea2991f90efce4900f0f65f8b594b469fe7e6140303423bf4ad4cd02"
     },
     {
       "id": "jcs-inventory",
       "caseId": "inventory-chat-only",
-      "expectedDigest": "sha256:f1e5fadf37ea3568a67de9a0fa9f8772ed6d943cae9ed1219c0d2f167c2d2c17"
+      "expectedDigest": "sha256:487517dd937921958d078062e9132e2eb7ee31f0bfec45d2139a11965f28ef2a"
     },
     {
       "id": "jcs-material",
@@ -4574,52 +4553,52 @@
     {
       "id": "jcs-intent",
       "caseId": "intent-site-alpha",
-      "expectedDigest": "sha256:af6df7af67eeb074dd743116999d3c503d1bdb6598f72661dafba502453bea34"
+      "expectedDigest": "sha256:f66ca2e160cedca0699315a8c8269fb03b4bbaeaaae63060ee4af8be8b85ceef"
     },
     {
       "id": "jcs-manifest",
       "caseId": "manifest-chat-only",
-      "expectedDigest": "sha256:dd8cb26c289b36b255c6dafba58c4d0b2a71198eee10c014abcaa02c77bc5b1f"
+      "expectedDigest": "sha256:f522502015538aa3997cca3e009f851b1ea7f1df63a2ee6b847ab4cfa0d109c4"
     },
     {
       "id": "jcs-provenance",
       "caseId": "provenance-site-alpha",
-      "expectedDigest": "sha256:89be0e2a1014af681530dc0b527f7983e56f9172a0cf31e60dd938ff35aecda2"
+      "expectedDigest": "sha256:1d612a936a6e748ca33ddfaef10677948c7ba0a66d445d33c5c936debc5d03c1"
     },
     {
       "id": "jcs-certification",
       "caseId": "certification-site-alpha",
-      "expectedDigest": "sha256:07ae3d859d0aba8654d8aa088848e6389afe5b28df3fd3759bca910f333041d2"
+      "expectedDigest": "sha256:ed3fb11265efbaefaa020a1fbff2b34f99908c6598f3cd65792a744dd91e1271"
     },
     {
       "id": "jcs-certification-obsolete",
       "caseId": "certification-obsolete",
-      "expectedDigest": "sha256:d602367dc4ee10055ddd26b1c3403abb8ae6db5b6197d6de0a0e01d5da5c3b2a"
+      "expectedDigest": "sha256:8383d114c88652030dddb4dffda52bfdc9db46601c2c11d1ed12c278d690789e"
     },
     {
       "id": "jcs-revocation",
       "caseId": "revocation-obsolete-certification",
-      "expectedDigest": "sha256:2d976bcb2e760d14ea047155f71887604ff252229e5567e5fccbfecbc163078f"
+      "expectedDigest": "sha256:595654180944708d729d68bb73f729bd8588ed256b7cbdc0f956e5520de6d93b"
     },
     {
       "id": "jcs-site-release",
       "caseId": "site-release-alpha",
-      "expectedDigest": "sha256:6acb37edacec03f053e2b2daee6e1821a48b747b336148fecacec4ab69dcb99a"
+      "expectedDigest": "sha256:5111ee30a3d779214b40501e68924c86b6b6ee0e8abb0c71223a14af0295772e"
     },
     {
       "id": "jcs-activation-authority-begin",
       "caseId": "activation-authority-begin",
-      "expectedDigest": "sha256:5e4b774d1068864e8c75c7dcae46fd2c98414e5dfdc8f1e47811fdf576bd8112"
+      "expectedDigest": "sha256:f3ab3968df9692e386ff48735e5b5a83cf8032ac7270b928f7e3b0c7d278ac12"
     },
     {
       "id": "jcs-activation-authority-before-cas",
       "caseId": "activation-authority-before-cas",
-      "expectedDigest": "sha256:0fadc549676e45ec4a9893e7a7b9e9ff29e0ebbcbfcfc10344fdb89c35954869"
+      "expectedDigest": "sha256:14d379324fd74d733a6d2b9585ab4e64bfd428098ca686329149245ccb29623a"
     },
     {
       "id": "jcs-activation-eligibility",
       "caseId": "activation-eligibility-alpha",
-      "expectedDigest": "sha256:284015fe235fff76b420a35bd846b598c5bced09b22ddac6e34a40dc34e0fad4"
+      "expectedDigest": "sha256:31ffed79564d8cd7262bea5cbaeac22508f470165258e544dc1f80729935329b"
     }
   ],
   "dsseVectors": [
@@ -4628,40 +4607,40 @@
       "caseId": "intent-site-alpha",
       "keyId": "key.web-build-intent.3",
       "payloadType": "application/vnd.kokoro.web-build-intent.v1+json",
-      "expectedPaeSha256": "fb44bc6246c2b785a8e5816696a5bf359bc504049faec69bb6cf304e2cb221cd",
-      "signatureBase64": "RwEoMaHibnEOhSWq0h3hos/RK1gD6ulgIxp9+Ye/IUgnu8v+hWoKgC5E3/rVypbr74TmeprcgdDPLl5XugseDA=="
+      "expectedPaeSha256": "aec2351b827de07942e6032b1393daca1c7aa0fa9f5c9c7da6b3f2f10b79b663",
+      "signatureBase64": "rVmxcfPV3sh+xNzoVYMC4zyXTLmfHcTl82k/BopsgOeI2lNxHeaiaLM31CXZEcc/RK0sJmrRrRUZ+H91eeA+BA=="
     },
     {
       "id": "dsse-certification-site-alpha",
       "caseId": "certification-site-alpha",
       "keyId": "key.release-certification.1",
       "payloadType": "application/vnd.kokoro.release-certification-instance.v1+json",
-      "expectedPaeSha256": "9177c8b2f410f4cb4fc2cee2ced8c5a13bb89dcca6745d25a47c7ba7af324f6c",
-      "signatureBase64": "Gi217q7EpaoPC4qwebs7VvuxqCmkbHWiPbCGu8z8MSmAirU30URu39K8VczTW0kDPEa8K7PMOBdqDB1P6BhoAA=="
+      "expectedPaeSha256": "e758ae2347b64a02262e958f2e3965c494913556d53e98aa84c21e8c9d0490fb",
+      "signatureBase64": "4e0cM+WzOtY7X3WpWIiQWaj/HaRDXgRUwL+k26cG/HxD4uzvGk4Bb+IfMlaxtDDot0hEHy5dPbL/WQTGA+K5Ag=="
     },
     {
       "id": "dsse-certification-obsolete",
       "caseId": "certification-obsolete",
       "keyId": "key.release-certification.obsolete.1",
       "payloadType": "application/vnd.kokoro.release-certification-instance.v1+json",
-      "expectedPaeSha256": "8148a913c8c2bb9feabc9c657037034a7a426a93870948bea4a9b793d45e4369",
-      "signatureBase64": "D+ZVUSox7krk3/az5buDZKskkPA6YZ6BZ/Ai+aHDGqwGx+zpcB7jq2UFJqBU1reuxFZOStcjbP+dcrJTGWH/AA=="
+      "expectedPaeSha256": "cc4cae7db6cdf27451dc9647232c49f6f7c53290a476645167f4f536183601ee",
+      "signatureBase64": "v4i9Y/vsfQABni15uAlXlNdU2QT4cU9Bhd3tEV60819OFQMRQ/Ln1rux1Unq0A0zXYmcNgzmW/RxaETrr6nzCg=="
     },
     {
       "id": "dsse-revocation-obsolete",
       "caseId": "revocation-obsolete-certification",
       "keyId": "key.release-revocation.1",
       "payloadType": "application/vnd.kokoro.release-certification-revocation.v1+json",
-      "expectedPaeSha256": "14a87bf50655c142ece61653a4e8f0f3abed4e3d64ca00f93d399983e4b317e9",
-      "signatureBase64": "WSK231OlPpKCCfyWkrIdnbs4q7qQdWNsQOFQod+CgOpd9D+v3kdy6L5pk0pjGt9+RU0nt+G1zfGzvsYUuslABg=="
+      "expectedPaeSha256": "6ae7abbed384b43fbdb1f50ca97331bcd0dda7fc7fa97bf6db08a6f89cb1e4b6",
+      "signatureBase64": "hRvL2p1wkbuSHUXCWNWgoGrgTJvV1sNSIDUmQjxpOrFDjIKNhNw4EJ/eOKD/yFNHAizY+32+tgDu+UkX6JGyDQ=="
     },
     {
       "id": "dsse-provenance-site-alpha",
       "caseId": "provenance-site-alpha",
       "keyId": "key.web-artifact-attestor.1",
       "payloadType": "application/vnd.in-toto+json",
-      "expectedPaeSha256": "cbbb3f71084d919f5696005835bb2c941eaba517852032b27b7f7693e6164524",
-      "signatureBase64": "dQT+uEdhttpJYBciuQoEy/Y4Pw2QpVVHJLirj/FMv25M6rpm6YEeUOhsHu34aUVPtcZcE6bIGXvV33vjE9lhCA=="
+      "expectedPaeSha256": "9c9828646ce7fad5d456a6481f00536747e851ef4a9b0d32f82b288b4dd2b8a7",
+      "signatureBase64": "Lf6UaaNXiO6HZSb9ZVbJ6k/xLHTT31vm9frW8eyBxe9itodnoEHlU/z7JwvY6HZTyj+og10Ne2c0p+aOaWmRDA=="
     }
   ],
   "negativeCases": [

@@ -3079,7 +3079,7 @@ components:
           pattern: '^[0-9a-f]{64}$'
         runtimeEnvironment:
           type: string
-          enum: [development, preview, production]
+          enum: [development, preview, staging, production]
         region:
           type: string
           minLength: 1
@@ -3302,7 +3302,7 @@ components:
           pattern: '^[0-9a-f]{64}$'
         runtimeEnvironment:
           type: string
-          enum: [development, preview, production]
+          enum: [development, preview, staging, production]
         region:
           type: string
           minLength: 1

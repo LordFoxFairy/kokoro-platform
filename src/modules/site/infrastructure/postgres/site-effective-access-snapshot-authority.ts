@@ -32,7 +32,6 @@ export const siteEffectiveAccessSnapshotWireSchema = z.object({
   }).strict(),
   commerceClosure: z.object({
     offerRevisions: uniqueBindings(wireRevisionBindingSchema),
-    offerPriceRevisions: uniqueBindings(wireRevisionBindingSchema),
     entitlementTemplateRevisions: uniqueBindings(wireRevisionBindingSchema),
     creditProgramRevisions: uniqueBindings(wireRevisionBindingSchema),
     closureDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
@@ -98,7 +97,6 @@ implements SiteEffectiveAccessSnapshotPort {
       },
       commerceClosure: {
         offerRevisions: value.commerceClosure.offerRevisions.map(revisionBinding),
-        offerPriceRevisions: value.commerceClosure.offerPriceRevisions.map(revisionBinding),
         entitlementTemplateRevisions:
           value.commerceClosure.entitlementTemplateRevisions.map(revisionBinding),
         creditProgramRevisions: value.commerceClosure.creditProgramRevisions.map(revisionBinding),

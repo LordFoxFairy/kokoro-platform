@@ -10,7 +10,6 @@ export interface AuthIdentityClosure {
 }
 export interface CommerceReleaseClosure {
   readonly offerRevisions: readonly ImmutableRevisionBinding[];
-  readonly offerPriceRevisions: readonly ImmutableRevisionBinding[];
   readonly entitlementTemplateRevisions: readonly ImmutableRevisionBinding[];
   readonly creditProgramRevisions: readonly ImmutableRevisionBinding[];
   readonly closureDigest: string;

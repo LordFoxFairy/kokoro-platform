@@ -1677,7 +1677,7 @@ export type ProductContext = {
     productContextRef: string;
     region: string;
     revocationEpoch: PositiveUint64String;
-    runtimeEnvironment: 'development' | 'preview' | 'production';
+    runtimeEnvironment: 'development' | 'preview' | 'staging' | 'production';
     sessionContractRevision: string;
     siteProjectBindingRef: string;
     siteRef: string;
@@ -1959,7 +1959,7 @@ export type SessionAccessGrantBinding = {
     resource: SessionGrantResource;
     restrictionEpoch: PositiveUint64String;
     revocationEpoch: PositiveUint64String;
-    runtimeEnvironment: 'development' | 'preview' | 'production';
+    runtimeEnvironment: 'development' | 'preview' | 'staging' | 'production';
     sessionContractRevision: string;
     siteProjectBindingRef: string;
     siteRef: string;

@@ -271,7 +271,6 @@ function effectiveAccessSnapshot() {
     },
     commerceClosure: {
       offerRevisions: [wireBinding("offer.main", "1", digestA)],
-      offerPriceRevisions: [wireBinding("offer.price.main", "1", digestB)],
       entitlementTemplateRevisions: [wireBinding("entitlement.main", "1", digestC)],
       creditProgramRevisions: [wireBinding("credit.program.main", "1", digestA)],
       closureDigest: digestB,
@@ -306,7 +305,6 @@ function expectedEffectiveAccess() {
     },
     commerceClosure: {
       offerRevisions: value.commerceClosure.offerRevisions.map(domainBinding),
-      offerPriceRevisions: value.commerceClosure.offerPriceRevisions.map(domainBinding),
       entitlementTemplateRevisions: value.commerceClosure.entitlementTemplateRevisions.map(domainBinding),
       creditProgramRevisions: value.commerceClosure.creditProgramRevisions.map(domainBinding),
       closureDigest: value.commerceClosure.closureDigest,

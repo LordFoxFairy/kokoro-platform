@@ -473,22 +473,21 @@ function authenticatedEnvelope(
 
 import {
   PublishCreditProgramRevisionEffectSchema,
+  PublishEntitlementTemplateRevisionEffectSchema,
   PublishPlanRevisionEffectSchema,
   PublishOfferRevisionEffectSchema,
-  PublishOfferPriceRevisionEffectSchema,
   PublishFulfillmentProgramRevisionEffectSchema,
   PublishRedemptionProgramRevisionEffectSchema,
   type CommerceGlobalCommandContext,
   type PublishCreditProgramRevisionEffect,
+  type PublishEntitlementTemplateRevisionEffect,
   type PublishPlanRevisionEffect,
   type PublishOfferRevisionEffect,
-  type PublishOfferPriceRevisionEffect,
   type PublishFulfillmentProgramRevisionEffect,
   type PublishRedemptionProgramRevisionEffect,
 } from "../../proto/kokoro/platform/commerce/v1/commerce_catalog_pb.js";
 import {
   RequestSiteCommerceAssignmentPromotionEffectSchema,
-  CommerceApprovalDecisionEffectSchema,
   RequestCodeBatchIssuanceEffectSchema,
   RequestCodeBatchTransitionEffectSchema,
   EmergencySuspendCodeBatchEffectSchema,
@@ -499,7 +498,6 @@ import {
   RequestCommerceReconciliationResolutionEffectSchema,
   type CommerceSiteCommandContext,
   type RequestSiteCommerceAssignmentPromotionEffect,
-  type CommerceApprovalDecisionEffect,
   type RequestCodeBatchIssuanceEffect,
   type RequestCodeBatchTransitionEffect,
   type EmergencySuspendCodeBatchEffect,
@@ -553,21 +551,37 @@ function globalRequestDigest<T extends DescMessage>(operation: string, context: 
 function siteEffect<T extends DescMessage>(operation: string, context: CommerceSiteCommandContext, schema: T, effect: MessageShape<T>, targetRefs: readonly string[], verified: VerifiedAuthenticatedAdminAxes): string {
   return verifyCommerceEnvelope(operation, siteOperator(context), {typeName: schema.typeName, bytes: toBinary(schema, effect, {writeUnknownFields: false})}, [context.siteId, ...targetRefs], verified);
 }
+function siteRequestDigest<T extends DescMessage>(operation: string, context: CommerceSiteCommandContext, schema: T, effect: MessageShape<T>, targetRefs: readonly string[], verified: VerifiedAuthenticatedAdminAxes): string {
+  return commerceEnvelope(operation, siteOperator(context), {typeName: schema.typeName, bytes: toBinary(schema, effect, {writeUnknownFields: false})}, [context.siteId, ...targetRefs], verified);
+}
 
 export const publishCreditProgramRevisionRequestDigest = (c: CommerceGlobalCommandContext, e: PublishCreditProgramRevisionEffect, v: VerifiedAuthenticatedAdminAxes) => globalRequestDigest("kokoro.platform.commerce.v1.AdminCommerceService/PublishCreditProgramRevision", c, PublishCreditProgramRevisionEffectSchema, e, [e.target?.programRef ?? ""], v);
 export const verifyPublishCreditProgramRevisionCommand = (c: CommerceGlobalCommandContext, e: PublishCreditProgramRevisionEffect, v: VerifiedAuthenticatedAdminAxes) => globalEffect("kokoro.platform.commerce.v1.AdminCommerceService/PublishCreditProgramRevision", c, PublishCreditProgramRevisionEffectSchema, e, [e.target?.programRef ?? ""], v);
+export const publishEntitlementTemplateRevisionRequestDigest = (c: CommerceGlobalCommandContext, e: PublishEntitlementTemplateRevisionEffect, v: VerifiedAuthenticatedAdminAxes) => globalRequestDigest("kokoro.platform.commerce.v1.AdminCommerceService/PublishEntitlementTemplateRevision", c, PublishEntitlementTemplateRevisionEffectSchema, e, [e.target?.targetRef ?? ""], v);
+export const verifyPublishEntitlementTemplateRevisionCommand = (c: CommerceGlobalCommandContext, e: PublishEntitlementTemplateRevisionEffect, v: VerifiedAuthenticatedAdminAxes) => globalEffect("kokoro.platform.commerce.v1.AdminCommerceService/PublishEntitlementTemplateRevision", c, PublishEntitlementTemplateRevisionEffectSchema, e, [e.target?.targetRef ?? ""], v);
+export const publishPlanRevisionRequestDigest = (c: CommerceGlobalCommandContext, e: PublishPlanRevisionEffect, v: VerifiedAuthenticatedAdminAxes) => globalRequestDigest("kokoro.platform.commerce.v1.AdminCommerceService/PublishPlanRevision", c, PublishPlanRevisionEffectSchema, e, [e.target?.targetRef ?? ""], v);
 export const verifyPublishPlanRevisionCommand = (c: CommerceGlobalCommandContext, e: PublishPlanRevisionEffect, v: VerifiedAuthenticatedAdminAxes) => globalEffect("kokoro.platform.commerce.v1.AdminCommerceService/PublishPlanRevision", c, PublishPlanRevisionEffectSchema, e, [e.target?.targetRef ?? ""], v);
+export const publishOfferRevisionRequestDigest = (c: CommerceGlobalCommandContext, e: PublishOfferRevisionEffect, v: VerifiedAuthenticatedAdminAxes) => globalRequestDigest("kokoro.platform.commerce.v1.AdminCommerceService/PublishOfferRevision", c, PublishOfferRevisionEffectSchema, e, [e.target?.targetRef ?? ""], v);
 export const verifyPublishOfferRevisionCommand = (c: CommerceGlobalCommandContext, e: PublishOfferRevisionEffect, v: VerifiedAuthenticatedAdminAxes) => globalEffect("kokoro.platform.commerce.v1.AdminCommerceService/PublishOfferRevision", c, PublishOfferRevisionEffectSchema, e, [e.target?.targetRef ?? ""], v);
-export const verifyPublishOfferPriceRevisionCommand = (c: CommerceGlobalCommandContext, e: PublishOfferPriceRevisionEffect, v: VerifiedAuthenticatedAdminAxes) => globalEffect("kokoro.platform.commerce.v1.AdminCommerceService/PublishOfferPriceRevision", c, PublishOfferPriceRevisionEffectSchema, e, [e.target?.targetRef ?? "", e.offerRevision?.targetRef ?? ""], v);
+export const publishFulfillmentProgramRevisionRequestDigest = (c: CommerceGlobalCommandContext, e: PublishFulfillmentProgramRevisionEffect, v: VerifiedAuthenticatedAdminAxes) => globalRequestDigest("kokoro.platform.commerce.v1.AdminCommerceService/PublishFulfillmentProgramRevision", c, PublishFulfillmentProgramRevisionEffectSchema, e, [e.target?.targetRef ?? ""], v);
 export const verifyPublishFulfillmentProgramRevisionCommand = (c: CommerceGlobalCommandContext, e: PublishFulfillmentProgramRevisionEffect, v: VerifiedAuthenticatedAdminAxes) => globalEffect("kokoro.platform.commerce.v1.AdminCommerceService/PublishFulfillmentProgramRevision", c, PublishFulfillmentProgramRevisionEffectSchema, e, [e.target?.targetRef ?? ""], v);
+export const publishRedemptionProgramRevisionRequestDigest = (c: CommerceGlobalCommandContext, e: PublishRedemptionProgramRevisionEffect, v: VerifiedAuthenticatedAdminAxes) => globalRequestDigest("kokoro.platform.commerce.v1.AdminCommerceService/PublishRedemptionProgramRevision", c, PublishRedemptionProgramRevisionEffectSchema, e, [e.target?.targetRef ?? ""], v);
 export const verifyPublishRedemptionProgramRevisionCommand = (c: CommerceGlobalCommandContext, e: PublishRedemptionProgramRevisionEffect, v: VerifiedAuthenticatedAdminAxes) => globalEffect("kokoro.platform.commerce.v1.AdminCommerceService/PublishRedemptionProgramRevision", c, PublishRedemptionProgramRevisionEffectSchema, e, [e.target?.targetRef ?? ""], v);
+export const requestSiteCommerceAssignmentPromotionRequestDigest = (c: CommerceSiteCommandContext, e: RequestSiteCommerceAssignmentPromotionEffect, v: VerifiedAuthenticatedAdminAxes) => siteRequestDigest("kokoro.platform.commerce.v1.AdminCommerceService/RequestSiteCommerceAssignmentPromotion", c, RequestSiteCommerceAssignmentPromotionEffectSchema, e, [e.candidate?.target?.targetRef ?? ""], v);
 export const verifyRequestSiteCommerceAssignmentPromotionCommand = (c: CommerceSiteCommandContext, e: RequestSiteCommerceAssignmentPromotionEffect, v: VerifiedAuthenticatedAdminAxes) => siteEffect("kokoro.platform.commerce.v1.AdminCommerceService/RequestSiteCommerceAssignmentPromotion", c, RequestSiteCommerceAssignmentPromotionEffectSchema, e, [e.candidate?.target?.targetRef ?? ""], v);
+export const requestCodeBatchIssuanceRequestDigest = (c: CommerceSiteCommandContext, e: RequestCodeBatchIssuanceEffect, v: VerifiedAuthenticatedAdminAxes) => siteRequestDigest("kokoro.platform.commerce.v1.AdminCommerceService/RequestCodeBatchIssuance", c, RequestCodeBatchIssuanceEffectSchema, e, [e.target?.targetRef ?? ""], v);
 export const verifyRequestCodeBatchIssuanceCommand = (c: CommerceSiteCommandContext, e: RequestCodeBatchIssuanceEffect, v: VerifiedAuthenticatedAdminAxes) => siteEffect("kokoro.platform.commerce.v1.AdminCommerceService/RequestCodeBatchIssuance", c, RequestCodeBatchIssuanceEffectSchema, e, [e.target?.targetRef ?? ""], v);
+export const requestCodeBatchTransitionRequestDigest = (c: CommerceSiteCommandContext, e: RequestCodeBatchTransitionEffect, v: VerifiedAuthenticatedAdminAxes) => siteRequestDigest("kokoro.platform.commerce.v1.AdminCommerceService/RequestCodeBatchTransition", c, RequestCodeBatchTransitionEffectSchema, e, [e.target?.targetRef ?? ""], v);
 export const verifyRequestCodeBatchTransitionCommand = (c: CommerceSiteCommandContext, e: RequestCodeBatchTransitionEffect, v: VerifiedAuthenticatedAdminAxes) => siteEffect("kokoro.platform.commerce.v1.AdminCommerceService/RequestCodeBatchTransition", c, RequestCodeBatchTransitionEffectSchema, e, [e.target?.targetRef ?? ""], v);
+export const emergencySuspendCodeBatchRequestDigest = (c: CommerceSiteCommandContext, e: EmergencySuspendCodeBatchEffect, v: VerifiedAuthenticatedAdminAxes) => siteRequestDigest("kokoro.platform.commerce.v1.AdminCommerceService/EmergencySuspendCodeBatch", c, EmergencySuspendCodeBatchEffectSchema, e, [e.target?.targetRef ?? ""], v);
 export const verifyEmergencySuspendCodeBatchCommand = (c: CommerceSiteCommandContext, e: EmergencySuspendCodeBatchEffect, v: VerifiedAuthenticatedAdminAxes) => siteEffect("kokoro.platform.commerce.v1.AdminCommerceService/EmergencySuspendCodeBatch", c, EmergencySuspendCodeBatchEffectSchema, e, [e.target?.targetRef ?? ""], v);
+export const beginCodeBatchDeliveryRequestDigest = (c: CommerceSiteCommandContext, e: BeginCodeBatchDeliveryEffect, v: VerifiedAuthenticatedAdminAxes) => siteRequestDigest("kokoro.platform.commerce.v1.AdminCommerceService/BeginCodeBatchDelivery", c, BeginCodeBatchDeliveryEffectSchema, e, [e.batchRef], v);
 export const verifyBeginCodeBatchDeliveryCommand = (c: CommerceSiteCommandContext, e: BeginCodeBatchDeliveryEffect, v: VerifiedAuthenticatedAdminAxes) => siteEffect("kokoro.platform.commerce.v1.AdminCommerceService/BeginCodeBatchDelivery", c, BeginCodeBatchDeliveryEffectSchema, e, [e.batchRef], v);
+export const readCodeDeliveryRangeRequestDigest = (c: CommerceSiteCommandContext, e: LeaseCodeDeliveryRangeEffect, v: VerifiedAuthenticatedAdminAxes) => siteRequestDigest("kokoro.platform.commerce.v1.AdminCommerceService/ReadCodeDeliveryRange", c, LeaseCodeDeliveryRangeEffectSchema, e, [e.sessionRef], v);
 export const verifyReadCodeDeliveryRangeCommand = (c: CommerceSiteCommandContext, e: LeaseCodeDeliveryRangeEffect, v: VerifiedAuthenticatedAdminAxes) => siteEffect("kokoro.platform.commerce.v1.AdminCommerceService/ReadCodeDeliveryRange", c, LeaseCodeDeliveryRangeEffectSchema, e, [e.sessionRef], v);
+export const acknowledgeCodeDeliveryRangeRequestDigest = (c: CommerceSiteCommandContext, e: AcknowledgeCodeDeliveryRangeEffect, v: VerifiedAuthenticatedAdminAxes) => siteRequestDigest("kokoro.platform.commerce.v1.AdminCommerceService/AcknowledgeCodeDeliveryRange", c, AcknowledgeCodeDeliveryRangeEffectSchema, e, [e.sessionRef, e.leaseRef], v);
 export const verifyAcknowledgeCodeDeliveryRangeCommand = (c: CommerceSiteCommandContext, e: AcknowledgeCodeDeliveryRangeEffect, v: VerifiedAuthenticatedAdminAxes) => siteEffect("kokoro.platform.commerce.v1.AdminCommerceService/AcknowledgeCodeDeliveryRange", c, AcknowledgeCodeDeliveryRangeEffectSchema, e, [e.sessionRef, e.leaseRef], v);
+export const requestSourceCorrectionRequestDigest = (c: CommerceSiteCommandContext, e: RequestSourceCorrectionEffect, v: VerifiedAuthenticatedAdminAxes) => siteRequestDigest("kokoro.platform.commerce.v1.AdminCommerceService/RequestSourceCorrection", c, RequestSourceCorrectionEffectSchema, e, [e.target?.targetRef ?? ""], v);
 export const verifyRequestSourceCorrectionCommand = (c: CommerceSiteCommandContext, e: RequestSourceCorrectionEffect, v: VerifiedAuthenticatedAdminAxes) => siteEffect("kokoro.platform.commerce.v1.AdminCommerceService/RequestSourceCorrection", c, RequestSourceCorrectionEffectSchema, e, [e.target?.targetRef ?? ""], v);
+export const requestCommerceReconciliationResolutionRequestDigest = (c: CommerceSiteCommandContext, e: RequestCommerceReconciliationResolutionEffect, v: VerifiedAuthenticatedAdminAxes) => siteRequestDigest("kokoro.platform.commerce.v1.AdminCommerceService/RequestCommerceReconciliationResolution", c, RequestCommerceReconciliationResolutionEffectSchema, e, [e.target?.targetRef ?? ""], v);
 export const verifyRequestCommerceReconciliationResolutionCommand = (c: CommerceSiteCommandContext, e: RequestCommerceReconciliationResolutionEffect, v: VerifiedAuthenticatedAdminAxes) => siteEffect("kokoro.platform.commerce.v1.AdminCommerceService/RequestCommerceReconciliationResolution", c, RequestCommerceReconciliationResolutionEffectSchema, e, [e.target?.targetRef ?? ""], v);
-export const verifyCommerceApprovalDecisionCommand = (operation: string, c: CommerceSiteCommandContext, e: CommerceApprovalDecisionEffect, v: VerifiedAuthenticatedAdminAxes) => siteEffect(operation, c, CommerceApprovalDecisionEffectSchema, e, [e.approvalRef], v);

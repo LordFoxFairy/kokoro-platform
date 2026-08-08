@@ -2122,6 +2122,7 @@ export const zSessionAccessGrantBinding = z.strictObject({
     runtimeEnvironment: z.enum([
         'development',
         'preview',
+        'staging',
         'production'
     ]),
     sessionContractRevision: z.string().min(1).max(128),
@@ -2360,6 +2361,7 @@ export const zProductContext = z.strictObject({
     runtimeEnvironment: z.enum([
         'development',
         'preview',
+        'staging',
         'production'
     ]),
     sessionContractRevision: z.string().min(1).max(128),

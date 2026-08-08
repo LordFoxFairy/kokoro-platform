@@ -87,7 +87,6 @@ function validDocument() {
     },
     commerceClosure: {
       offerRevisions: [binding("offer.main", "1", digestA)],
-      offerPriceRevisions: [binding("offer.price.main", "1", digestA)],
       entitlementTemplateRevisions: [binding("entitlement.main", "1", digestA)],
       creditProgramRevisions: [binding("credit.program.main", "1", digestA)],
       closureDigest: digestA,

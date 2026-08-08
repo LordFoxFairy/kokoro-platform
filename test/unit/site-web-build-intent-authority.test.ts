@@ -250,7 +250,6 @@ function candidateAuthority(): SiteReleaseCandidateAuthority {
         }),
         commerceClosure: Object.freeze({
           offerRevisions: Object.freeze([binding("offer.main", "1", digestA)]),
-          offerPriceRevisions: Object.freeze([binding("offer-price.main", "1", digestA)]),
           entitlementTemplateRevisions: Object.freeze([binding("entitlement.main", "1", digestA)]),
           creditProgramRevisions: Object.freeze([binding("credit-program.main", "1", digestA)]),
           closureDigest: digestA,

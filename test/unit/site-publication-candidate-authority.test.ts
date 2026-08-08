@@ -86,7 +86,6 @@ function candidateDocument() {
       },
       commerceClosure: {
         offerRevisions: [{ ref: "offer.alpha", revision: "1", digest: digestA }],
-        offerPriceRevisions: [{ ref: "offer-price.alpha", revision: "1", digest: digestA }],
         entitlementTemplateRevisions: [{ ref: "entitlement.alpha", revision: "1", digest: digestA }],
         creditProgramRevisions: [{ ref: "credit-program.alpha", revision: "1", digest: digestA }],
         closureDigest: digestA,

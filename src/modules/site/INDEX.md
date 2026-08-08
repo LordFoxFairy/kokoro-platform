@@ -48,6 +48,8 @@ and publication revisions. Product Catalog/Profile are locked from their owner t
 transaction, and Platform, not the operator, builds the canonical Candidate and signed WebBuildIntent. Operators
 approve references only. Content-addressed documents are opened by digest with no ref-derived path, no symlink
 following and bounded stable reads, then revalidated against Root JSON Schemas and canonical SHA-256.
+The Commerce closure contains only offer, entitlement-template and credit-program revision sets plus its closure
+digest; Site publication does not maintain a separate price-revision binding.
 
 Machine Evidence admission is a separate trust boundary. Its mTLS peer registry binds the certificate fingerprint and
 SPIFFE URI to one Site/project binding, environment, region, producer registration and workload attestation. Admission
