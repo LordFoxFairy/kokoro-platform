@@ -13,6 +13,8 @@ import { AdminCommandService as AdminCommandDescriptor } from
   "../generated/proto/kokoro/platform/admin/v2/admin_command_pb.js";
 import { SiteLifecycleService } from
   "../generated/proto/kokoro/platform/site/v1/site_lifecycle_pb.js";
+import { SitePublicationService } from
+  "../generated/proto/kokoro/platform/site/v1/site_publication_pb.js";
 import { AdminCreditService } from
   "../generated/proto/kokoro/platform/credit/v1/admin_credit_pb.js";
 import { SiteProvisioningService } from
@@ -64,6 +66,8 @@ import { createSiteLifecycleConnectService } from
   "../modules/site/interfaces/connect/site-lifecycle-service.js";
 import { createSiteProvisioningConnectService } from
   "../modules/site/interfaces/connect/site-provisioning-service.js";
+import { createSitePublicationConnectService } from
+  "../modules/site/interfaces/connect/site-publication-service.js";
 import { createModelControlConnectService } from
   "../modules/model-control/interfaces/connect/model-control-service.js";
 import { createAdminCreditConnectService } from
@@ -96,6 +100,18 @@ import { createProductCatalogPublicationConnectService } from
   "../modules/product-catalog/interfaces/connect/product-catalog-publication-service.js";
 import { createProductCatalogAdministrationComposition } from
   "./product-catalog-admin-composition.js";
+import { createSitePublicationAuthorityProductionComposition } from
+  "./site-publication-authority-composition.js";
+import { PostgresSiteEffectiveAccessSnapshotAuthority } from
+  "../modules/site/infrastructure/postgres/site-effective-access-snapshot-authority.js";
+import { PostgresSiteWebBuildIntentIssuerAuthority } from
+  "../modules/site/infrastructure/postgres/site-web-build-intent-issuer-authority.js";
+import { PostgresSiteReleaseCertificationTrustAuthority } from
+  "../modules/site/infrastructure/postgres/site-release-certification-trust-authority.js";
+import {
+  Ed25519SiteWebBuildIntentSigner,
+  type SiteWebBuildIntentSigningKey,
+} from "../modules/site/infrastructure/crypto/ed25519-site-web-build-intent-signer.js";
 
 export type AdminRequestListener = (
   request: Http2ServerRequest,
@@ -126,7 +142,7 @@ export async function createAdminProductionComposition(input: Readonly<{
 }>): Promise<AdminProductionComposition> {
   const environment = input.environment ?? process.env;
   const [tls, peers, oidcClients, transactionKey, cursorKey, keyRing,
-    authorizationEventKeyRing, siteCertificationKeys] = await Promise.all([
+    authorizationEventKeyRing, siteCertificationKeys, siteWebBuildIntentKeys] = await Promise.all([
     loadTls(environment),
     loadPeers(required(environment, "PLATFORM_ADMIN_MTLS_PEERS_FILE")),
     loadOidcClients(required(environment, "PLATFORM_ADMIN_OIDC_CLIENTS_FILE")),
@@ -138,6 +154,9 @@ export async function createAdminProductionComposition(input: Readonly<{
     loadAuthorizationEventKeyRing(required(environment, "PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE")),
     loadSiteCertificationKeys(
       required(environment, "PLATFORM_SITE_RELEASE_CERTIFICATION_KEYS_FILE"),
+    ),
+    loadSiteWebBuildIntentKeys(
+      required(environment, "PLATFORM_SITE_WEB_BUILD_INTENT_KEYS_FILE"),
     ),
   ]);
   assertPeerRegistrations(peers, oidcClients);
@@ -276,6 +295,19 @@ export async function createAdminProductionComposition(input: Readonly<{
     owner: productCatalogOwner,
     resolver,
   });
+  const sitePublication = createSitePublicationAuthorityProductionComposition(input.database, {
+    effectiveAccess: new PostgresSiteEffectiveAccessSnapshotAuthority(),
+    intentAuthority: new PostgresSiteWebBuildIntentIssuerAuthority(),
+    intentSigner: new Ed25519SiteWebBuildIntentSigner(siteWebBuildIntentKeys),
+    certificationTrustAuthority: new PostgresSiteReleaseCertificationTrustAuthority(),
+    publicationDocumentRoot: required(environment, "PLATFORM_PUBLICATION_DOCUMENT_ROOT"),
+    ...(input.clock === undefined ? {} : { now: () => input.clock!().toISOString() }),
+  });
+  const sitePublicationService = createSitePublicationConnectService({
+    owner: sitePublication.authority,
+    resolver,
+    receipts: controlReceiptTimestamps,
+  });
   const connect = connectNodeAdapter({
     routes: (router) => {
       router.service(AdminIdentityService, identityService);
@@ -283,6 +315,7 @@ export async function createAdminProductionComposition(input: Readonly<{
       router.service(AdminCommandDescriptor, commandService);
       router.service(SiteLifecycleService, siteLifecycleService);
       router.service(SiteProvisioningService, siteProvisioningService);
+      router.service(SitePublicationService, sitePublicationService);
       router.service(ModelControlService, modelControlService);
       router.service(ProductCatalogPublicationService, productCatalogService);
       router.service(AdminCreditService, creditService);
@@ -325,6 +358,47 @@ export async function createAdminProductionComposition(input: Readonly<{
 
 async function loadSiteCertificationKeys(path: string) {
   return parseSiteReleaseCertificationKeys(JSON.parse(await readTrustFile(path, 256 * 1024)));
+}
+
+async function loadSiteWebBuildIntentKeys(
+  path: string,
+): Promise<readonly SiteWebBuildIntentSigningKey[]> {
+  const root = record(JSON.parse(await readBoundedPrivateFile(
+    path,
+    256 * 1024,
+    "PLATFORM_SITE_WEB_BUILD_INTENT_KEY_RING_INVALID",
+  )), "PLATFORM_SITE_WEB_BUILD_INTENT_KEY_RING_INVALID");
+  if (root.version !== 1 || !Array.isArray(root.keys) ||
+      Object.keys(root).sort().join(",") !== "keys,version" ||
+      root.keys.length < 1 || root.keys.length > 64) {
+    throw new Error("PLATFORM_SITE_WEB_BUILD_INTENT_KEY_RING_INVALID");
+  }
+  const keys = await Promise.all(root.keys.map(async (value): Promise<SiteWebBuildIntentSigningKey> => {
+    const key = record(value, "PLATFORM_SITE_WEB_BUILD_INTENT_KEY_RING_INVALID");
+    const names = Object.keys(key).sort().join(",");
+    if (names !== "keyId,keyVersion,privateKeyFile,publicKeyFile,publicKeyFingerprint" &&
+        names !== "keyId,keyVersion,publicKeyFile,publicKeyFingerprint") {
+      throw new Error("PLATFORM_SITE_WEB_BUILD_INTENT_KEY_RING_INVALID");
+    }
+    const privateKeyFile = key.privateKeyFile;
+    return Object.freeze({
+      keyId: text(key.keyId),
+      keyVersion: BigInt(positiveDecimalText(key.keyVersion)),
+      publicKeyFingerprint: text(key.publicKeyFingerprint),
+      publicKeyPem: await readTrustFile(text(key.publicKeyFile), 64 * 1024),
+      ...(privateKeyFile === undefined ? {} : {
+        privateKeyPem: await readBoundedPrivateFile(
+          text(privateKeyFile),
+          64 * 1024,
+          "PLATFORM_SITE_WEB_BUILD_INTENT_PRIVATE_KEY_INVALID",
+        ),
+      }),
+    });
+  }));
+  if (!keys.some((key) => key.privateKeyPem !== undefined)) {
+    throw new Error("PLATFORM_SITE_WEB_BUILD_INTENT_PRIVATE_KEY_REQUIRED");
+  }
+  return Object.freeze(keys);
 }
 
 function oidcSecrets(): Readonly<{ verifier: string; challenge: string; nonce: string }> {
@@ -530,4 +604,13 @@ function secureUrl(value: unknown): string {
 function positiveIntegerString(value: unknown): boolean {
   return (typeof value === "string" || typeof value === "number") &&
     /^[1-9][0-9]{0,18}$/u.test(String(value));
+}
+
+function positiveDecimalText(value: unknown): string {
+  const textValue = String(value);
+  if (!/^[1-9][0-9]{0,19}$/u.test(textValue) ||
+      BigInt(textValue) > 18_446_744_073_709_551_615n) {
+    throw new Error("PLATFORM_SITE_WEB_BUILD_INTENT_KEY_RING_INVALID");
+  }
+  return textValue;
 }

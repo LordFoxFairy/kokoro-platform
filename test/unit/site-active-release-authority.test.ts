@@ -63,7 +63,7 @@ function authorityFixture() {
   const publications = {
     loadCandidateForUpdate: async () => ({ binding: candidateBinding, siteRef: "site.alpha",
       environment: "production", state: "authorized" }),
-    loadNodeForUpdate: async () => ({ binding: releaseBinding }),
+    loadNode: async () => ({ binding: releaseBinding }),
   };
   const pointers = {
     loadPointerForUpdate: async () => state.pointer,

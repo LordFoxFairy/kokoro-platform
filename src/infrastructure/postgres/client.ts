@@ -37,6 +37,9 @@ import {
   MEDIA_CONTROL_ADMIN_RELATIONS,
   MODEL_GATEWAY_ADMISSION_RELATIONS,
   PRODUCT_CATALOG_ADMIN_RELATIONS,
+  SITE_PUBLICATION_ADMIN_INSERT_RELATIONS,
+  SITE_PUBLICATION_ADMIN_SELECT_RELATIONS,
+  SITE_PUBLICATION_ADMIN_UPDATE_RELATIONS,
 } from "./runtime-relation-authority.js";
 
 export type PlatformProcessRole =
@@ -1200,6 +1203,7 @@ interface RuntimeIdentity {
   hasRequiredAdmissionExecutionRootFunctions: boolean;
   hasRequiredModelOptionFunctions: boolean;
   hasRequiredProductCatalogPrivileges: boolean;
+  hasRequiredSitePublicationPrivileges: boolean;
   canSelectModelCatalogTable: boolean;
   canReadModelSensitiveColumn: boolean;
   unexpectedPlatformRelations: readonly string[];
@@ -1287,6 +1291,12 @@ const CREDIT_USAGE_RELATIONS_SQL = sqlLiterals(CREDIT_USAGE_RELATIONS);
 const MODEL_GATEWAY_ADMISSION_RELATIONS_SQL = sqlLiterals(MODEL_GATEWAY_ADMISSION_RELATIONS);
 const MEDIA_CONTROL_ADMIN_RELATIONS_SQL = sqlLiterals(MEDIA_CONTROL_ADMIN_RELATIONS);
 const PRODUCT_CATALOG_ADMIN_RELATIONS_SQL = sqlLiterals(PRODUCT_CATALOG_ADMIN_RELATIONS);
+const SITE_PUBLICATION_ADMIN_SELECT_RELATIONS_SQL =
+  sqlLiterals(SITE_PUBLICATION_ADMIN_SELECT_RELATIONS);
+const SITE_PUBLICATION_ADMIN_INSERT_RELATIONS_SQL =
+  sqlLiterals(SITE_PUBLICATION_ADMIN_INSERT_RELATIONS);
+const SITE_PUBLICATION_ADMIN_UPDATE_RELATIONS_SQL =
+  sqlLiterals(SITE_PUBLICATION_ADMIN_UPDATE_RELATIONS);
 const ADMIN_INSERT_RELATIONS_SQL = sqlLiterals(ADMIN_INSERT_RELATIONS);
 const ADMIN_UPDATE_RELATIONS_SQL = sqlLiterals(ADMIN_UPDATE_RELATIONS);
 
@@ -1960,6 +1970,58 @@ const RUNTIME_IDENTITY_SQL = `
            AND NOT has_table_privilege(current_user,'platform.product_catalog_publication_audit','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
            AND NOT has_table_privilege(current_user,'platform.product_catalog_publication_receipt','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
          END AS "hasRequiredProductCatalogPrivileges",
+         (SELECT count(*) FROM pg_class publication_relation
+           WHERE publication_relation.relnamespace=platform_schema.oid
+             AND publication_relation.relname=ANY(ARRAY[${SITE_PUBLICATION_ADMIN_SELECT_RELATIONS_SQL}]))
+           = cardinality(ARRAY[${SITE_PUBLICATION_ADMIN_SELECT_RELATIONS_SQL}])
+         AND CASE WHEN $2='admin' THEN
+           NOT EXISTS (
+             SELECT 1 FROM pg_class publication_relation
+             WHERE publication_relation.relnamespace=platform_schema.oid
+               AND publication_relation.relname=ANY(ARRAY[${SITE_PUBLICATION_ADMIN_SELECT_RELATIONS_SQL}])
+               AND (
+                 NOT has_table_privilege(current_user,publication_relation.oid,'SELECT')
+                 OR (publication_relation.relname=ANY(ARRAY[${SITE_PUBLICATION_ADMIN_INSERT_RELATIONS_SQL}])
+                   AND NOT has_table_privilege(current_user,publication_relation.oid,'INSERT'))
+                 OR (publication_relation.relname<>ALL(ARRAY[${SITE_PUBLICATION_ADMIN_INSERT_RELATIONS_SQL}])
+                   AND has_any_column_privilege(current_user,publication_relation.oid,'INSERT'))
+                 OR has_table_privilege(current_user,publication_relation.oid,'UPDATE')
+                 OR (publication_relation.relname<>ALL(ARRAY[${SITE_PUBLICATION_ADMIN_UPDATE_RELATIONS_SQL}])
+                   AND has_any_column_privilege(current_user,publication_relation.oid,'UPDATE'))
+                 OR has_table_privilege(current_user,publication_relation.oid,
+                   'DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+                 OR has_any_column_privilege(current_user,publication_relation.oid,'REFERENCES')
+               )
+           )
+           AND has_column_privilege(current_user,'platform.site_release_candidate_authorization',
+             'authorization_epoch','UPDATE')
+           AND has_column_privilege(current_user,'platform.site_release_candidate_authorization',
+             'state','UPDATE')
+           AND has_column_privilege(current_user,'platform.site_release_candidate_authorization',
+             'updated_by_command_id','UPDATE')
+           AND has_column_privilege(current_user,'platform.site_release_candidate_authorization',
+             'updated_at','UPDATE')
+           AND NOT EXISTS (
+             SELECT 1 FROM pg_attribute publication_column
+             WHERE publication_column.attrelid='platform.site_release_candidate_authorization'::regclass
+               AND publication_column.attnum>0 AND NOT publication_column.attisdropped
+               AND publication_column.attname<>ALL(ARRAY[
+                 'authorization_epoch','state','updated_by_command_id','updated_at'
+               ])
+               AND has_column_privilege(current_user,publication_column.attrelid,
+                 publication_column.attnum,'UPDATE')
+           )
+         ELSE NOT EXISTS (
+           SELECT 1 FROM pg_class publication_relation
+           WHERE publication_relation.relnamespace=platform_schema.oid
+             AND publication_relation.relname=ANY(ARRAY[${SITE_PUBLICATION_ADMIN_SELECT_RELATIONS_SQL}])
+             AND (
+               has_table_privilege(current_user,publication_relation.oid,
+                 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+               OR has_any_column_privilege(current_user,publication_relation.oid,
+                 'SELECT,INSERT,UPDATE,REFERENCES')
+             )
+         ) END AS "hasRequiredSitePublicationPrivileges",
          (has_column_privilege(current_user,'platform.model_inventory_import','canonical_payload','SELECT')
            OR has_column_privilege(current_user,'platform.model_provider_snapshot','secret_ref','SELECT'))
            AS "canReadModelSensitiveColumn",
@@ -1986,7 +2048,8 @@ const RUNTIME_IDENTITY_SQL = `
                  'model_option_materialized_revision','model_option_role_binding',
                'site_release_model_catalog_publication',
                'site_release_model_catalog_surface','site_release_model_catalog_option',
-               ${PRODUCT_CATALOG_ADMIN_RELATIONS_SQL}
+               ${PRODUCT_CATALOG_ADMIN_RELATIONS_SQL},
+               ${SITE_PUBLICATION_ADMIN_SELECT_RELATIONS_SQL}
                ,'identity_account','identity_password_credential','identity_login_identifier',
                'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
                'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
@@ -2046,7 +2109,8 @@ const RUNTIME_IDENTITY_SQL = `
                  'model_option_materialized_revision','model_option_role_binding',
                'site_release_model_catalog_publication',
                'site_release_model_catalog_surface','site_release_model_catalog_option',
-               ${PRODUCT_CATALOG_ADMIN_RELATIONS_SQL}
+               ${PRODUCT_CATALOG_ADMIN_RELATIONS_SQL},
+               ${SITE_PUBLICATION_ADMIN_SELECT_RELATIONS_SQL}
                ,'identity_account','identity_password_credential','identity_login_identifier',
                'identity_verification_transaction','identity_verification_legal_acceptance','identity_verification_delivery',
                'identity_totp_authenticator','identity_recovery_code_set','identity_recovery_code',
@@ -2443,6 +2507,7 @@ function validRuntimeIdentity(
     identity.hasRequiredAdmissionExecutionRootFunctions === (config.role === "admission") &&
     identity.hasRequiredModelOptionFunctions &&
     identity.hasRequiredProductCatalogPrivileges &&
+    identity.hasRequiredSitePublicationPrivileges &&
     identity.canSelectModelCatalogTable === (config.role === "admin") &&
     !identity.canReadModelSensitiveColumn &&
     identity.unexpectedPlatformRelations.length === 0 &&

@@ -1064,6 +1064,8 @@ describe("independent deployable roles", () => {
     expect(manifest).toContain("id: platform-admin-authority-bootstrap");
     expect(manifest).toContain("initial-admin-authority-document");
     expect(manifest).toContain("site-release-certification-verification-keyring");
+    expect(manifest).toContain("site-web-build-intent-signing-keyring");
+    expect(manifest).toContain("platform-site-publication");
     expect(entrypoint).not.toContain('"platform-admin-authority-bootstrap"');
   });
 });
@@ -1150,6 +1152,7 @@ function authority(
     hasRequiredAdmissionExecutionRootFunctions: roleName === admissionRoleName,
     hasRequiredModelOptionFunctions: true,
     hasRequiredProductCatalogPrivileges: true,
+    hasRequiredSitePublicationPrivileges: true,
     canSelectModelCatalogTable: roleName === "platform_admin",
     canReadModelSensitiveColumn: false,
     hasUnexpectedPlatformPrivilege: false,

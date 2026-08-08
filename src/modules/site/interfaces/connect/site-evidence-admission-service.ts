@@ -23,8 +23,8 @@ import {
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
 import type { ControlCommandReceiptTimestampReader } from
   "../../../admin/infrastructure/postgres/control-command-receipt-reader.js";
-import type { SitePublicationAuthorityService } from
-  "../../application/services/site-publication-authority-service.js";
+import type { SiteReleaseEvidenceAuthorityService } from
+  "../../application/services/site-release-evidence-authority-service.js";
 import type { CandidateAuthorityBinding, ImmutableRevisionBinding } from
   "../../domain/site-publication-authority.js";
 
@@ -43,7 +43,7 @@ export interface SiteEvidenceAdmissionResolver {
 }
 
 export function createSiteEvidenceAdmissionConnectService(input: Readonly<{
-  owner: Pick<SitePublicationAuthorityService, "recordEvidence">;
+  owner: Pick<SiteReleaseEvidenceAuthorityService, "recordEvidence">;
   resolver: SiteEvidenceAdmissionResolver;
   receipts: ControlCommandReceiptTimestampReader;
 }>): SiteEvidenceAdmissionConnectService {

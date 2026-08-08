@@ -99,7 +99,7 @@ export class SiteActiveReleaseAuthority {
         candidate.environment !== input.environment || !sameCandidate(candidate.binding, input.candidate)) {
       throw new Error("SITE_ACTIVATION_CANDIDATE_INVALID");
     }
-    const release = await this.publications.loadNodeForUpdate(
+    const release = await this.publications.loadNode(
       transaction,
       "site-release",
       input.candidate.ref,

@@ -22,6 +22,7 @@ import {
 } from "../../../../generated/proto/kokoro/platform/site/v1/site_publication_pb.js";
 import {
   authorizeSiteReleaseCandidateRequestDigest,
+  issueWebBuildIntentRequestDigest,
   publishReleaseCertificationRequestDigest,
   publishSiteReleaseRequestDigest,
   publishSurfaceInventoryRequestDigest,
@@ -57,7 +58,8 @@ export interface SitePublicationAdminResolver {
 
 export function createSitePublicationConnectService(input: Readonly<{
   owner: Pick<SitePublicationAuthorityService,
-    "authorizeCandidate" | "revokeCandidate" | "publishNode" | "publishRelease">;
+    "authorizeCandidate" | "revokeCandidate" | "publishNode" | "issueWebBuildIntent" |
+    "publishRelease">;
   resolver: SitePublicationAdminResolver;
   receipts: ControlCommandReceiptTimestampReader;
 }>): SitePublicationConnectService {
@@ -132,12 +134,33 @@ export function createSitePublicationConnectService(input: Readonly<{
     },
 
     async issueWebBuildIntent(request, transport) {
-      // Root v1 incorrectly requires a caller-authored digest for a document
-      // whose issuer heads and issuedAt are Platform-owned. Do not manufacture
-      // a caller-compatible payload; the hard-cut v2 contract must remove it.
-      void request;
-      void transport;
-      throw new ConnectError("SITE_WEB_BUILD_INTENT_CONTRACT_HARD_CUT_REQUIRED", Code.FailedPrecondition);
+      const context = required(request.context, "SITE_PUBLICATION_CONTEXT_REQUIRED");
+      const effect = required(request.effect, "SITE_PUBLICATION_EFFECT_REQUIRED");
+      const candidate = required(effect.candidate, "SITE_PUBLICATION_CANDIDATE_REQUIRED");
+      const resourceRefs = [candidate.candidateRef, effect.expectedSurfaceInventory?.ref,
+        effect.expectedWebBuildMaterialBundle?.ref]
+        .filter((value): value is string => value !== undefined);
+      const verified = await resolve(input, context, transport, "site.web-build-intent.publish",
+        request.siteId, resourceRefs);
+      const identity = identityOf(context);
+      requireDigest(identity.requestDigest,
+        issueWebBuildIntentRequestDigest(context, request.siteId, effect, verified.axes));
+      const result = await input.owner.issueWebBuildIntent({
+        commandId: identity.commandId,
+        idempotencyKey: identity.idempotencyKey,
+        siteRef: request.siteId,
+        candidate: candidateBinding(candidate),
+        ...(effect.expectedSurfaceInventory === undefined
+          ? {} : { expectedSurfaceInventory: revision(effect.expectedSurfaceInventory) }),
+        ...(effect.expectedWebBuildMaterialBundle === undefined
+          ? {} : { expectedWebBuildMaterialBundle: revision(effect.expectedWebBuildMaterialBundle) }),
+        reason: effect.reason,
+      }, verified.context);
+      return {
+        webBuildIntent: wireRevision(result.binding),
+        replayed: result.replayed,
+        receipt: await receipt(input, verified.context, identity, "site.web-build-intent.publish"),
+      };
     },
 
     async publishReleaseCertification(request, transport) {
@@ -179,8 +202,7 @@ async function publishNode<Effect extends Readonly<{
   siteRef: string,
   effect: Effect,
   revisionValue: WireRevision | undefined,
-  kind: "surface-inventory" | "web-build-material-bundle" | "web-build-intent" |
-    "release-certification",
+  kind: "surface-inventory" | "web-build-material-bundle" | "release-certification",
   producerKind: Parameters<SitePublicationAuthorityService["publishNode"]>[0]["producerKind"],
   digestFn: (context: AuthenticatedOperatorCommandContext, siteId: string, effect: Effect,
     axes: VerifiedAuthenticatedAdminAxes) => string,
@@ -204,13 +226,11 @@ async function publishNode<Effect extends Readonly<{
 function operationFor(kind: string): SitePublicationAdminOperation {
   if (kind === "surface-inventory") return "site.surface-inventory.publish";
   if (kind === "web-build-material-bundle") return "site.web-build-material-bundle.publish";
-  if (kind === "web-build-intent") return "site.web-build-intent.publish";
   return "site.release-certification.publish";
 }
 function responseField(kind: string): string {
   if (kind === "surface-inventory") return "surfaceInventory";
   if (kind === "web-build-material-bundle") return "webBuildMaterialBundle";
-  if (kind === "web-build-intent") return "webBuildIntent";
   return "releaseCertification";
 }
 async function resolve(input: Parameters<typeof createSitePublicationConnectService>[0],

@@ -522,7 +522,8 @@ deployables:
       permissions: typed-admin-control-plane-transactions
       ddl: forbidden
     inboundContracts: []
-    declaredInboundContracts: [platform-admin-connect, platform-product-catalog-publication]
+    declaredInboundContracts:
+      [platform-admin-connect, platform-product-catalog-publication, platform-site-publication]
     activationAuthorized: false
     runtimeTraffic: false
     outboundContracts: []
@@ -538,6 +539,7 @@ deployables:
         admin-page-cursor-key,
         authorization-event-signing-keyring,
         site-release-certification-verification-keyring,
+        site-web-build-intent-signing-keyring,
       ]
     audience: platform-admin
     scalingKey: admin-command-concurrency

@@ -204,15 +204,21 @@ ALTER TABLE platform.site_activation_eligibility_evidence FORCE ROW LEVEL SECURI
 CREATE POLICY site_release_candidate_scope ON platform.site_release_candidate_authority
   USING (site_ref=NULLIF(current_setting('app.site_id',true),'') AND
     environment=current_setting('app.environment',true) AND
-    ((current_setting('app.workload_kind',true)='platform_admin' AND
-      current_setting('app.actor_kind',true)='operator') OR
+    ((current_setting('app.workload_kind',true)='admin_workload' AND
+      current_setting('app.actor_kind',true)='operator' AND
+      current_setting('app.operation',true) IN (
+        'site.release-candidate.authorize','site.release-candidate.revoke',
+        'site.surface-inventory.publish','site.web-build-material-bundle.publish',
+        'site.web-build-intent.publish','site.release-certification.publish',
+        'site.release.publish','site.activation.begin'
+      )) OR
      (current_setting('app.workload_kind',true)='platform_worker' AND
       current_setting('app.actor_kind',true)='workload' AND
       current_setting('app.operation',true) IN
         ('site.release-evidence.publish','site.activation.commit'))))
   WITH CHECK (site_ref=NULLIF(current_setting('app.site_id',true),'') AND
     environment=current_setting('app.environment',true) AND
-    current_setting('app.workload_kind',true)='platform_admin' AND
+    current_setting('app.workload_kind',true)='admin_workload' AND
     current_setting('app.actor_kind',true)='operator' AND
     current_setting('app.operation',true)='site.release-candidate.authorize');
 CREATE POLICY site_release_candidate_authorization_scope
@@ -222,8 +228,14 @@ CREATE POLICY site_release_candidate_authorization_scope
       AND candidate.candidate_version=site_release_candidate_authorization.candidate_version
       AND candidate.site_ref=NULLIF(current_setting('app.site_id',true),'')
       AND candidate.environment=current_setting('app.environment',true)
-      AND ((current_setting('app.workload_kind',true)='platform_admin' AND
-            current_setting('app.actor_kind',true)='operator') OR
+      AND ((current_setting('app.workload_kind',true)='admin_workload' AND
+            current_setting('app.actor_kind',true)='operator' AND
+            current_setting('app.operation',true) IN (
+              'site.release-candidate.authorize','site.release-candidate.revoke',
+              'site.surface-inventory.publish','site.web-build-material-bundle.publish',
+              'site.web-build-intent.publish','site.release-certification.publish',
+              'site.release.publish','site.activation.begin'
+            )) OR
            (current_setting('app.workload_kind',true)='platform_worker' AND
             current_setting('app.actor_kind',true)='workload' AND
             current_setting('app.operation',true) IN
@@ -233,7 +245,7 @@ CREATE POLICY site_release_candidate_authorization_scope
       AND candidate.candidate_version=site_release_candidate_authorization.candidate_version
       AND candidate.site_ref=NULLIF(current_setting('app.site_id',true),'')
       AND candidate.environment=current_setting('app.environment',true)
-      AND current_setting('app.workload_kind',true)='platform_admin'
+      AND current_setting('app.workload_kind',true)='admin_workload'
       AND current_setting('app.actor_kind',true)='operator'
       AND ((current_setting('app.operation',true)='site.release-candidate.authorize' AND
             site_release_candidate_authorization.state='authorized' AND
@@ -243,21 +255,35 @@ CREATE POLICY site_release_candidate_authorization_scope
             site_release_candidate_authorization.state='revoked'))));
 CREATE POLICY site_publication_revision_scope ON platform.site_publication_revision
   USING (site_ref=NULLIF(current_setting('app.site_id',true),'') AND (
-    (current_setting('app.workload_kind',true)='platform_admin' AND
-     current_setting('app.actor_kind',true)='operator') OR
+    (current_setting('app.workload_kind',true)='admin_workload' AND
+     current_setting('app.actor_kind',true)='operator' AND
+     current_setting('app.operation',true) IN (
+       'site.surface-inventory.publish','site.web-build-material-bundle.publish',
+       'site.web-build-intent.publish','site.release-certification.publish',
+       'site.release.publish','site.activation.begin'
+     )) OR
     (current_setting('app.workload_kind',true)='platform_worker' AND
      current_setting('app.actor_kind',true)='workload' AND
      current_setting('app.operation',true) IN
        ('site.release-evidence.publish','site.activation.commit'))
   ))
   WITH CHECK (site_ref=NULLIF(current_setting('app.site_id',true),'') AND (
-    (current_setting('app.workload_kind',true)='platform_admin' AND
+    (current_setting('app.workload_kind',true)='admin_workload' AND
      current_setting('app.actor_kind',true)='operator' AND
-     producer_kind IN ('operator-approved','platform-issued','certifier-signed')) OR
+     ((current_setting('app.operation',true)='site.surface-inventory.publish' AND
+       publication_kind='surface-inventory' AND producer_kind='operator-approved') OR
+      (current_setting('app.operation',true)='site.web-build-material-bundle.publish' AND
+       publication_kind='web-build-material-bundle' AND producer_kind='operator-approved') OR
+      (current_setting('app.operation',true)='site.web-build-intent.publish' AND
+       publication_kind='web-build-intent' AND producer_kind='platform-issued') OR
+      (current_setting('app.operation',true)='site.release-certification.publish' AND
+       publication_kind='release-certification' AND producer_kind='certifier-signed') OR
+      (current_setting('app.operation',true)='site.release.publish' AND
+       publication_kind='site-release' AND producer_kind='platform-issued'))) OR
     (current_setting('app.workload_kind',true)='platform_worker' AND
      current_setting('app.actor_kind',true)='workload' AND
      current_setting('app.operation',true)='site.release-evidence.publish' AND
-     producer_kind='workload-attested')
+     publication_kind='release-evidence' AND producer_kind='workload-attested')
   ));
 CREATE POLICY site_active_release_pointer_scope ON platform.site_active_release_pointer
   USING (site_ref=NULLIF(current_setting('app.site_id',true),'') AND

@@ -9,6 +9,9 @@ import {
   CREDIT_USAGE_RELATIONS,
   MEDIA_CONTROL_ADMIN_RELATIONS,
   PRODUCT_CATALOG_ADMIN_RELATIONS,
+  SITE_PUBLICATION_ADMIN_INSERT_RELATIONS,
+  SITE_PUBLICATION_ADMIN_SELECT_RELATIONS,
+  SITE_PUBLICATION_ADMIN_UPDATE_RELATIONS,
 } from "../../src/infrastructure/postgres/runtime-relation-authority.js";
 
 const clientSource = source("../../src/infrastructure/postgres/client.ts");
@@ -18,18 +21,58 @@ describe("PostgreSQL runtime relation authority contract", () => {
   it("keeps migration postflight and runtime connection audit on shared relation sets", () => {
     for (const implementation of [clientSource, migratorSource]) {
       expect(implementation).toContain('from "./runtime-relation-authority.js"');
-      expect(implementation.match(/ADMIN_INSERT_RELATIONS_SQL/g)).toHaveLength(3);
-      expect(implementation.match(/ADMIN_UPDATE_RELATIONS_SQL/g)).toHaveLength(3);
+      expect(implementation.match(/(?<!SITE_PUBLICATION_)ADMIN_INSERT_RELATIONS_SQL/g))
+        .toHaveLength(3);
+      expect(implementation.match(/(?<!SITE_PUBLICATION_)ADMIN_UPDATE_RELATIONS_SQL/g))
+        .toHaveLength(3);
       expect(implementation).toContain("MEDIA_CONTROL_ADMIN_RELATIONS_SQL");
       expect(implementation).toContain("PRODUCT_CATALOG_ADMIN_RELATIONS_SQL");
+      expect(implementation).toContain("SITE_PUBLICATION_ADMIN_SELECT_RELATIONS_SQL");
+      expect(implementation).toContain("SITE_PUBLICATION_ADMIN_INSERT_RELATIONS_SQL");
+      expect(implementation).toContain("SITE_PUBLICATION_ADMIN_UPDATE_RELATIONS_SQL");
     }
   });
 
   it("defines every shared relation set without duplicate authority entries", () => {
     for (const relations of [ADMISSION_RELATIONS, ADMISSION_INSERT_RELATIONS,
       ADMISSION_UPDATE_RELATIONS, CREDIT_USAGE_RELATIONS, MEDIA_CONTROL_ADMIN_RELATIONS,
-      PRODUCT_CATALOG_ADMIN_RELATIONS, ADMIN_INSERT_RELATIONS, ADMIN_UPDATE_RELATIONS]) {
+      PRODUCT_CATALOG_ADMIN_RELATIONS, SITE_PUBLICATION_ADMIN_SELECT_RELATIONS,
+      SITE_PUBLICATION_ADMIN_INSERT_RELATIONS, SITE_PUBLICATION_ADMIN_UPDATE_RELATIONS,
+      ADMIN_INSERT_RELATIONS, ADMIN_UPDATE_RELATIONS]) {
       expect(new Set(relations).size).toBe(relations.length);
+    }
+  });
+
+  it("gives Admin the exact Site publication authority needed by the production owner", () => {
+    expect(SITE_PUBLICATION_ADMIN_SELECT_RELATIONS).toEqual([
+      "site_release_candidate_authority",
+      "site_release_candidate_authorization",
+      "site_publication_revision",
+      "site_effective_access_authority_revision",
+      "site_web_build_intent_issuer_revision",
+      "site_web_build_intent_issuer_head",
+      "site_web_build_intent_envelope",
+      "site_release_producer_trust_revision",
+      "site_release_attestation_envelope",
+      "site_release_evidence_decision",
+    ]);
+    expect(SITE_PUBLICATION_ADMIN_INSERT_RELATIONS).toEqual([
+      "site_release_candidate_authority",
+      "site_release_candidate_authorization",
+      "site_publication_revision",
+      "site_web_build_intent_envelope",
+    ]);
+    expect(SITE_PUBLICATION_ADMIN_UPDATE_RELATIONS).toEqual([
+      "site_release_candidate_authorization",
+    ]);
+    expect(ADMIN_INSERT_RELATIONS).toEqual(expect.arrayContaining(
+      [...SITE_PUBLICATION_ADMIN_INSERT_RELATIONS],
+    ));
+    expect(ADMIN_UPDATE_RELATIONS).toEqual(expect.arrayContaining(
+      [...SITE_PUBLICATION_ADMIN_UPDATE_RELATIONS],
+    ));
+    for (const implementation of [clientSource, migratorSource]) {
+      expect(implementation).toContain('AS "hasRequiredSitePublicationPrivileges"');
     }
   });
 

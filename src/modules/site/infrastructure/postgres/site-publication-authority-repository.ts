@@ -6,6 +6,10 @@ import { verifyCanonicalDocument, type CanonicalJsonValue } from
 import type { SitePublicationAuthorityRepository } from
   "../../application/contracts/site-publication-authority-ports.js";
 import {
+  createSiteWebBuildIntentDsseEnvelope,
+  type SiteWebBuildIntentDsseEnvelope,
+} from "../../domain/site-web-build-intent-dsse.js";
+import {
   authorizeSiteReleaseCandidate,
   revokeSiteReleaseCandidateAuthorization,
   type CandidateAuthorityBinding,
@@ -46,6 +50,12 @@ interface NodeRow extends Record<string, unknown> {
   canonicalPayload: unknown;
   canonicalBytes: Uint8Array;
 }
+interface WebBuildIntentEnvelopeRow extends Record<string, unknown> {
+  payloadType: unknown;
+  payload: unknown;
+  signingKeyId: unknown;
+  signature: unknown;
+}
 
 export class PostgresSitePublicationAuthorityRepository
 implements SitePublicationAuthorityRepository {
@@ -67,26 +77,11 @@ implements SitePublicationAuthorityRepository {
   }
 
   async loadCandidateForUpdate(transaction: PlatformTransaction, candidateRef: string) {
-    const rows = await resolvePlatformTransaction(transaction).query<CandidateRow>(
-      `SELECT candidate.candidate_ref AS "candidateRef",
-              candidate.candidate_version::text AS "candidateVersion",
-              candidate.candidate_authorization_epoch::text AS "candidateAuthorizationEpoch",
-              authorization.authorization_epoch::text AS "currentAuthorizationEpoch",
-              candidate.candidate_digest AS "candidateDigest",candidate.site_ref AS "siteRef",
-              candidate.environment,authorization.state,
-              profile_ref AS "profileRef",profile_revision::text AS "profileRevision",
-              profile_digest AS "profileDigest",catalog_ref AS "catalogRef",
-              catalog_revision::text AS "catalogRevision",catalog_digest AS "catalogDigest",
-              business_bindings_digest AS "businessBindingsDigest",
-              canonical_payload AS "canonicalPayload",canonical_bytes AS "canonicalBytes"
-       FROM platform.site_release_candidate_authority candidate
-       JOIN platform.site_release_candidate_authorization authorization
-         ON authorization.candidate_ref=candidate.candidate_ref
-        AND authorization.candidate_version=candidate.candidate_version
-       WHERE candidate.candidate_ref=$1 ORDER BY candidate.candidate_version DESC LIMIT 1
-       FOR UPDATE OF candidate,authorization`, [candidateRef],
-    );
-    return rows[0] === undefined ? null : candidate(rows[0]);
+    return queryCandidate(transaction, candidateRef, true);
+  }
+
+  async loadCandidate(transaction: PlatformTransaction, candidateRef: string) {
+    return queryCandidate(transaction, candidateRef, false);
   }
 
   async insertCandidate(
@@ -143,7 +138,7 @@ implements SitePublicationAuthorityRepository {
     if (changed !== 1) throw new Error("SITE_PUBLICATION_CANDIDATE_REVOKE_CONFLICT");
   }
 
-  async loadNodeForUpdate(
+  async loadNode(
     transaction: PlatformTransaction,
     kind: SitePublicationNodeKind,
     candidateRef: string,
@@ -158,7 +153,7 @@ implements SitePublicationAuthorityRepository {
               canonical_payload AS "canonicalPayload",canonical_bytes AS "canonicalBytes"
        FROM platform.site_publication_revision
        WHERE publication_kind=$1 AND candidate_ref=$2
-         AND candidate_version=$3::numeric(20,0) FOR UPDATE`,
+         AND candidate_version=$3::numeric(20,0)`,
       [kind, candidateRef, candidateVersion.toString()],
     );
     return rows[0] === undefined ? null : node(rows[0]);
@@ -183,6 +178,77 @@ implements SitePublicationAuthorityRepository {
         node.canonicalBytes, commandId],
     );
   }
+
+  async loadWebBuildIntentEnvelope(
+    transaction: PlatformTransaction,
+    binding: Parameters<SitePublicationAuthorityRepository["loadWebBuildIntentEnvelope"]>[1],
+  ): Promise<SiteWebBuildIntentDsseEnvelope | null> {
+    const rows = await resolvePlatformTransaction(transaction).query<WebBuildIntentEnvelopeRow>(
+      `SELECT payload_type AS "payloadType",payload,signing_key_id AS "signingKeyId",signature
+       FROM platform.site_web_build_intent_envelope
+       WHERE intent_ref=$1 AND intent_revision=$2::numeric(20,0) AND intent_digest=$3`,
+      [binding.ref, binding.revision.toString(), binding.digest],
+    );
+    if (rows.length > 1) throw new Error("SITE_WEB_BUILD_INTENT_ENVELOPE_CORRUPT");
+    const row = rows[0];
+    if (row === undefined) return null;
+    try {
+      return createSiteWebBuildIntentDsseEnvelope({
+        payloadType: persistedText(row.payloadType),
+        payload: persistedText(row.payload),
+        signatures: [{
+          keyid: persistedText(row.signingKeyId),
+          sig: persistedText(row.signature),
+        }],
+      });
+    } catch {
+      throw new Error("SITE_WEB_BUILD_INTENT_ENVELOPE_CORRUPT");
+    }
+  }
+
+  async insertWebBuildIntentEnvelope(
+    transaction: PlatformTransaction,
+    binding: Parameters<SitePublicationAuthorityRepository["insertWebBuildIntentEnvelope"]>[1],
+    envelope: Parameters<SitePublicationAuthorityRepository["insertWebBuildIntentEnvelope"]>[2],
+    commandId: string,
+  ): Promise<void> {
+    const value = createSiteWebBuildIntentDsseEnvelope(envelope);
+    await resolvePlatformTransaction(transaction).execute(
+      `INSERT INTO platform.site_web_build_intent_envelope
+       (intent_ref,intent_revision,intent_digest,payload_type,payload,signing_key_id,signature,command_id)
+       VALUES ($1,$2::numeric(20,0),$3,$4,$5,$6,$7,$8)`,
+      [binding.ref, binding.revision.toString(), binding.digest, value.payloadType, value.payload,
+        value.signatures[0].keyid, value.signatures[0].sig, commandId],
+    );
+  }
+}
+
+async function queryCandidate(
+  transaction: PlatformTransaction,
+  candidateRef: string,
+  forUpdate: boolean,
+): Promise<SiteReleaseCandidateAuthority | null> {
+  const rows = await resolvePlatformTransaction(transaction).query<CandidateRow>(
+    `SELECT candidate.candidate_ref AS "candidateRef",
+            candidate.candidate_version::text AS "candidateVersion",
+            candidate.candidate_authorization_epoch::text AS "candidateAuthorizationEpoch",
+            candidate_authorization.authorization_epoch::text AS "currentAuthorizationEpoch",
+            candidate.candidate_digest AS "candidateDigest",candidate.site_ref AS "siteRef",
+            candidate.environment,candidate_authorization.state,
+            profile_ref AS "profileRef",profile_revision::text AS "profileRevision",
+            profile_digest AS "profileDigest",catalog_ref AS "catalogRef",
+            catalog_revision::text AS "catalogRevision",catalog_digest AS "catalogDigest",
+            business_bindings_digest AS "businessBindingsDigest",
+            canonical_payload AS "canonicalPayload",canonical_bytes AS "canonicalBytes"
+     FROM platform.site_release_candidate_authority candidate
+     JOIN platform.site_release_candidate_authorization candidate_authorization
+       ON candidate_authorization.candidate_ref=candidate.candidate_ref
+      AND candidate_authorization.candidate_version=candidate.candidate_version
+     WHERE candidate.candidate_ref=$1 ORDER BY candidate.candidate_version DESC LIMIT 1
+     ${forUpdate ? "FOR UPDATE OF candidate_authorization" : ""}`,
+    [candidateRef],
+  );
+  return rows[0] === undefined ? null : candidate(rows[0]);
 }
 
 function candidate(row: CandidateRow): SiteReleaseCandidateAuthority {
@@ -237,4 +303,8 @@ function decimal(value: string): bigint {
 function bytes(value: Uint8Array): Uint8Array {
   if (!(value instanceof Uint8Array)) throw new Error("SITE_PUBLICATION_PERSISTED_BYTES_INVALID");
   return new Uint8Array(value);
+}
+function persistedText(value: unknown): string {
+  if (typeof value !== "string") throw new Error("SITE_WEB_BUILD_INTENT_ENVELOPE_CORRUPT");
+  return value;
 }

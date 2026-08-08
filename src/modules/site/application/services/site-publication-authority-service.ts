@@ -5,7 +5,6 @@ import type {
   SitePublicationAuthorityRepository,
   SitePublicationDocumentResolver,
   SiteReleaseCertificationAdmissionPort,
-  SiteReleaseEvidenceAdmissionPort,
   SiteReleaseAssemblyPort,
   SiteReleaseCandidateAssemblyPort,
   SiteWebBuildIntentAssemblyPort,
@@ -31,7 +30,6 @@ export class SitePublicationAuthorityService {
     private readonly candidates: SiteReleaseCandidateAssemblyPort,
     private readonly documents: SitePublicationDocumentResolver,
     private readonly intents: SiteWebBuildIntentAssemblyPort,
-    private readonly evidence: SiteReleaseEvidenceAdmissionPort,
     private readonly certifications: SiteReleaseCertificationAdmissionPort,
     private readonly releases: SiteReleaseAssemblyPort,
   ) {}
@@ -126,7 +124,7 @@ export class SitePublicationAuthorityService {
 
   publishNode(input: CommandInput & Readonly<{
     siteRef: string;
-    kind: Exclude<SitePublicationNodeKind, "site-release">;
+    kind: "surface-inventory" | "web-build-material-bundle" | "release-certification";
     candidate: CandidateAuthorityBinding;
     binding: ImmutableRevisionBinding;
     reason: string;
@@ -145,20 +143,18 @@ export class SitePublicationAuthorityService {
         throw new Error("SITE_PUBLICATION_CANDIDATE_NOT_FOUND");
       }
       exactCandidate(candidate.binding, input.candidate);
-      const existing = await this.repository.loadNodeForUpdate(transaction, input.kind,
+      const existing = await this.repository.loadNode(transaction, input.kind,
         input.candidate.ref, input.candidate.version);
       if (disposition === "replay") return nodeReplay(existing, input);
       if (existing !== null) throw new Error("SITE_PUBLICATION_NODE_ALREADY_EXISTS");
       const predecessors = await this.predecessors(transaction, input.candidate);
-      const source = input.kind === "web-build-intent"
-        ? await this.intents.issue(transaction, { candidate, binding: input.binding, predecessors })
-        : input.kind === "release-certification"
-          ? await this.certifications.verify(transaction, {
-            candidate,
-            binding: input.binding,
-            predecessors,
-          })
-          : await this.documents.resolve({ kind: input.kind, binding: input.binding });
+      const source = input.kind === "release-certification"
+        ? await this.certifications.verify(transaction, {
+          candidate,
+          binding: input.binding,
+          predecessors,
+        })
+        : await this.documents.resolve({ kind: input.kind, binding: input.binding });
       const node = admitSitePublicationNode(input.kind, {
         binding: input.binding, source, candidate, predecessors,
       });
@@ -169,20 +165,15 @@ export class SitePublicationAuthorityService {
     });
   }
 
-  recordEvidence(input: CommandInput & Readonly<{
+  issueWebBuildIntent(input: CommandInput & Readonly<{
     siteRef: string;
     candidate: CandidateAuthorityBinding;
-    compiledWebManifest: ImmutableRevisionBinding;
-    webArtifactProvenance: ImmutableRevisionBinding;
-    webArtifactDigest: string;
-    artifactInspectionEvidence: ImmutableRevisionBinding;
-    journeyEvidence: ImmutableRevisionBinding;
-    securityEvidence: ImmutableRevisionBinding;
-    producerIdentityRef: string;
+    expectedSurfaceInventory?: ImmutableRevisionBinding;
+    expectedWebBuildMaterialBundle?: ImmutableRevisionBinding;
     reason: string;
   }>, context: VerifiedRequestSecurityContext) {
-    workload(context, input.siteRef);
-    const command = createSiteAuthorityCommand("site.release-evidence.publish", input.siteRef,
+    operator(context, input.siteRef);
+    const command = createSiteAuthorityCommand("site.web-build-intent.publish", input.siteRef,
       input, context, effect(input));
     return this.unitOfWork.execute({ context, operation: command.operation }, async (transaction) => {
       const disposition = await this.journal.begin(transaction, command);
@@ -191,16 +182,58 @@ export class SitePublicationAuthorityService {
         throw new Error("SITE_PUBLICATION_CANDIDATE_NOT_FOUND");
       }
       exactCandidate(candidate.binding, input.candidate);
-      const existing = await this.repository.loadNodeForUpdate(transaction, "release-evidence",
+      const existing = await this.repository.loadNode(transaction, "web-build-intent",
         input.candidate.ref, input.candidate.version);
-      if (disposition === "replay") return nodeReplay(existing, { ...input, kind: "release-evidence" });
-      if (existing !== null) throw new Error("SITE_PUBLICATION_RELEASE_EVIDENCE_ALREADY_EXISTS");
       const predecessors = await this.predecessors(transaction, input.candidate);
-      const verified = await this.evidence.verify(transaction, { ...input, candidate, predecessors });
-      const node = admitSitePublicationNode("release-evidence", {
-        binding: verified.binding, source: verified.source, candidate, predecessors,
+      exactExpectedPredecessor(
+        predecessors["surface-inventory"],
+        input.expectedSurfaceInventory,
+        "SITE_PUBLICATION_EXPECTED_SURFACE_INVENTORY_MISMATCH",
+      );
+      exactExpectedPredecessor(
+        predecessors["web-build-material-bundle"],
+        input.expectedWebBuildMaterialBundle,
+        "SITE_PUBLICATION_EXPECTED_BUILD_MATERIAL_MISMATCH",
+      );
+      if (disposition === "replay") {
+        if (existing === null) throw new Error("SITE_PUBLICATION_NODE_REPLAY_CONFLICT");
+        const envelope = await this.repository.loadWebBuildIntentEnvelope(
+          transaction,
+          existing.binding,
+        );
+        if (envelope === null) throw new Error("SITE_WEB_BUILD_INTENT_ENVELOPE_NOT_FOUND");
+        const verifiedNode = admitSitePublicationNode("web-build-intent", {
+          binding: existing.binding,
+          source: Object.freeze({
+            canonicalBytes: existing.canonicalBytes,
+            parsedDocument: existing.document,
+            digest: existing.binding.digest,
+          }),
+          candidate,
+          predecessors,
+        });
+        await this.intents.verify(transaction, { candidate, node: verifiedNode, envelope });
+        return nodeReplay(existing, { ...input, kind: "web-build-intent" });
+      }
+      if (existing !== null) throw new Error("SITE_PUBLICATION_NODE_ALREADY_EXISTS");
+      const issued = await this.intents.issue(transaction, {
+        commandId: command.commandId,
+        candidate,
+        predecessors,
       });
-      await this.repository.insertNode(transaction, node, "workload-attested", command.commandId);
+      const node = admitSitePublicationNode("web-build-intent", {
+        binding: issued.binding,
+        source: issued.source,
+        candidate,
+        predecessors,
+      });
+      await this.repository.insertNode(transaction, node, "platform-issued", command.commandId);
+      await this.repository.insertWebBuildIntentEnvelope(
+        transaction,
+        node.binding,
+        issued.envelope,
+        command.commandId,
+      );
       const receipt = { siteRef: input.siteRef, state: "published", replayed: false } as const;
       await this.journal.succeed(transaction, command, receipt, context);
       return Object.freeze({ binding: node.binding, ...receipt });
@@ -220,7 +253,7 @@ export class SitePublicationAuthorityService {
         throw new Error("SITE_PUBLICATION_CANDIDATE_NOT_FOUND");
       }
       exactCandidate(candidate.binding, input.candidate);
-      const existing = await this.repository.loadNodeForUpdate(transaction, "site-release",
+      const existing = await this.repository.loadNode(transaction, "site-release",
         input.candidate.ref, input.candidate.version);
       if (disposition === "replay") return nodeReplay(existing, { ...input, kind: "site-release" });
       if (existing !== null) throw new Error("SITE_PUBLICATION_SITE_RELEASE_ALREADY_EXISTS");
@@ -237,13 +270,13 @@ export class SitePublicationAuthorityService {
   }
 
   private async predecessors(
-    transaction: Parameters<SitePublicationAuthorityRepository["loadNodeForUpdate"]>[0],
+    transaction: Parameters<SitePublicationAuthorityRepository["loadNode"]>[0],
     candidate: CandidateAuthorityBinding,
   ) {
     const kinds: readonly SitePublicationNodeKind[] = ["surface-inventory", "web-build-material-bundle",
       "web-build-intent", "release-evidence", "release-certification"];
     const values = await Promise.all(kinds.map(async (kind) => [kind,
-      await this.repository.loadNodeForUpdate(transaction, kind, candidate.ref, candidate.version)] as const));
+      await this.repository.loadNode(transaction, kind, candidate.ref, candidate.version)] as const));
     return Object.fromEntries(values.filter((entry): entry is readonly [SitePublicationNodeKind, SitePublicationNode] =>
       entry[1] !== null));
   }
@@ -253,14 +286,21 @@ function operator(context: VerifiedRequestSecurityContext, siteRef: string): voi
   if (context.trustedCaller.kind !== "admin_workload" || context.actor.kind !== "operator" ||
       context.target.siteId !== siteRef) throw new Error("SITE_PUBLICATION_OPERATOR_SCOPE_REQUIRED");
 }
-function workload(context: VerifiedRequestSecurityContext, siteRef: string): void {
-  if (context.trustedCaller.kind !== "platform_worker" || context.actor.kind !== "workload" ||
-      context.target.siteId !== siteRef) throw new Error("SITE_PUBLICATION_ATTESTOR_SCOPE_REQUIRED");
-}
 function exactCandidate(left: CandidateAuthorityBinding, right: CandidateAuthorityBinding): void {
   if (left.ref !== right.ref || left.version !== right.version ||
       left.authorizationEpoch !== right.authorizationEpoch || left.digest !== right.digest) {
     throw new Error("SITE_PUBLICATION_CANDIDATE_BINDING_MISMATCH");
+  }
+}
+function exactExpectedPredecessor(
+  actual: SitePublicationNode | undefined,
+  expected: ImmutableRevisionBinding | undefined,
+  code: string,
+): void {
+  if (actual === undefined || (expected !== undefined &&
+      (actual.binding.ref !== expected.ref || actual.binding.revision !== expected.revision ||
+       actual.binding.digest !== expected.digest))) {
+    throw new Error(code);
   }
 }
 function candidateReplay(existing: Awaited<ReturnType<SitePublicationAuthorityRepository["loadCandidateForUpdate"]>>,

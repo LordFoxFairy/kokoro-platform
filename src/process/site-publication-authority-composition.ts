@@ -4,6 +4,7 @@ import type { SiteEffectiveAccessSnapshotPort } from
 import type {
   SitePublicationDocumentResolver,
   SiteWebBuildIntentIssuerAuthorityPort,
+  SiteWebBuildIntentSignerPort,
 } from "../modules/site/application/contracts/site-publication-authority-ports.js";
 import type { SiteReleaseEvidenceTrustAuthorityPort } from
   "../modules/site/application/contracts/site-release-evidence-trust.js";
@@ -11,6 +12,8 @@ import type { SiteReleaseCertificationTrustAuthorityPort } from
   "../modules/site/application/contracts/site-release-certification-trust.js";
 import { SitePublicationAuthorityService } from
   "../modules/site/application/services/site-publication-authority-service.js";
+import { SiteReleaseEvidenceAuthorityService } from
+  "../modules/site/application/services/site-release-evidence-authority-service.js";
 import { SiteReleaseAssembler } from
   "../modules/site/application/services/site-release-assembler.js";
 import { SiteReleaseEvidenceAdmission } from
@@ -34,7 +37,7 @@ import { PlatformUnitOfWork } from "../shared/unit-of-work/index.js";
 export interface SitePublicationAuthorityProductionDependencies {
   readonly effectiveAccess: SiteEffectiveAccessSnapshotPort;
   readonly intentAuthority: SiteWebBuildIntentIssuerAuthorityPort;
-  readonly evidenceTrustAuthority: SiteReleaseEvidenceTrustAuthorityPort;
+  readonly intentSigner: SiteWebBuildIntentSignerPort;
   readonly certificationTrustAuthority: SiteReleaseCertificationTrustAuthorityPort;
   readonly publicationDocumentRoot?: string;
   readonly documents?: SitePublicationDocumentResolver;
@@ -60,18 +63,43 @@ export function createSitePublicationAuthorityProductionComposition(
       new PostgresSiteAuthorityJournal(),
       new PostgresSiteReleaseCandidateAssembler(dependencies.effectiveAccess, { now }),
       documents,
-      new SiteWebBuildIntentIssuer(dependencies.intentAuthority, now),
-      new SiteReleaseEvidenceAdmission(
-        documents,
-        new Ed25519SiteReleaseEvidenceTrust(dependencies.evidenceTrustAuthority, now),
-        now,
-      ),
+      new SiteWebBuildIntentIssuer(dependencies.intentAuthority, dependencies.intentSigner, now),
       new Ed25519SiteReleaseCertificationAdmission(
         documents,
         dependencies.certificationTrustAuthority,
         now,
       ),
       new SiteReleaseAssembler({ now }),
+    ),
+  });
+}
+
+export interface SiteReleaseEvidenceAuthorityProductionDependencies {
+  readonly evidenceTrustAuthority: SiteReleaseEvidenceTrustAuthorityPort;
+  readonly publicationDocumentRoot?: string;
+  readonly documents?: SitePublicationDocumentResolver;
+  readonly now?: () => string;
+}
+
+/** Production machine owner composition; no operator publication capability crosses this boundary. */
+export function createSiteReleaseEvidenceAuthorityProductionComposition(
+  database: PlatformTransactionalDatabaseClient,
+  dependencies: SiteReleaseEvidenceAuthorityProductionDependencies,
+): Readonly<{ authority: SiteReleaseEvidenceAuthorityService }> {
+  const documents = dependencies.documents ?? new ContentAddressedSitePublicationDocumentResolver(
+    required(dependencies.publicationDocumentRoot, "PLATFORM_PUBLICATION_DOCUMENT_ROOT_REQUIRED"),
+  );
+  const now = dependencies.now ?? (() => new Date().toISOString());
+  return Object.freeze({
+    authority: new SiteReleaseEvidenceAuthorityService(
+      new PlatformUnitOfWork(database),
+      new PostgresSitePublicationAuthorityRepository(),
+      new PostgresSiteAuthorityJournal(),
+      new SiteReleaseEvidenceAdmission(
+        documents,
+        new Ed25519SiteReleaseEvidenceTrust(dependencies.evidenceTrustAuthority, now),
+        now,
+      ),
     ),
   });
 }

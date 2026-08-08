@@ -152,7 +152,6 @@ function service(input: Readonly<{
     {} as never,
     {} as never,
     {} as never,
-    {} as never,
   );
 }
 

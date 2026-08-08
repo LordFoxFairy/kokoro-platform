@@ -72,18 +72,26 @@ export interface SiteWebBuildIntentAssemblyPort {
   issue(
     transaction: PlatformTransaction,
     input: Readonly<{
+      commandId: string;
       candidate: SiteReleaseCandidateAuthority;
-      binding: ImmutableRevisionBinding;
       predecessors: Readonly<Partial<Record<SitePublicationNodeKind, SitePublicationNode>>>;
     }>,
-  ): Promise<ResolvedCanonicalDocument>;
+  ): Promise<Readonly<{
+    binding: ImmutableRevisionBinding;
+    source: ResolvedCanonicalDocument;
+    envelope: SiteWebBuildIntentDsseEnvelope;
+  }>>;
+  verify(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      candidate: SiteReleaseCandidateAuthority;
+      node: SitePublicationNode;
+      envelope: SiteWebBuildIntentDsseEnvelope;
+    }>,
+  ): Promise<void>;
 }
 
-export interface SiteWebBuildIntentIssuerAuthorityPort {
-  resolve(
-    transaction: PlatformTransaction,
-    input: Readonly<{ siteRef: string; environment: string }>,
-  ): Promise<Readonly<{
+export interface SiteWebBuildIntentIssuerAuthority {
     webCompositionRegistry: ImmutableRevisionBinding;
     webBuildToolchain: ImmutableRevisionBinding;
     contractFloor: readonly Readonly<{ contractRef: string; minimumMajor: bigint }>[];
@@ -97,7 +105,21 @@ export interface SiteWebBuildIntentIssuerAuthorityPort {
     publicKeyFingerprint: string;
     keyValidFrom: string;
     keyValidUntil: string;
-  }>>;
+}
+
+export interface SiteWebBuildIntentIssuerAuthorityPort {
+  resolve(
+    transaction: PlatformTransaction,
+    input: Readonly<{ siteRef: string; environment: string }>,
+  ): Promise<Readonly<SiteWebBuildIntentIssuerAuthority>>;
+  resolveExact(
+    transaction: PlatformTransaction,
+    input: Readonly<{
+      siteRef: string;
+      environment: string;
+      key: SiteWebBuildIntentSigningKeyBinding;
+    }>,
+  ): Promise<Readonly<SiteWebBuildIntentIssuerAuthority>>;
 }
 
 export interface SiteReleaseEvidenceAdmissionPort {
@@ -138,6 +160,10 @@ export interface SitePublicationAuthorityRepository {
     transaction: PlatformTransaction,
     candidateRef: string,
   ): Promise<SiteReleaseCandidateAuthority | null>;
+  loadCandidate(
+    transaction: PlatformTransaction,
+    candidateRef: string,
+  ): Promise<SiteReleaseCandidateAuthority | null>;
   insertCandidate(
     transaction: PlatformTransaction,
     candidate: SiteReleaseCandidateAuthority,
@@ -152,7 +178,7 @@ export interface SitePublicationAuthorityRepository {
       commandId: string;
     }>,
   ): Promise<void>;
-  loadNodeForUpdate(
+  loadNode(
     transaction: PlatformTransaction,
     kind: SitePublicationNodeKind,
     candidateRef: string,
@@ -162,6 +188,16 @@ export interface SitePublicationAuthorityRepository {
     transaction: PlatformTransaction,
     node: SitePublicationNode,
     producerKind: "operator-approved" | "platform-issued" | "workload-attested" | "certifier-signed",
+    commandId: string,
+  ): Promise<void>;
+  loadWebBuildIntentEnvelope(
+    transaction: PlatformTransaction,
+    binding: ImmutableRevisionBinding,
+  ): Promise<SiteWebBuildIntentDsseEnvelope | null>;
+  insertWebBuildIntentEnvelope(
+    transaction: PlatformTransaction,
+    binding: ImmutableRevisionBinding,
+    envelope: SiteWebBuildIntentDsseEnvelope,
     commandId: string,
   ): Promise<void>;
 }

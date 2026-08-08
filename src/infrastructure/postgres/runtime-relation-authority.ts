@@ -170,6 +170,30 @@ export const PRODUCT_CATALOG_ADMIN_RELATIONS = [
   "product_catalog_publication_receipt",
 ] as const;
 
+export const SITE_PUBLICATION_ADMIN_SELECT_RELATIONS = [
+  "site_release_candidate_authority",
+  "site_release_candidate_authorization",
+  "site_publication_revision",
+  "site_effective_access_authority_revision",
+  "site_web_build_intent_issuer_revision",
+  "site_web_build_intent_issuer_head",
+  "site_web_build_intent_envelope",
+  "site_release_producer_trust_revision",
+  "site_release_attestation_envelope",
+  "site_release_evidence_decision",
+] as const;
+
+export const SITE_PUBLICATION_ADMIN_INSERT_RELATIONS = [
+  "site_release_candidate_authority",
+  "site_release_candidate_authorization",
+  "site_publication_revision",
+  "site_web_build_intent_envelope",
+] as const;
+
+export const SITE_PUBLICATION_ADMIN_UPDATE_RELATIONS = [
+  "site_release_candidate_authorization",
+] as const;
+
 export const ADMIN_INSERT_RELATIONS = [
   "command_receipt",
   "outbox_event",
@@ -214,6 +238,7 @@ export const ADMIN_INSERT_RELATIONS = [
   "launch_product_profile_revision",
   "product_catalog_publication_audit",
   "product_catalog_publication_receipt",
+  ...SITE_PUBLICATION_ADMIN_INSERT_RELATIONS,
 ] as const;
 
 export const ADMIN_UPDATE_RELATIONS = [
@@ -240,4 +265,5 @@ export const ADMIN_UPDATE_RELATIONS = [
   "admin_operator_session",
   "admin_step_up_transaction",
   "product_catalog_publication_head",
+  ...SITE_PUBLICATION_ADMIN_UPDATE_RELATIONS,
 ] as const;
