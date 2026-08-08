@@ -118,10 +118,17 @@ model PlatformFoundation {
 }
 
 model RuntimeRoleIdentityAuthority {
-  roleKind   String   @id @map("role_kind")
-  roleName   String   @unique @map("role_name")
-  roleOid    BigInt   @unique @map("role_oid")
-  recordedAt DateTime @default(now()) @map("recorded_at") @db.Timestamptz(6)
+  roleKind           String    @id @map("role_kind")
+  roleName           String    @unique @map("role_name")
+  roleOid            BigInt    @unique @map("role_oid")
+  leaseState         String    @default("active") @map("lease_state")
+  leaseEpoch         BigInt    @default(1) @map("lease_epoch")
+  pendingRoleName    String?   @map("pending_role_name")
+  pendingRoleOid     BigInt?   @map("pending_role_oid")
+  retiringRoleNames  String[]  @default([]) @map("retiring_role_names")
+  retiringRoleOids   BigInt[]  @default([]) @map("retiring_role_oids")
+  drainingStartedAt  DateTime? @map("draining_started_at") @db.Timestamptz(6)
+  recordedAt         DateTime  @default(now()) @map("recorded_at") @db.Timestamptz(6)
 
   @@map("runtime_role_identity_authority")
   @@schema("platform")

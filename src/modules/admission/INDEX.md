@@ -37,9 +37,15 @@ The PostgreSQL lifecycle owner durably freezes the Session binding and execution
 
 Admission database identities are run-scoped `kt_pg_*` leased login roles with `NOINHERIT`; a fixed
 `platform_admission` database role is not provisioned. The bootstrap administrator creates only the
-login, while the migrator grants the current lease its exact database authority, records its name/OID,
-and removes every database, schema, relation, routine, default-ACL and policy authority from the
-superseded lease before rebinding. `platform_admission` remains only the trusted transaction
+login. `src/infrastructure/postgres/admission-role-lease.ts` owns the bounded transition:
+`active(current, epoch)` → `draining(current, pending, retiring name/OID pairs)` →
+`active(pending, epoch + 1)`. Prepare durably records the exact pending and retiring OIDs and revokes
+their database `CONNECT` in the same commit; existing old
+backends and either direction of role membership stop the transition. Final revoke, global/schema
+default-ACL closure, exact grants, post-check, identity switch and tombstone clearing are one transaction,
+so a failure remains draining and can be retried without losing the old principal. Every Admission UoW
+starts with `begin_admission_transaction`, which binds the active role, operation, workload and lease
+epoch before owner SQL. `platform_admission` remains only the trusted transaction
 `app.workload_kind`, not a PostgreSQL principal. Media-access reservations therefore bind the recorded
 role name/OID together with the exact `admission.command`, workload kind, and Site transaction context
 in both RLS `USING` and `WITH CHECK`.

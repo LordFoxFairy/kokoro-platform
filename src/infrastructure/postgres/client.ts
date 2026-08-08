@@ -580,13 +580,19 @@ export function createPlatformDatabaseClient(
       if (!allowed) throw new Error("PLATFORM_INTERNAL_OPERATION_ROLE_FORBIDDEN");
       return prisma.$transaction(
         async (databaseTransaction) => {
-          await databaseTransaction.$queryRawUnsafe(
-            `SELECT set_config('app.operation',$1,true),
-                  set_config('app.workload_kind',$2,true)`,
-            operation,
-            workerAuthority?.workloadKind ??
-              (config.role === "admission" ? "platform_admission" : "platform_authorization"),
-          );
+          if (config.role === "admission") {
+            await databaseTransaction.$queryRawUnsafe(
+              "SELECT platform.begin_admission_transaction($1)",
+              operation,
+            );
+          } else {
+            await databaseTransaction.$queryRawUnsafe(
+              `SELECT set_config('app.operation',$1,true),
+                    set_config('app.workload_kind',$2,true)`,
+              operation,
+              workerAuthority?.workloadKind ?? "platform_authorization",
+            );
+          }
           const lease = issuePlatformTransaction({
             query: (statement, values = []) =>
               databaseTransaction.$queryRawUnsafe(statement, ...values),
@@ -1899,11 +1905,15 @@ const RUNTIME_IDENTITY_SQL = `
            AS "canExecuteAdminAuthorityChange",
          CASE WHEN $2='admission' THEN
            CASE WHEN has_function_privilege(
-             current_user,'platform.admission_role_identity_is_current()','EXECUTE'
-           ) THEN platform.admission_role_identity_is_current() ELSE FALSE END
+             current_user,'platform.admission_role_identity_is_active()','EXECUTE'
+           ) THEN platform.admission_role_identity_is_active() ELSE FALSE END
          ELSE FALSE END AS "admissionRoleIdentityExact",
          CASE WHEN $2='admission' THEN
            has_function_privilege(current_user,
+             'platform.admission_role_identity_is_active()','EXECUTE')
+           AND has_function_privilege(current_user,
+             'platform.begin_admission_transaction(text)','EXECUTE')
+           AND has_function_privilege(current_user,
              'platform.admission_role_identity_is_current()','EXECUTE')
            AND has_function_privilege(current_user,
              'platform.record_admission_verified_terminal_evidence(text,text,text,text,text,text,text,character)','EXECUTE')
@@ -2483,6 +2493,8 @@ const RUNTIME_IDENTITY_SQL = `
                OR ($2 = 'admission' AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.resolve_admission_model_owner(text,text,text)'),
                  to_regprocedure('platform.valid_credit_scope_policy(jsonb)'),
+                 to_regprocedure('platform.admission_role_identity_is_active()'),
+                 to_regprocedure('platform.begin_admission_transaction(text)'),
                  to_regprocedure('platform.admission_role_identity_is_current()'),
                  to_regprocedure('platform.record_admission_verified_terminal_evidence(text,text,text,text,text,text,text,character)'),
                  to_regprocedure('platform.find_execution_root_closure(text,jsonb,text,character)'),

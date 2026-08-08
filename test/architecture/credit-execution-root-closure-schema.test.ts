@@ -6,6 +6,55 @@ const admissionAuthorityMigrationPath =
   "prisma/migrations/20260822_admission_execution_root_role_authority/migration.sql";
 
 describe("Credit execution root closure schema", () => {
+  it("persists one recoverable Admission lease transition and fences every transaction epoch", async () => {
+    const [migration, schema, client, migrator, lease] = await Promise.all([
+      readFile(admissionAuthorityMigrationPath, "utf8"),
+      readFile("prisma/schema.prisma", "utf8"),
+      readFile("src/infrastructure/postgres/client.ts", "utf8"),
+      readFile("src/infrastructure/postgres/migrator.ts", "utf8"),
+      readFile("src/infrastructure/postgres/admission-role-lease.ts", "utf8"),
+    ]);
+
+    for (const column of [
+      "lease_state", "lease_epoch", "pending_role_name", "pending_role_oid",
+      "retiring_role_names", "draining_started_at",
+    ]) {
+      expect(migration).toContain(column);
+      expect(schema).toContain(column.replaceAll(/_([a-z])/gu, (_, letter: string) =>
+        letter.toUpperCase()));
+    }
+    expect(migration).toContain("CHECK (lease_state IN ('active','draining'))");
+    expect(migration).toContain(
+      "CREATE FUNCTION platform.begin_admission_transaction(p_operation TEXT)",
+    );
+    expect(migration).toContain("current_setting('app.admission_lease_epoch',true)");
+    expect(migration).toContain("authority.lease_state='active'");
+    expect(migration).toContain("authority.lease_epoch::TEXT");
+    expect(client).toContain("platform.begin_admission_transaction($1)");
+    const admissionTransaction = client.slice(
+      client.indexOf('if (config.role === "admission") {'),
+      client.indexOf("const lease = issuePlatformTransaction", client.indexOf(
+        'if (config.role === "admission") {',
+      )),
+    );
+    expect(admissionTransaction).toContain("platform.begin_admission_transaction($1)");
+    expect(admissionTransaction.indexOf("platform.begin_admission_transaction($1)"))
+      .toBeLessThan(admissionTransaction.indexOf("set_config('app.operation'"));
+
+    expect(migrator).toContain("prepareAdmissionRoleLease");
+    expect(migrator).toContain("finalizeAdmissionRoleLease");
+    expect(migrator).not.toContain("pg_stat_activity");
+    expect(lease).toContain("admissionRoleTransitionPrepare");
+    expect(lease).toContain("admissionRoleTransitionFinalize");
+    expect(lease).toContain("pg_stat_activity");
+    expect(lease).toContain("pg_auth_members");
+    expect(lease).toContain("PLATFORM_ADMISSION_ROLE_DRAIN_REQUIRED");
+    expect(lease).toContain("PLATFORM_ADMISSION_ROLE_TRANSITION_TARGET_MISMATCH");
+    expect(lease).toContain("PLATFORM_ADMISSION_ROLE_MEMBERSHIP_INVALID");
+    expect(lease).toContain("admissionDefaultAuthorityClosed");
+    expect(lease).toContain("retiring_role_names='{}'::TEXT[]");
+  });
+
   it("binds Admission closure authority to the configured database role identity", async () => {
     const migration = await readFile(admissionAuthorityMigrationPath, "utf8");
     expect(migration).toContain("runtime_role_identity_authority_role_kind_check");

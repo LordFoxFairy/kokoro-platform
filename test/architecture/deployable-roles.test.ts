@@ -258,6 +258,8 @@ describe("Platform migrator", () => {
         events.push("connect");
       },
       async query(sql, values) {
+        const admissionLease = admissionLeaseFixture(sql, values);
+        if (admissionLease !== undefined) return admissionLease;
         if (sql.includes("memoryRoleIdentityTablePreflight")) {
           return { rows: [{ identityTableExists: false, migrationLedgerExists: false,
             authorityBaselineExists: false }] };
@@ -315,8 +317,9 @@ describe("Platform migrator", () => {
           events.push("discover-retired-admission-roles");
           retirementDiscoverySql = sql;
           return { rows: [
-            { roleName: "platform_admission" },
-            { roleName: "kt_pg_platformadmission_retired" },
+            { roleName: "platform_admission", roleOid: fixtureRoleOid("platform_admission") },
+            { roleName: "kt_pg_platformadmission_retired",
+              roleOid: fixtureRoleOid("kt_pg_platformadmission_retired") },
           ] };
         }
         if (sql.includes("retiredAdmissionRoleAuthorityClosed")) {
@@ -461,7 +464,6 @@ describe("Platform migrator", () => {
     expect(grants).toContain(
       "GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.resolve_admission_model_owner(TEXT, TEXT, TEXT) TO \"kt_pg_platformadmission_fixture\"",
     );
-    expect(events).toContain(`bind-admission-role:${leasedAdmissionRole}`);
     expect(events).toContain("verify-admission-role-identity");
     expect(events).toContain("discover-retired-admission-roles");
     expect(events).toContain("verify-retired-admission-roles");
@@ -482,7 +484,9 @@ describe("Platform migrator", () => {
       `GRANT CONNECT ON DATABASE "kokoro_platform" TO "${leasedAdmissionRole}"`,
     );
     expect(grants).toContain(
-      "GRANT EXECUTE ON FUNCTION platform.admission_role_identity_is_current(), " +
+      "GRANT EXECUTE ON FUNCTION platform.admission_role_identity_is_active(), " +
+        "platform.begin_admission_transaction(TEXT), " +
+        "platform.admission_role_identity_is_current(), " +
         "platform.record_admission_verified_terminal_evidence(TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,CHAR), " +
         "platform.find_execution_root_closure(TEXT,JSONB,TEXT,CHAR), " +
         "platform.lock_execution_root_closure(TEXT,JSONB,TEXT,UUID,UUID,UUID,UUID,UUID,TEXT,BIGINT,BIGINT,BIGINT,NUMERIC,TEXT), " +
@@ -656,6 +660,8 @@ describe("Platform migrator", () => {
     const lockClient: MigrationLockClient = {
       async connect() {},
       async query(sql) {
+        const admissionLease = admissionLeaseFixture(sql);
+        if (admissionLease !== undefined) return admissionLease;
         if (sql.includes("assetDataPlaneRolePreflight")) {
           return { rows: [safeRole("platform_asset_data_plane")] };
         }
@@ -695,6 +701,8 @@ describe("Platform migrator", () => {
     const lockClient: MigrationLockClient = {
       async connect() {},
       async query(sql, values) {
+        const admissionLease = admissionLeaseFixture(sql, values);
+        if (admissionLease !== undefined) return admissionLease;
         if (sql.includes("memoryRoleIdentityTablePreflight")) {
           return { rows: [{ identityTableExists: false, migrationLedgerExists: false,
             authorityBaselineExists: false }] };
@@ -738,6 +746,8 @@ describe("Platform migrator", () => {
       const lockClient: MigrationLockClient = {
         async connect() {},
         async query(sql, values) {
+          const admissionLease = admissionLeaseFixture(sql, values);
+          if (admissionLease !== undefined) return admissionLease;
           if (sql.includes("memoryRoleIdentityTablePreflight")) {
             return { rows: [{ identityTableExists: false, migrationLedgerExists,
               authorityBaselineExists }] };
@@ -776,6 +786,8 @@ describe("Platform migrator", () => {
     const lockClient: MigrationLockClient = {
       async connect() {},
       async query(sql, values) {
+        const admissionLease = admissionLeaseFixture(sql, values);
+        if (admissionLease !== undefined) return admissionLease;
         if (sql.includes("memoryRoleIdentityTablePreflight")) {
           return { rows: [{ identityTableExists: false, migrationLedgerExists: false,
             authorityBaselineExists: false }] };
@@ -860,6 +872,8 @@ describe("Platform migrator", () => {
       const lockClient: MigrationLockClient = {
         async connect() {},
         async query(sql, values) {
+          const admissionLease = admissionLeaseFixture(sql, values);
+          if (admissionLease !== undefined) return admissionLease;
           if (sql.includes("memoryRoleIdentityTablePreflight")) {
             return { rows: [{ identityTableExists: false, migrationLedgerExists: false,
               authorityBaselineExists: false }] };
@@ -1130,6 +1144,57 @@ describe("independent deployable roles", () => {
     expect(entrypoint).not.toContain('"platform-admin-authority-bootstrap"');
   });
 });
+
+function admissionLeaseFixture(
+  sql: string,
+  values?: readonly unknown[],
+): { readonly rows: readonly Record<string, unknown>[] } | undefined {
+  if (sql.includes("admissionRoleTargetIdentity")) {
+    const roleName = String(values?.[0]);
+    return { rows: [{ roleName, roleOid: fixtureRoleOid(roleName) }] };
+  }
+  if (sql.includes("admissionRoleTransitionAuthority")) return { rows: [] };
+  if (sql.includes("admissionRoleMembershipAuthority")) {
+    const identities = JSON.parse(String(values?.[0])) as Array<{
+      roleName: string; roleOid: string; target: boolean;
+    }>;
+    return { rows: identities.map((identity) => ({
+      ...identity,
+      actualRoleOid: identity.roleOid,
+      canLogin: true,
+      isSuperuser: false,
+      canCreateDatabase: false,
+      canCreateRole: false,
+      canReplicate: false,
+      canBypassRls: false,
+      inheritsPrivileges: false,
+      hasInboundMembership: false,
+      hasOutboundMembership: false,
+      ownsAnyDatabase: false,
+      publicCanConnect: false,
+    })) };
+  }
+  if (sql.includes("admissionRoleBackendDrain")) return { rows: [] };
+  if (sql.includes("admissionRetiringRoleIdentity")) {
+    const roleNames = values?.[0] as readonly string[] | undefined;
+    return { rows: (roleNames ?? []).map((roleName) => ({
+      roleName, roleOid: fixtureRoleOid(roleName),
+    })) };
+  }
+  if (sql.includes("admissionRoleTransitionFinalize")) {
+    return { rows: [{ roleName: String(values?.[0]) }] };
+  }
+  if (sql.includes("admissionDefaultAuthorityClosed")) {
+    return { rows: [{ admissionDefaultAuthorityClosed: true }] };
+  }
+  return undefined;
+}
+
+function fixtureRoleOid(roleName: string): string {
+  let value = 10_000n;
+  for (const point of roleName) value = value * 33n + BigInt(point.codePointAt(0) ?? 0);
+  return (value % 9_000_000_000n + 1n).toString();
+}
 
 function safeRole(roleName: string): Record<string, unknown> {
   return {

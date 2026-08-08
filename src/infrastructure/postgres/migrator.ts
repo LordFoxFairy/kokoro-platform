@@ -6,6 +6,10 @@ import {
   isPlatformAdmissionLeasedRole,
   loadPlatformDatabaseConfig,
 } from "./client.js";
+import {
+  finalizeAdmissionRoleLease,
+  prepareAdmissionRoleLease,
+} from "./admission-role-lease.js";
 import { OUTBOX_OWNER_POLICY_COUNT } from "./outbox-policy-authority.js";
 import {
   canonicalRelationAuthority,
@@ -129,6 +133,8 @@ const MEMORY_PUBLIC_ROUTINES = Object.freeze([
 ] as const);
 
 const ADMISSION_EXECUTION_ROOT_ROUTINES = Object.freeze([
+  "platform.admission_role_identity_is_active()",
+  "platform.begin_admission_transaction(TEXT)",
   "platform.admission_role_identity_is_current()",
   "platform.record_admission_verified_terminal_evidence(TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,TEXT,CHAR)",
   "platform.find_execution_root_closure(TEXT,JSONB,TEXT,CHAR)",
@@ -287,73 +293,75 @@ export async function runPlatformMigrations(
     );
     if (exitCode !== 0) throw new Error(`PLATFORM_MIGRATION_FAILED:${exitCode}`);
 
-    await rebindPlatformMigratorPolicies(lockClient, config.expectedDatabaseUser);
-    await closePublicRoutineAuthority(lockClient, config.expectedDatabaseUser);
-    await maintainSplitWorkerRoleIdentityAuthority(lockClient, workerRoles);
-    const retiredAdmissionRoles = await retireAdmissionRoleAuthority(lockClient, {
-      currentRole: admissionRole,
+    const admissionLeaseInput = Object.freeze({
+      targetRole: admissionRole,
       migratorRole: config.expectedDatabaseUser,
       databaseName: config.expectedDatabaseName,
     });
-    await maintainAdmissionRoleIdentityAuthority(lockClient, admissionRole);
-    await configureAdmissionDatabaseLease(lockClient, {
-      admissionRole,
-      databaseName: config.expectedDatabaseName,
+    await prepareAdmissionRoleLease(lockClient, admissionLeaseInput);
+
+    await finalizeAdmissionRoleLease(lockClient, admissionLeaseInput, {
+      configureAuthority: async () => {
+        await rebindPlatformMigratorPolicies(lockClient, config.expectedDatabaseUser);
+        await closePublicRoutineAuthority(lockClient, config.expectedDatabaseUser);
+        await maintainSplitWorkerRoleIdentityAuthority(lockClient, workerRoles);
+        await configureSplitWorkerRlsAuthority(lockClient, workerRoles);
+        await grantFoundationPrivileges(
+          lockClient,
+          apiRole,
+          admissionRole,
+          authorizationRole,
+          adminRole,
+        );
+        await grantModelGatewayPrivileges(lockClient, modelGatewayRole, admissionRole);
+        await grantAssetDataPlanePrivileges(lockClient, assetDataPlaneRole);
+        await grantArtifactDataPlanePrivileges(lockClient, artifactDataPlaneRole);
+        await grantSplitWorkerPrivileges(lockClient, workerRoles);
+        await configureMemoryRoleAuthority(
+          lockClient,
+          memoryRoles,
+          config.expectedDatabaseUser,
+          config.expectedDatabaseName,
+        );
+        await configureOutboxOwnerPolicies(lockClient, {
+          migrator: config.expectedDatabaseUser,
+          api: apiRole,
+          admission: admissionRole,
+          commerceWorker: workerRoles.commerceWorker,
+          siteWorker: workerRoles.siteWorker,
+          assetWorker: workerRoles.assetWorker,
+          adminWorker: workerRoles.adminWorker,
+          identityWorker: workerRoles.identityWorker,
+          admin: adminRole,
+        });
+      },
+      verifyAuthority: async () => {
+        await assertPostMigrationAuthority(
+          lockClient,
+          config.expectedDatabaseUser,
+          apiRole,
+          admissionRole,
+          authorizationRole,
+          adminRole,
+        );
+        await assertModelGatewayAuthority(lockClient, modelGatewayRole);
+        await assertAssetDataPlaneAuthority(
+          lockClient,
+          assetDataPlaneRole,
+          config.expectedDatabaseUser,
+        );
+        await assertArtifactDataPlaneAuthority(
+          lockClient,
+          artifactDataPlaneRole,
+          config.expectedDatabaseUser,
+        );
+        await assertSplitWorkerAuthority(lockClient, workerRoles);
+        await assertSplitWorkerRoleIdentityAuthority(lockClient, workerRoles);
+        await assertAdmissionRoleIdentityAuthority(lockClient, admissionRole);
+        await assertMemoryRoleAuthority(lockClient, memoryRoles, config.expectedDatabaseUser);
+        await assertPublicRoutineAuthority(lockClient, config.expectedDatabaseUser);
+      },
     });
-    await configureSplitWorkerRlsAuthority(lockClient, workerRoles);
-    await grantFoundationPrivileges(
-      lockClient,
-      apiRole,
-      admissionRole,
-      authorizationRole,
-      adminRole,
-    );
-    await grantModelGatewayPrivileges(lockClient, modelGatewayRole, admissionRole);
-    await grantAssetDataPlanePrivileges(lockClient, assetDataPlaneRole);
-    await grantArtifactDataPlanePrivileges(lockClient, artifactDataPlaneRole);
-    await grantSplitWorkerPrivileges(lockClient, workerRoles);
-    await configureMemoryRoleAuthority(
-      lockClient,
-      memoryRoles,
-      config.expectedDatabaseUser,
-      config.expectedDatabaseName,
-    );
-    await configureOutboxOwnerPolicies(lockClient, {
-      migrator: config.expectedDatabaseUser,
-      api: apiRole,
-      admission: admissionRole,
-      commerceWorker: workerRoles.commerceWorker,
-      siteWorker: workerRoles.siteWorker,
-      assetWorker: workerRoles.assetWorker,
-      adminWorker: workerRoles.adminWorker,
-      identityWorker: workerRoles.identityWorker,
-      admin: adminRole,
-    });
-    await assertPostMigrationAuthority(
-      lockClient,
-      config.expectedDatabaseUser,
-      apiRole,
-      admissionRole,
-      authorizationRole,
-      adminRole,
-    );
-    await assertModelGatewayAuthority(lockClient, modelGatewayRole);
-    await assertAssetDataPlaneAuthority(
-      lockClient,
-      assetDataPlaneRole,
-      config.expectedDatabaseUser,
-    );
-    await assertArtifactDataPlaneAuthority(
-      lockClient,
-      artifactDataPlaneRole,
-      config.expectedDatabaseUser,
-    );
-    await assertSplitWorkerAuthority(lockClient, workerRoles);
-    await assertSplitWorkerRoleIdentityAuthority(lockClient, workerRoles);
-    await assertAdmissionRoleIdentityAuthority(lockClient, admissionRole);
-    await assertRetiredAdmissionRoleAuthority(lockClient, retiredAdmissionRoles);
-    await assertMemoryRoleAuthority(lockClient, memoryRoles, config.expectedDatabaseUser);
-    await assertPublicRoutineAuthority(lockClient, config.expectedDatabaseUser);
   } finally {
     try {
       if (locked) {
@@ -517,162 +525,6 @@ async function maintainSplitWorkerRoleIdentityAuthority(
   );
 }
 
-async function maintainAdmissionRoleIdentityAuthority(
-  client: MigrationLockClient,
-  admissionRole: string,
-): Promise<void> {
-  await client.query(
-    `INSERT INTO platform.runtime_role_identity_authority
-       (role_kind,role_name,role_oid,recorded_at)
-     SELECT 'admission',$1,runtime_role.oid::bigint,now()
-     FROM pg_roles runtime_role
-     WHERE runtime_role.rolname::text=$1
-     ON CONFLICT (role_kind) DO UPDATE SET
-       role_name=EXCLUDED.role_name,role_oid=EXCLUDED.role_oid,recorded_at=EXCLUDED.recorded_at`,
-    [admissionRole],
-  );
-}
-
-async function retireAdmissionRoleAuthority(
-  client: MigrationLockClient,
-  input: Readonly<{
-    currentRole: string;
-    migratorRole: string;
-    databaseName: string;
-  }>,
-): Promise<readonly string[]> {
-  const discovered = await client.query(
-    `WITH admission_identity_routine AS (
-       SELECT to_regprocedure('platform.admission_role_identity_is_current()') AS oid
-     ), routine_grantee AS (
-       SELECT DISTINCT acl.grantee
-       FROM admission_identity_routine identity_routine
-       JOIN pg_proc routine ON routine.oid=identity_routine.oid
-       CROSS JOIN LATERAL aclexplode(
-         COALESCE(routine.proacl,acldefault('f',routine.proowner))
-       ) acl
-       WHERE acl.grantee<>0 AND acl.grantee<>routine.proowner
-         AND acl.privilege_type='EXECUTE'
-     ), prior_identity AS (
-       SELECT authority.role_name
-       FROM platform.runtime_role_identity_authority authority
-       WHERE authority.role_kind='admission'
-     )
-     SELECT DISTINCT runtime_role.rolname AS "roleName"
-     FROM pg_roles runtime_role
-     WHERE runtime_role.rolname<>$1 AND (
-       runtime_role.rolname='platform_admission'
-       OR runtime_role.oid IN (SELECT grantee FROM routine_grantee)
-       OR runtime_role.rolname IN (SELECT role_name FROM prior_identity)
-     )
-     ORDER BY runtime_role.rolname
-     /* retiredAdmissionRoleDiscovery */`,
-    [input.currentRole],
-  );
-  const retiredRoles = (discovered.rows ?? []).map((row) => {
-    if (typeof row.roleName !== "string") {
-      throw new Error("PLATFORM_RETIRED_ADMISSION_ROLE_DISCOVERY_INVALID");
-    }
-    const role = requireRole(row.roleName, "PLATFORM_RETIRED_ADMISSION_ROLE");
-    if (role === input.currentRole) {
-      throw new Error("PLATFORM_RETIRED_ADMISSION_ROLE_DISCOVERY_INVALID");
-    }
-    return role;
-  });
-  if (new Set(retiredRoles).size !== retiredRoles.length) {
-    throw new Error("PLATFORM_RETIRED_ADMISSION_ROLE_DISCOVERY_INVALID");
-  }
-
-  for (const roleName of retiredRoles) {
-    const role = quoteRoleIdentifier(roleName);
-    await client.query(
-      `REVOKE CONNECT,CREATE,TEMPORARY ON DATABASE ` +
-        `${quoteRoleIdentifier(input.databaseName)} FROM ${role}`,
-    );
-    await client.query(`REVOKE CREATE,USAGE ON SCHEMA public FROM ${role}`);
-    await client.query(`REVOKE ALL ON SCHEMA platform FROM ${role}`);
-    await client.query(`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA platform FROM ${role}`);
-    await client.query(`REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA platform FROM ${role}`);
-    await client.query(`REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA platform FROM ${role}`);
-    for (const scope of ["", " IN SCHEMA platform"] as const) {
-      for (const objectKind of ["TABLES", "SEQUENCES", "FUNCTIONS"] as const) {
-        await client.query(
-          `ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteRoleIdentifier(input.migratorRole)}` +
-            `${scope} REVOKE ALL ON ${objectKind} FROM ${role}`,
-        );
-      }
-    }
-  }
-  return Object.freeze(retiredRoles);
-}
-
-async function configureAdmissionDatabaseLease(
-  client: MigrationLockClient,
-  input: Readonly<{ admissionRole: string; databaseName: string }>,
-): Promise<void> {
-  const role = quoteRoleIdentifier(input.admissionRole);
-  const database = quoteRoleIdentifier(input.databaseName);
-  await client.query(`GRANT CONNECT ON DATABASE ${database} TO ${role}`);
-  await client.query(`REVOKE CREATE,TEMPORARY ON DATABASE ${database} FROM ${role}`);
-  await client.query(`REVOKE CREATE,USAGE ON SCHEMA public FROM ${role}`);
-}
-
-async function assertRetiredAdmissionRoleAuthority(
-  client: MigrationLockClient,
-  retiredRoles: readonly string[],
-): Promise<void> {
-  if (retiredRoles.length === 0) return;
-  const result = await client.query(
-    `WITH expected AS (
-       SELECT value::text AS role_name FROM jsonb_array_elements_text($1::jsonb) value
-     ), retired AS (
-       SELECT runtime_role.oid,runtime_role.rolname
-       FROM expected JOIN pg_roles runtime_role ON runtime_role.rolname=expected.role_name
-     )
-     SELECT (
-       (SELECT count(*) FROM retired)=(SELECT count(*) FROM expected)
-       AND NOT EXISTS (
-         SELECT 1 FROM retired WHERE
-           has_database_privilege(rolname,current_database(),'CONNECT,CREATE,TEMPORARY')
-           OR has_schema_privilege(rolname,'platform','USAGE,CREATE')
-           OR EXISTS (
-             SELECT 1 FROM pg_class relation
-             CROSS JOIN LATERAL aclexplode(relation.relacl) acl
-             WHERE relation.relnamespace=to_regnamespace('platform') AND acl.grantee=retired.oid
-           )
-           OR EXISTS (
-             SELECT 1 FROM pg_attribute attribute
-             CROSS JOIN LATERAL aclexplode(attribute.attacl) acl
-             WHERE attribute.attrelid IN (
-               SELECT oid FROM pg_class WHERE relnamespace=to_regnamespace('platform')
-             ) AND acl.grantee=retired.oid
-           )
-           OR EXISTS (
-             SELECT 1 FROM pg_proc routine
-             CROSS JOIN LATERAL aclexplode(routine.proacl) acl
-             WHERE routine.pronamespace=to_regnamespace('platform') AND acl.grantee=retired.oid
-           )
-           OR EXISTS (
-             SELECT 1 FROM pg_default_acl defaults
-             CROSS JOIN LATERAL aclexplode(defaults.defaclacl) acl
-             WHERE acl.grantee=retired.oid
-           )
-           OR EXISTS (
-             SELECT 1 FROM pg_policy policy WHERE retired.oid=ANY(policy.polroles)
-           )
-       )
-     ) AS "retiredAdmissionRoleAuthorityClosed"
-     /* retiredAdmissionRoleAuthorityClosed */`,
-    [JSON.stringify(retiredRoles)],
-  );
-  if (
-    result.rows?.length !== 1 ||
-    result.rows[0]?.retiredAdmissionRoleAuthorityClosed !== true
-  ) {
-    throw new Error("PLATFORM_RETIRED_ADMISSION_ROLE_AUTHORITY_INVALID");
-  }
-}
-
 async function assertSplitWorkerRoleIdentityAuthority(
   client: MigrationLockClient,
   roles: SplitWorkerRoles,
@@ -716,6 +568,11 @@ async function assertAdmissionRoleIdentityAuthority(
         AND runtime_role.oid::bigint=authority.role_oid
        WHERE authority.role_kind='admission'
          AND authority.role_name=$1
+         AND authority.lease_state='active'
+         AND authority.pending_role_name IS NULL
+         AND authority.pending_role_oid IS NULL
+         AND authority.retiring_role_names='{}'::text[]
+         AND authority.retiring_role_oids='{}'::bigint[]
      ) AS "admissionRoleIdentityExact"
      /* admissionRoleIdentityAuthority */`,
     [admissionRole],
@@ -3379,9 +3236,18 @@ const POST_MIGRATION_AUTHORITY_SQL = `
             WHERE authority.role_kind='admission'
               AND authority.role_name=runtime_role.rolname
               AND authority.role_oid=runtime_role.oid::bigint
+              AND authority.lease_state='active'
+              AND authority.pending_role_name IS NULL
+              AND authority.pending_role_oid IS NULL
+              AND authority.retiring_role_names='{}'::text[]
+              AND authority.retiring_role_oids='{}'::bigint[]
           ) ELSE FALSE END AS "admissionRoleIdentityExact"
          ,CASE WHEN runtime_role.rolname=$5 THEN
             has_function_privilege(runtime_role.rolname,
+              'platform.admission_role_identity_is_active()','EXECUTE')
+            AND has_function_privilege(runtime_role.rolname,
+              'platform.begin_admission_transaction(text)','EXECUTE')
+            AND has_function_privilege(runtime_role.rolname,
               'platform.admission_role_identity_is_current()','EXECUTE')
             AND has_function_privilege(runtime_role.rolname,
               'platform.record_admission_verified_terminal_evidence(text,text,text,text,text,text,text,character)','EXECUTE')
@@ -3953,6 +3819,8 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                OR (runtime_role.rolname = $5 AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.resolve_admission_model_owner(text,text,text)'),
                  to_regprocedure('platform.valid_credit_scope_policy(jsonb)'),
+                 to_regprocedure('platform.admission_role_identity_is_active()'),
+                 to_regprocedure('platform.begin_admission_transaction(text)'),
                  to_regprocedure('platform.admission_role_identity_is_current()'),
                  to_regprocedure('platform.record_admission_verified_terminal_evidence(text,text,text,text,text,text,text,character)'),
                  to_regprocedure('platform.find_execution_root_closure(text,jsonb,text,character)'),

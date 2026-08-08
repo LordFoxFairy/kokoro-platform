@@ -16,6 +16,7 @@ import { creditJournalEntriesDigest } from
   "../../src/modules/credit/infrastructure/postgres/credit-journal-digest.js";
 import {
   issuePlatformTransaction,
+  resolvePlatformTransaction,
   revokePlatformTransaction,
   type PlatformTransaction,
   type PlatformSqlTransaction,
@@ -1276,6 +1277,8 @@ describe("Platform PostgreSQL foundation", () => {
     );
     await Promise.all([admission.connect(), bootstrap.connect()]);
     const routines = [
+      "platform.admission_role_identity_is_active()",
+      "platform.begin_admission_transaction(text)",
       "platform.admission_role_identity_is_current()",
       "platform.record_admission_verified_terminal_evidence(text,text,text,text,text,text,text,character)",
       "platform.find_execution_root_closure(text,jsonb,text,character)",
@@ -1286,7 +1289,26 @@ describe("Platform PostgreSQL foundation", () => {
     try {
       await productionAdmission.connect();
       await productionAdmission.checkHealth();
+      const transactionFence = await productionAdmission.internalTransaction(
+        "admission.command",
+        (transaction) => resolvePlatformTransaction(transaction).query<{
+          operation: string; workload: string; lease_epoch: string;
+        }>(
+          `SELECT current_setting('app.operation',true) AS operation,
+                  current_setting('app.workload_kind',true) AS workload,
+                  current_setting('app.admission_lease_epoch',true) AS lease_epoch`,
+        ),
+      );
+      expect(transactionFence).toEqual([{
+        operation: "admission.command",
+        workload: "platform_admission",
+        lease_epoch: expect.stringMatching(/^[1-9][0-9]*$/u),
+      }]);
 
+      await admission.query("BEGIN");
+      await admission.query(
+        "SELECT platform.begin_admission_transaction('admission.command')",
+      );
       const identity = await admission.query<{
         current_user: string;
         identity_exact: boolean;
@@ -1304,6 +1326,7 @@ describe("Platform PostgreSQL foundation", () => {
         identity_exact: true,
         all_routines: true,
       }]);
+      await admission.query("ROLLBACK");
 
       const role = await bootstrap.query<{
         inherits: boolean;
@@ -1366,6 +1389,387 @@ describe("Platform PostgreSQL foundation", () => {
     }
   });
 
+  it("rejects null, missing, and misaligned Admission transition tombstones", async () => {
+    const bootstrap = new Client({ connectionString: bootstrapDatabaseUrl });
+    await bootstrap.connect();
+    await bootstrap.query("BEGIN");
+    try {
+      const mutations = [
+        `UPDATE platform.runtime_role_identity_authority
+         SET lease_state='draining',pending_role_name=NULL,pending_role_oid=NULL,
+             retiring_role_names=ARRAY[role_name],retiring_role_oids=ARRAY[role_oid],
+             draining_started_at=clock_timestamp()
+         WHERE role_kind='admission'`,
+        `UPDATE platform.runtime_role_identity_authority
+         SET lease_state='draining',pending_role_name='kt_pg_constraint_target',
+             pending_role_oid=9223372036854775806,
+             retiring_role_names=ARRAY['missing_admission_role'],
+             retiring_role_oids=ARRAY[role_oid],draining_started_at=clock_timestamp()
+         WHERE role_kind='admission'`,
+        `UPDATE platform.runtime_role_identity_authority
+         SET lease_state='draining',pending_role_name='kt_pg_constraint_target',
+             pending_role_oid=9223372036854775806,
+             retiring_role_names=ARRAY[role_name],retiring_role_oids=ARRAY[role_oid+1],
+             draining_started_at=clock_timestamp()
+         WHERE role_kind='admission'`,
+      ] as const;
+      for (const [index, mutation] of mutations.entries()) {
+        await bootstrap.query(`SAVEPOINT admission_constraint_${index}`);
+        await expect(bootstrap.query(mutation)).rejects.toMatchObject({ code: "23514" });
+        await bootstrap.query(`ROLLBACK TO SAVEPOINT admission_constraint_${index}`);
+      }
+    } finally {
+      await bootstrap.query("ROLLBACK");
+      await bootstrap.end();
+    }
+  });
+
+  it("keeps Admission lease draining recoverable across membership, backend, and finalize failures", async () => {
+    const suffix = randomUUID().replaceAll("-", "").slice(0, 12);
+    const retiredRole = `kt_pg_admission_draining_${suffix}`;
+    const memberRole = `admission_member_${suffix}`;
+    const alternateRole = `kt_pg_admission_target_${suffix}`;
+    const password = `draining-${suffix}`;
+    const bootstrap = new Client({ connectionString: bootstrapDatabaseUrl });
+    const retiredUrl = new URL(bootstrapDatabaseUrl);
+    retiredUrl.username = retiredRole;
+    retiredUrl.password = password;
+    const retiredBackend = new Client({ connectionString: retiredUrl.toString() });
+    let retiredBackendConnected = false;
+    await bootstrap.connect();
+    try {
+      for (const roleName of [retiredRole, memberRole, alternateRole]) {
+        await createLoginOnlyTestRole(bootstrap, roleName, password);
+      }
+      const retiredIdentifier = quoteIdentifier(retiredRole);
+      await bootstrap.query(
+        `GRANT CONNECT ON DATABASE ${quoteIdentifier(databaseName)} TO ${retiredIdentifier}`,
+      );
+      await bootstrap.query(`GRANT USAGE ON SCHEMA platform TO ${retiredIdentifier}`);
+      await bootstrap.query(
+        `GRANT INSERT ON TABLE platform.admission_command TO ${retiredIdentifier}`,
+      );
+      await bootstrap.query(
+        `GRANT EXECUTE ON FUNCTION platform.admission_role_identity_is_current(), ` +
+          `platform.begin_admission_transaction(TEXT) TO ${retiredIdentifier}`,
+      );
+      for (const defaultRole of [retiredRole, admissionUser]) {
+        await bootstrap.query(
+          `ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteIdentifier(migratorUser)} ` +
+            `GRANT INSERT ON TABLES TO ${quoteIdentifier(defaultRole)}`,
+        );
+        await bootstrap.query(
+          `ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteIdentifier(migratorUser)} ` +
+            `IN SCHEMA platform GRANT INSERT ON TABLES TO ${quoteIdentifier(defaultRole)}`,
+        );
+      }
+      await bootstrap.query(
+        `UPDATE platform.runtime_role_identity_authority
+         SET role_name=$1::name,
+             role_oid=(SELECT oid::bigint FROM pg_roles WHERE rolname=$1::name),
+             lease_state='active',lease_epoch=20,pending_role_name=NULL,pending_role_oid=NULL,
+             retiring_role_names='{}'::TEXT[],retiring_role_oids='{}'::BIGINT[],
+             draining_started_at=NULL,recorded_at=now()
+         WHERE role_kind='admission'`,
+        [retiredRole],
+      );
+
+      await bootstrap.query(
+        `GRANT ${quoteIdentifier(memberRole)} TO ${retiredIdentifier}`,
+      );
+      await retiredBackend.connect();
+      retiredBackendConnected = true;
+      await expect(retiredBackend.query(`SET ROLE ${quoteIdentifier(memberRole)}`))
+        .resolves.toMatchObject({ command: "SET" });
+      await retiredBackend.query("RESET ROLE");
+      await expect(runPlatformMigrations({
+        environment: platformMigrationEnvironment(),
+        execute: async () => 0,
+      })).rejects.toThrow("PLATFORM_ADMISSION_ROLE_MEMBERSHIP_INVALID");
+      await expect(bootstrap.query(
+        `SELECT lease_state,pending_role_name,retiring_role_names
+         FROM platform.runtime_role_identity_authority WHERE role_kind='admission'`,
+      )).resolves.toMatchObject({ rows: [{
+        lease_state: "active", pending_role_name: null, retiring_role_names: [],
+      }] });
+      await bootstrap.query(
+        `REVOKE ${quoteIdentifier(memberRole)} FROM ${retiredIdentifier}`,
+      );
+
+      await bootstrap.query(
+        `GRANT ${retiredIdentifier} TO ${quoteIdentifier(memberRole)}`,
+      );
+      await expect(runPlatformMigrations({
+        environment: platformMigrationEnvironment(),
+        execute: async () => 0,
+      })).rejects.toThrow("PLATFORM_ADMISSION_ROLE_MEMBERSHIP_INVALID");
+      await bootstrap.query(
+        `REVOKE ${retiredIdentifier} FROM ${quoteIdentifier(memberRole)}`,
+      );
+
+      const siteId = `lease-site-${suffix}`;
+      const commandId = `lease-command-${suffix}`;
+      const callerIdentity = `lease-caller-${suffix}`;
+      await retiredBackend.query("BEGIN");
+      await retiredBackend.query(
+        "SELECT platform.begin_admission_transaction('admission.command')",
+      );
+      await retiredBackend.query(
+        `SELECT set_config('app.site_id',$1,true),
+                set_config('app.caller_identity',$2,true)`,
+        [siteId, callerIdentity],
+      );
+      await retiredBackend.query(
+        `INSERT INTO platform.admission_command
+           (site_id,operation,command_id,environment,region,caller_identity,idempotency_key,
+            request_digest,lease_token,lease_expires_at)
+         VALUES ($1,'prepare_run',$2,'staging','us-east-1',$3,$4,repeat('a',64),
+                 $5::uuid,clock_timestamp()+INTERVAL '1 minute')`,
+        [siteId, commandId, callerIdentity, `lease-idempotency-${suffix}`, randomUUID()],
+      );
+      const backendPid = (await retiredBackend.query<{ pid: number }>(
+        "SELECT pg_backend_pid() AS pid",
+      )).rows[0]?.pid;
+      expect(backendPid).toBeTypeOf("number");
+
+      await expect(runPlatformMigrations({
+        environment: platformMigrationEnvironment(),
+        execute: async () => 0,
+      })).rejects.toThrow("PLATFORM_ADMISSION_ROLE_DRAIN_REQUIRED");
+      const draining = await bootstrap.query<{
+        role_name: string;
+        lease_state: string;
+        lease_epoch: string;
+        pending_role_name: string | null;
+        pending_role_oid: string | null;
+        retiring_role_names: string[];
+        retiring_role_oids: string[];
+      }>(
+        `SELECT role_name,lease_state,lease_epoch::text,pending_role_name,pending_role_oid::text,
+                retiring_role_names,retiring_role_oids::text[]
+         FROM platform.runtime_role_identity_authority WHERE role_kind='admission'`,
+      );
+      expect(draining.rows).toHaveLength(1);
+      expect(draining.rows[0]).toMatchObject({
+        role_name: retiredRole,
+        lease_state: "draining",
+        lease_epoch: "20",
+        pending_role_name: admissionUser,
+      });
+      expect(draining.rows[0]?.retiring_role_names).toContain(retiredRole);
+      expect(draining.rows[0]?.retiring_role_oids).toHaveLength(
+        draining.rows[0]?.retiring_role_names.length ?? 0,
+      );
+      const deniedAfterDrain = new Client({ connectionString: retiredUrl.toString() });
+      await expect(deniedAfterDrain.connect()).rejects.toThrow();
+      await deniedAfterDrain.end().catch(() => undefined);
+
+      await expect(runPlatformMigrations({
+        environment: {
+          ...platformMigrationEnvironment(),
+          PLATFORM_DATABASE_ADMISSION_ROLE: alternateRole,
+        },
+        execute: async () => 0,
+      })).rejects.toThrow("PLATFORM_ADMISSION_ROLE_TRANSITION_TARGET_MISMATCH");
+
+      await expect(bootstrap.query("SELECT pg_terminate_backend($1) AS terminated", [backendPid]))
+        .resolves.toMatchObject({ rows: [{ terminated: true }] });
+      await expect(retiredBackend.query("COMMIT")).rejects.toThrow();
+      await retiredBackend.end().catch(() => undefined);
+      retiredBackendConnected = false;
+      await expect(bootstrap.query(
+        "SELECT 1 FROM platform.admission_command WHERE site_id=$1 AND command_id=$2",
+        [siteId, commandId],
+      )).resolves.toMatchObject({ rowCount: 0 });
+
+      let injectedFailure = false;
+      const failingClient = new Client({ connectionString: migratorDatabaseUrl });
+      await expect(runPlatformMigrations({
+        environment: platformMigrationEnvironment(),
+        createLockClient: () => ({
+          connect: () => failingClient.connect(),
+          query: async (sql, values) => {
+            if (!injectedFailure &&
+                sql === `GRANT CONNECT ON DATABASE ${quoteIdentifier(databaseName)} ` +
+                  `TO ${quoteIdentifier(admissionUser)}`) {
+              injectedFailure = true;
+              throw new Error("ADMISSION_TRANSITION_INJECTED_FAILURE");
+            }
+            return failingClient.query(sql, values as unknown[]);
+          },
+          end: () => failingClient.end(),
+        }),
+        execute: async () => 0,
+      })).rejects.toThrow("ADMISSION_TRANSITION_INJECTED_FAILURE");
+      expect(injectedFailure).toBe(true);
+      await expect(bootstrap.query(
+        `SELECT role_name,lease_state,pending_role_name,retiring_role_names
+         FROM platform.runtime_role_identity_authority WHERE role_kind='admission'`,
+      )).resolves.toMatchObject({ rows: [{
+        role_name: retiredRole,
+        lease_state: "draining",
+        pending_role_name: admissionUser,
+        retiring_role_names: expect.arrayContaining([retiredRole]),
+      }] });
+
+      await runPlatformMigrations({
+        environment: platformMigrationEnvironment(),
+        execute: async () => 0,
+      });
+      await expect(bootstrap.query(
+        `SELECT role_name,lease_state,lease_epoch::text,pending_role_name,pending_role_oid,
+                retiring_role_names,retiring_role_oids,draining_started_at
+         FROM platform.runtime_role_identity_authority WHERE role_kind='admission'`,
+      )).resolves.toMatchObject({ rows: [{
+        role_name: admissionUser,
+        lease_state: "active",
+        lease_epoch: "21",
+        pending_role_name: null,
+        pending_role_oid: null,
+        retiring_role_names: [],
+        retiring_role_oids: [],
+        draining_started_at: null,
+      }] });
+
+      const defaultAuthority = await bootstrap.query<{ has_default: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1 FROM pg_default_acl defaults
+           CROSS JOIN LATERAL aclexplode(defaults.defaclacl) acl
+           JOIN pg_roles role_row ON role_row.oid=acl.grantee
+           WHERE role_row.rolname=ANY($1::text[])
+         ) AS has_default`,
+        [[admissionUser, retiredRole]],
+      );
+      expect(defaultAuthority.rows).toEqual([{ has_default: false }]);
+      const retiredAuthority = await bootstrap.query<{
+        can_connect: boolean; can_use_schema: boolean; can_insert: boolean;
+      }>(
+        `SELECT has_database_privilege($1,current_database(),'CONNECT') AS can_connect,
+                has_schema_privilege($1,'platform','USAGE') AS can_use_schema,
+                has_table_privilege($1,'platform.admission_command','INSERT') AS can_insert`,
+        [retiredRole],
+      );
+      expect(retiredAuthority.rows).toEqual([{
+        can_connect: false, can_use_schema: false, can_insert: false,
+      }]);
+    } finally {
+      if (retiredBackendConnected) {
+        await retiredBackend.query("ROLLBACK").catch(() => undefined);
+        await retiredBackend.end().catch(() => undefined);
+      }
+      await bootstrap.query(
+        `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+         WHERE usename=ANY($1::text[]) AND pid<>pg_backend_pid()`,
+        [[retiredRole, memberRole, alternateRole]],
+      ).catch(() => undefined);
+      for (const [member, role] of [
+        [memberRole, retiredRole], [retiredRole, memberRole],
+      ] as const) {
+        await bootstrap.query(
+          `REVOKE ${quoteIdentifier(member)} FROM ${quoteIdentifier(role)}`,
+        ).catch(() => undefined);
+      }
+      await bootstrap.query(
+        `UPDATE platform.runtime_role_identity_authority
+         SET role_name=$1::name,
+             role_oid=(SELECT oid::bigint FROM pg_roles WHERE rolname=$1::name),
+             lease_state='active',pending_role_name=NULL,pending_role_oid=NULL,
+             retiring_role_names='{}'::TEXT[],retiring_role_oids='{}'::BIGINT[],
+             draining_started_at=NULL,recorded_at=now()
+         WHERE role_kind='admission'`,
+        [admissionUser],
+      ).catch(() => undefined);
+      for (const roleName of [retiredRole, memberRole, alternateRole]) {
+        await bootstrap.query(
+          `ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteIdentifier(migratorUser)} ` +
+            `REVOKE ALL ON TABLES FROM ${quoteIdentifier(roleName)}`,
+        ).catch(() => undefined);
+        await bootstrap.query(
+          `ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteIdentifier(migratorUser)} IN SCHEMA platform ` +
+            `REVOKE ALL ON TABLES FROM ${quoteIdentifier(roleName)}`,
+        ).catch(() => undefined);
+        await bootstrap.query(`DROP OWNED BY ${quoteIdentifier(roleName)}`).catch(() => undefined);
+        await bootstrap.query(`DROP ROLE IF EXISTS ${quoteIdentifier(roleName)}`).catch(() => undefined);
+      }
+      await bootstrap.query(
+        `ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteIdentifier(migratorUser)} ` +
+          `REVOKE ALL ON TABLES FROM ${quoteIdentifier(admissionUser)}`,
+      ).catch(() => undefined);
+      await bootstrap.query(
+        `ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteIdentifier(migratorUser)} ` +
+          `IN SCHEMA platform REVOKE ALL ON TABLES FROM ${quoteIdentifier(admissionUser)}`,
+      ).catch(() => undefined);
+      await runPlatformMigrations({
+        environment: platformMigrationEnvironment(),
+        execute: async () => 0,
+      }).catch(() => undefined);
+      await bootstrap.end();
+    }
+  }, 90_000);
+
+  it("rejects a pending Admission target whose PostgreSQL OID was reused", async () => {
+    const suffix = randomUUID().replaceAll("-", "").slice(0, 12);
+    const targetRole = `kt_pg_admission_oid_${suffix}`;
+    const password = `oid-${suffix}`;
+    const bootstrap = new Client({ connectionString: bootstrapDatabaseUrl });
+    await bootstrap.connect();
+    await bootstrap.query("BEGIN");
+    try {
+      await createLoginOnlyTestRole(bootstrap, targetRole, password);
+      await bootstrap.query(
+        `UPDATE platform.runtime_role_identity_authority
+         SET lease_state='draining',lease_epoch=50,
+             pending_role_name=$1::TEXT,
+             pending_role_oid=(SELECT oid::bigint FROM pg_roles WHERE rolname=$1::NAME),
+             retiring_role_names=ARRAY[role_name]::TEXT[],
+             retiring_role_oids=ARRAY[role_oid]::BIGINT[],
+             draining_started_at=clock_timestamp()
+         WHERE role_kind='admission'`,
+        [targetRole],
+      );
+      const originalOid = (await bootstrap.query<{ oid: string }>(
+        "SELECT oid::text FROM pg_roles WHERE rolname=$1",
+        [targetRole],
+      )).rows[0]?.oid;
+      await bootstrap.query(`DROP ROLE ${quoteIdentifier(targetRole)}`);
+      await createLoginOnlyTestRole(bootstrap, targetRole, password);
+      const reusedOid = (await bootstrap.query<{ oid: string }>(
+        "SELECT oid::text FROM pg_roles WHERE rolname=$1",
+        [targetRole],
+      )).rows[0]?.oid;
+      expect(reusedOid).not.toBe(originalOid);
+
+      await bootstrap.query(`SET LOCAL ROLE ${quoteIdentifier(migratorUser)}`);
+      await expect(runPlatformMigrations({
+        environment: {
+          ...platformMigrationEnvironment(),
+          PLATFORM_DATABASE_ADMISSION_ROLE: targetRole,
+        },
+        createLockClient: () => ({
+          connect: async () => undefined,
+          query: (sql, values) => bootstrap.query(sql, values as unknown[]),
+          end: async () => undefined,
+        }),
+        execute: async () => 0,
+      })).rejects.toThrow("PLATFORM_ADMISSION_ROLE_TARGET_OID_MISMATCH");
+      await expect(bootstrap.query(
+        `SELECT lease_state,pending_role_name,pending_role_oid::text,
+                retiring_role_names,retiring_role_oids::text[]
+         FROM platform.runtime_role_identity_authority WHERE role_kind='admission'`,
+      )).resolves.toMatchObject({ rows: [{
+        lease_state: "draining",
+        pending_role_name: targetRole,
+        pending_role_oid: originalOid,
+        retiring_role_names: [admissionUser],
+        retiring_role_oids: expect.arrayContaining([expect.stringMatching(/^[1-9][0-9]*$/u)]),
+      }] });
+      await bootstrap.query("RESET ROLE");
+    } finally {
+      await bootstrap.query("ROLLBACK");
+      await bootstrap.end();
+    }
+  });
+
   it("retires fixed and superseded Admission identities to zero database authority", async () => {
     const suffix = randomUUID().replaceAll("-", "").slice(0, 12);
     const fixedRole = "platform_admission";
@@ -1405,7 +1809,10 @@ describe("Platform PostgreSQL foundation", () => {
       await bootstrap.query(
         `UPDATE platform.runtime_role_identity_authority
          SET role_name=$1::name,
-             role_oid=(SELECT oid::bigint FROM pg_roles WHERE rolname=$1::name),recorded_at=now()
+             role_oid=(SELECT oid::bigint FROM pg_roles WHERE rolname=$1::name),
+             lease_state='active',pending_role_name=NULL,pending_role_oid=NULL,
+             retiring_role_names='{}'::TEXT[],retiring_role_oids='{}'::BIGINT[],
+             draining_started_at=NULL,recorded_at=now()
          WHERE role_kind='admission'`,
         [retiredRole],
       );
@@ -1478,7 +1885,10 @@ describe("Platform PostgreSQL foundation", () => {
       await bootstrap.query(
         `UPDATE platform.runtime_role_identity_authority
          SET role_name=$1::name,
-             role_oid=(SELECT oid::bigint FROM pg_roles WHERE rolname=$1::name),recorded_at=now()
+             role_oid=(SELECT oid::bigint FROM pg_roles WHERE rolname=$1::name),
+             lease_state='active',pending_role_name=NULL,pending_role_oid=NULL,
+             retiring_role_names='{}'::TEXT[],retiring_role_oids='{}'::BIGINT[],
+             draining_started_at=NULL,recorded_at=now()
          WHERE role_kind='admission'`,
         [admissionUser],
       ).catch(() => undefined);
@@ -1519,30 +1929,53 @@ describe("Platform PostgreSQL foundation", () => {
 
       await admission.query("BEGIN");
       await admission.query(
-        `SELECT set_config('app.operation','admission.command',true),
-                set_config('app.workload_kind','platform_admission',true),
-                set_config('app.site_id',$1,true)`,
+        "SELECT platform.begin_admission_transaction('admission.command')",
+      );
+      await admission.query(
+        "SELECT set_config('app.site_id',$1,true)",
         [siteRef],
       );
       await expect(reserve(`media-command-${suffix}`, "a")).resolves.toMatchObject({ rowCount: 1 });
       await admission.query("ROLLBACK");
 
-      for (const [operation, workload, scopedSite, marker] of [
-        ["site.evidence.authorize", "platform_admission", siteRef, "operation"],
-        ["admission.command", "platform_worker", siteRef, "workload"],
-        ["admission.command", "platform_admission", `foreign-${siteRef}`, "site"],
+      for (const [operation, workload, scopedSite, epoch, marker] of [
+        ["site.evidence.authorize", "platform_admission", siteRef, null, "operation"],
+        ["admission.command", "platform_worker", siteRef, null, "workload"],
+        ["admission.command", "platform_admission", `foreign-${siteRef}`, null, "site"],
+        ["admission.command", "platform_admission", siteRef, "0", "epoch"],
       ] as const) {
         await admission.query("BEGIN");
         await admission.query(
-          `SELECT set_config('app.operation',$1,true),
-                  set_config('app.workload_kind',$2,true),
-                  set_config('app.site_id',$3,true)`,
-          [operation, workload, scopedSite],
+          "SELECT platform.begin_admission_transaction('admission.command')",
+        );
+        await admission.query(
+          `SELECT set_config('app.operation',$1,true),set_config('app.workload_kind',$2,true),
+                  set_config('app.site_id',$3,true),
+                  CASE WHEN $4::TEXT IS NULL THEN NULL
+                       ELSE set_config('app.admission_lease_epoch',$4,true) END`,
+          [operation, workload, scopedSite, epoch],
         );
         await expect(reserve(`${marker}-media-command-${suffix}`, marker.slice(0, 1)))
           .rejects.toMatchObject({ code: "42501" });
         await admission.query("ROLLBACK");
       }
+
+      await admission.query("BEGIN");
+      await expect(admission.query(
+        "SELECT platform.begin_admission_transaction('admission.unknown')",
+      )).rejects.toThrow("PLATFORM_ADMISSION_OPERATION_INVALID");
+      await admission.query("ROLLBACK");
+
+      await admission.query("BEGIN");
+      await admission.query(
+        `SELECT set_config('app.operation','admission.command',true),
+                set_config('app.workload_kind','platform_admission',true),
+                set_config('app.site_id',$1,true)`,
+        [siteRef],
+      );
+      await expect(reserve(`missing-epoch-media-command-${suffix}`, "f"))
+        .rejects.toMatchObject({ code: "42501" });
+      await admission.query("ROLLBACK");
 
     } finally {
       await admission.query("ROLLBACK").catch(() => undefined);

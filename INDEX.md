@@ -18,8 +18,12 @@ migrator-maintained PostgreSQL role OID and use only operation-fenced security-d
 receives broad authority-table UPDATE. This PostgreSQL implementation is the sole business authority.
 
 Admission uses a run-scoped `kt_pg_*` login rather than a fixed database role. The migrator owns its
-lease transition: it retires every prior Admission principal to zero business authority, records the
-current name/OID, then applies the exact runtime ACL. The application workload value
+lease transition through the bounded `admission-role-lease.ts` authority. One PostgreSQL identity row
+moves `active(current, epoch)` → `draining(current, pending, retiring name/OID pairs)` →
+`active(pending, epoch + 1)`. Prepare commits draining and revokes old `CONNECT` together before
+the old backends are required to reach zero;
+final revoke, exact grants, verification, identity switch and tombstone clearing share one transaction.
+Any failure leaves the old identity draining and retryable instead of forgetting it. The application workload value
 `platform_admission` is not a PostgreSQL role name.
 
 ## Responsibilities

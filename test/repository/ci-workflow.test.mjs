@@ -38,6 +38,74 @@ function commands(job) {
   return job.steps.flatMap((step) => typeof step?.run === "string" ? [step.run] : []);
 }
 
+function containsStaticAdmissionRoleIdentifier(source) {
+  const target = "platform_admission";
+  let index = 0;
+  while (index < source.length) {
+    if (source.startsWith("--", index)) {
+      index = source.indexOf("\n", index + 2);
+      if (index === -1) return false;
+      continue;
+    }
+    if (source.startsWith("/*", index)) {
+      let depth = 1;
+      index += 2;
+      while (index < source.length && depth > 0) {
+        if (source.startsWith("/*", index)) {
+          depth += 1;
+          index += 2;
+        } else if (source.startsWith("*/", index)) {
+          depth -= 1;
+          index += 2;
+        } else {
+          index += 1;
+        }
+      }
+      continue;
+    }
+    if (source[index] === "'") {
+      index += 1;
+      while (index < source.length) {
+        if (source[index] !== "'") {
+          index += 1;
+        } else if (source[index + 1] === "'") {
+          index += 2;
+        } else {
+          index += 1;
+          break;
+        }
+      }
+      continue;
+    }
+    if (source[index] === '"') {
+      let identifier = "";
+      index += 1;
+      while (index < source.length) {
+        if (source[index] !== '"') {
+          identifier += source[index];
+          index += 1;
+        } else if (source[index + 1] === '"') {
+          identifier += '"';
+          index += 2;
+        } else {
+          index += 1;
+          break;
+        }
+      }
+      if (identifier.toLowerCase() === target) return true;
+      continue;
+    }
+    const match = /^[A-Za-z_][A-Za-z0-9_$]*/u.exec(source.slice(index));
+    if (match !== null) {
+      if (match[0].toLowerCase() === target) return true;
+      index += match[0].length;
+      continue;
+    }
+    index += 1;
+  }
+  return false;
+}
+
 test("Platform CI gates both PostgreSQL authority and Hub integration", async () => {
   const source = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
   const jobs = workflowJobs(source);
@@ -137,11 +205,28 @@ test("Admission fixtures and deployment require one run-scoped leased database i
   assert.match(deployables, /identityLifecycle:\s+run-scoped-leased-role/u);
 
   const migrationPaths = await sourceTreeEntries("prisma/migrations");
-  const migrations = (await Promise.all(
+  const migrationSources = await Promise.all(
     migrationPaths.filter((path) => path.endsWith("/migration.sql"))
-      .map((path) => readFile(resolve(root, path), "utf8")),
-  )).join("\n");
-  assert.doesNotMatch(migrations, /\b(?:TO|FROM)\s+platform_admission\b/iu);
+      .map(async (path) => ({ path, source: await readFile(resolve(root, path), "utf8") })),
+  );
+  for (const migration of migrationSources) {
+    assert.equal(containsStaticAdmissionRoleIdentifier(migration.source), false, migration.path);
+  }
+  for (const mutation of [
+    "GRANT SELECT ON example TO peer, platform_admission;",
+    'REVOKE INSERT ON example FROM peer, "platform_admission";',
+    'CREATE POLICY probe ON example TO peer, "platform_admission" USING (true);',
+  ]) {
+    assert.equal(containsStaticAdmissionRoleIdentifier(mutation), true, mutation);
+  }
+  for (const allowed of [
+    "SELECT current_setting('app.workload_kind')='platform_admission';",
+    "-- platform_admission is a workload value\nSELECT 1;",
+    "SELECT 'platform_admission'::text;",
+  ]) {
+    assert.equal(containsStaticAdmissionRoleIdentifier(allowed), false, allowed);
+  }
+  const migrations = migrationSources.map(({ source }) => source).join("\n");
   assert.doesNotMatch(migrations,
     /SESSION_USER\s*(?:=|<>)\s*'platform_admission'|SESSION_USER\s+IN\s*\([^)]*'platform_admission'/iu);
 });
