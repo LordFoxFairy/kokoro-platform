@@ -117,6 +117,20 @@ describe("Product Catalog publication authority", () => {
     expect(repository.match(/::numeric\(20,0\)/gu)?.length).toBeGreaterThanOrEqual(10);
   });
 
+  it("uses the canonical Admin workload discriminator in every publication RLS branch", () => {
+    const migration = readFileSync(new URL(
+      "../../prisma/migrations/20260815_product_catalog_publication/migration.sql",
+      import.meta.url,
+    ), "utf8");
+    const legacyDiscriminator =
+      "current_setting('app.workload_kind',true)='platform_admin'";
+    const canonicalDiscriminator =
+      "current_setting('app.workload_kind',true)='admin_workload'";
+
+    expect(migration).not.toContain(legacyDiscriminator);
+    expect(migration.split(canonicalDiscriminator)).toHaveLength(11);
+  });
+
   it("requires the owner attestation, immutable audit, and immutable revision for replay", async () => {
     const context = await adminContext();
     const binding = Object.freeze({ ref: "catalog.main", revision: 1n,

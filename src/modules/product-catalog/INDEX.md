@@ -15,6 +15,11 @@ The Connect provider is mounted on the existing Admin mTLS process and requires 
 grant, exact operation permission, phishing-resistant step-up, canonical command-envelope digest,
 and durable command receipt. Same-process Admin composition calls the application port inside a
 Platform UoW; it never self-RPCs and never leaks Site lifecycle commands into this owner.
+The process authenticates to PostgreSQL with the role named by `PLATFORM_DATABASE_ADMIN_ROLE`
+(normally `platform_admin`), while every publication UoW carries the distinct security-context
+workload kind `admin_workload`. Product publication RLS requires that workload kind, an operator,
+an empty Site axis, `admin:global`, and the exact publication operation scope; a database role name
+must never be reused as the transaction workload discriminator.
 
 Exact Root-commit source blobs for both JSON Schemas and all five dependent publication Protos are
 vendored with one executable provenance manifest. Standalone generation reads only the vendor,

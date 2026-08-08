@@ -135,7 +135,7 @@ ALTER TABLE platform.product_catalog_publication_receipt FORCE ROW LEVEL SECURIT
 
 CREATE POLICY product_catalog_head_admin_global ON platform.product_catalog_publication_head
   USING (
-    current_setting('app.workload_kind',true)='platform_admin' AND
+    current_setting('app.workload_kind',true)='admin_workload' AND
     current_setting('app.actor_kind',true)='operator' AND
     COALESCE(current_setting('app.site_id',true),'')='' AND
     current_setting('app.operation',true) IN ('product.catalog.publish','product.launch-profile.publish') AND
@@ -144,7 +144,7 @@ CREATE POLICY product_catalog_head_admin_global ON platform.product_catalog_publ
     COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'admin:global' AND
     COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? current_setting('app.operation',true)
   ) WITH CHECK (
-    current_setting('app.workload_kind',true)='platform_admin' AND
+    current_setting('app.workload_kind',true)='admin_workload' AND
     current_setting('app.actor_kind',true)='operator' AND
     COALESCE(current_setting('app.site_id',true),'')='' AND
     current_setting('app.operation',true) IN ('product.catalog.publish','product.launch-profile.publish') AND
@@ -156,14 +156,14 @@ CREATE POLICY product_catalog_head_admin_global ON platform.product_catalog_publ
 
 CREATE POLICY product_catalog_revision_admin_global ON platform.product_surface_catalog_revision
   USING (
-    current_setting('app.workload_kind',true)='platform_admin' AND
+    current_setting('app.workload_kind',true)='admin_workload' AND
     current_setting('app.actor_kind',true)='operator' AND
     COALESCE(current_setting('app.site_id',true),'')='' AND
     current_setting('app.operation',true) IN ('product.catalog.publish','product.launch-profile.publish') AND
     COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'admin:global' AND
     COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? current_setting('app.operation',true)
   ) WITH CHECK (
-    current_setting('app.workload_kind',true)='platform_admin' AND
+    current_setting('app.workload_kind',true)='admin_workload' AND
     current_setting('app.actor_kind',true)='operator' AND
     COALESCE(current_setting('app.site_id',true),'')='' AND
     current_setting('app.operation',true)='product.catalog.publish' AND
@@ -173,14 +173,14 @@ CREATE POLICY product_catalog_revision_admin_global ON platform.product_surface_
 
 CREATE POLICY launch_product_profile_admin_global ON platform.launch_product_profile_revision
   USING (
-    current_setting('app.workload_kind',true)='platform_admin' AND
+    current_setting('app.workload_kind',true)='admin_workload' AND
     current_setting('app.actor_kind',true)='operator' AND
     COALESCE(current_setting('app.site_id',true),'')='' AND
     current_setting('app.operation',true)='product.launch-profile.publish' AND
     COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'admin:global' AND
     COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'product.launch-profile.publish'
   ) WITH CHECK (
-    current_setting('app.workload_kind',true)='platform_admin' AND
+    current_setting('app.workload_kind',true)='admin_workload' AND
     current_setting('app.actor_kind',true)='operator' AND
     COALESCE(current_setting('app.site_id',true),'')='' AND
     current_setting('app.operation',true)='product.launch-profile.publish' AND
@@ -190,14 +190,14 @@ CREATE POLICY launch_product_profile_admin_global ON platform.launch_product_pro
 
 CREATE POLICY product_catalog_audit_admin_global ON platform.product_catalog_publication_audit
   USING (
-    current_setting('app.workload_kind',true)='platform_admin' AND
+    current_setting('app.workload_kind',true)='admin_workload' AND
     current_setting('app.actor_kind',true)='operator' AND
     COALESCE(current_setting('app.site_id',true),'')='' AND
     operation=current_setting('app.operation',true) AND
     COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'admin:global' AND
     COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? operation
   ) WITH CHECK (
-    current_setting('app.workload_kind',true)='platform_admin' AND
+    current_setting('app.workload_kind',true)='admin_workload' AND
     current_setting('app.actor_kind',true)='operator' AND
     COALESCE(current_setting('app.site_id',true),'')='' AND
     operation=current_setting('app.operation',true) AND
@@ -207,14 +207,14 @@ CREATE POLICY product_catalog_audit_admin_global ON platform.product_catalog_pub
 
 CREATE POLICY product_catalog_receipt_admin_global ON platform.product_catalog_publication_receipt
   USING (
-    current_setting('app.workload_kind',true)='platform_admin' AND
+    current_setting('app.workload_kind',true)='admin_workload' AND
     current_setting('app.actor_kind',true)='operator' AND
     COALESCE(current_setting('app.site_id',true),'')='' AND
     operation=current_setting('app.operation',true) AND
     COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? 'admin:global' AND
     COALESCE(current_setting('app.scopes',true),'[]')::JSONB ? operation
   ) WITH CHECK (
-    current_setting('app.workload_kind',true)='platform_admin' AND
+    current_setting('app.workload_kind',true)='admin_workload' AND
     current_setting('app.actor_kind',true)='operator' AND
     COALESCE(current_setting('app.site_id',true),'')='' AND
     operation=current_setting('app.operation',true) AND
