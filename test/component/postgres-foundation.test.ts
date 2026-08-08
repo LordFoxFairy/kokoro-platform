@@ -12,6 +12,8 @@ import {
 import { runPlatformMigrations } from "../../src/infrastructure/postgres/migrator.js";
 import { lockCreditFinancialAuthority } from
   "../../src/modules/credit/infrastructure/postgres/credit-financial-lock.js";
+import { creditJournalEntriesDigest } from
+  "../../src/modules/credit/infrastructure/postgres/credit-journal-digest.js";
 import {
   issuePlatformTransaction,
   revokePlatformTransaction,
@@ -3261,15 +3263,16 @@ async function insertCreditConcurrencySeed(client: Client, seed: CreditConcurren
     await client.query(
       `INSERT INTO platform.credit_grant
        (credit_grant_id,credit_account_ref,site_ref,billing_account_ref,credit_program_revision_ref,
-        source_type,source_ref,source_window_key,issuance_journal_transaction_ref,ux_bucket_class,
-        unit,liability_merchant_account_ref,original_amount,burn_priority,scope_policy,
-        effective_at,issued_at)
-       VALUES ($1::uuid,$2::uuid,$3,$4,$5,'admin_grant',$8,'',$6::uuid,'permanent',
+        credit_program_revision,credit_program_revision_digest,source_type,source_ref,
+        source_window_key,issuance_journal_transaction_ref,ux_bucket_class,unit,
+        liability_merchant_account_ref,original_amount,burn_priority,scope_policy,
+        effective_at,acquired_at,issued_at)
+       VALUES ($1::uuid,$2::uuid,$3,$4,$5,1,$9,'admin_grant',$8,'',$6::uuid,'permanent',
                'credit_micros','merchant-component',100,1000,$7::jsonb,
-               transaction_timestamp(),transaction_timestamp())`,
+               transaction_timestamp(),transaction_timestamp(),transaction_timestamp())`,
       [seed.creditGrantRef, seed.creditAccountRef, seed.siteId, seed.billingAccountId,
         seed.creditProgramRevisionRef, seed.issuanceJournalRef, JSON.stringify(scopePolicy),
-        `admin-${seed.creditGrantRef}`],
+        `admin-${seed.creditGrantRef}`, "1".repeat(64)],
     );
     await insertCreditJournalEntries(client, seed.issuanceJournalRef, issuanceEntries);
     await client.query(
@@ -3358,18 +3361,17 @@ function creditJournalEntry(
 }
 
 function creditJournalDigest(entries: readonly CreditJournalSeedEntry[]): string {
-  const canonical = entries.map((entry) => [
-    entry.ordinal,
-    entry.siteId,
-    entry.creditAccountRef,
-    "credit_micros",
-    entry.side,
-    entry.accountType,
-    entry.amount,
-    entry.creditGrantRef,
-    entry.creditHoldRef ?? "",
-  ].join("|")).join("\n");
-  return createHash("sha256").update(canonical, "utf8").digest("hex");
+  return creditJournalEntriesDigest(entries.map((entry) => ({
+    ordinal: entry.ordinal,
+    siteId: entry.siteId,
+    creditAccountId: entry.creditAccountRef,
+    unit: "credit_micros",
+    side: entry.side,
+    accountType: entry.accountType,
+    amount: entry.amount,
+    creditGrantId: entry.creditGrantRef,
+    creditHoldRef: entry.creditHoldRef,
+  })));
 }
 
 async function insertCreditJournalEntries(
