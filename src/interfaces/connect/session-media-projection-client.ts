@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { createRegistry, type DescMessage, type MessageShape } from "@bufbuild/protobuf";
 import { createValidator } from "@bufbuild/protovalidate";
 import { createClient, type Transport } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-node";
@@ -8,7 +9,9 @@ import type { AdmissionMediaProjectionOwnerPort } from
 import {
   IssueMediaProjectionReservationResponseSchema,
   ProjectionCommandKind,
+  RecoverProjectionCommandResponseSchema,
   SessionMediaProjectionService,
+  file_kokoro_session_media_v1_media_projection,
   type ProjectionCommandResolution,
 } from "../../generated/proto/kokoro/session/media/v1/media_projection_pb.js";
 import {
@@ -16,7 +19,9 @@ import {
   type SessionAdmissionOwnerMtlsConfig,
 } from "./session-admission-owner-client.js";
 
-const VALIDATOR = createValidator();
+const VALIDATOR = createValidator({
+  registry: createRegistry(file_kokoro_session_media_v1_media_projection),
+});
 
 export class SessionMediaProjectionClientError extends Error {
   readonly code: "canceled" | "unavailable" | "invalid_response";
@@ -45,14 +50,15 @@ export function createSessionMediaProjectionClientForTransport(
           projectionCommandRef: input.projectionCommandRef,
           projectionCommandRecoveryCapability: input.projectionCommandRecoveryCapability,
         }, { signal });
-        if (VALIDATOR.validate(IssueMediaProjectionReservationResponseSchema, response).kind !== "valid" ||
-            response.resolution === undefined) throw invalidResponse();
+        validateResponse(IssueMediaProjectionReservationResponseSchema, response);
+        if (response.resolution === undefined) throw invalidResponse();
         let resolution = response.resolution;
         if (resolution.receipt?.outcome.case === "outcomeUnknown") {
           const recovered = await client.recoverProjectionCommand({
             projectionCommandRef: input.projectionCommandRef,
             projectionCommandRecoveryCapability: input.projectionCommandRecoveryCapability,
           }, { signal });
+          validateResponse(RecoverProjectionCommandResponseSchema, recovered);
           if (recovered.resolution === undefined) throw invalidResponse();
           resolution = recovered.resolution;
         }
@@ -119,6 +125,12 @@ function requiredTimestamp(value: Parameters<typeof timestampDate>[0] | undefine
 
 function reference(value: string, maximum: number): boolean {
   return value.length >= 1 && value.length <= maximum && value.trim() === value;
+}
+
+function validateResponse<Desc extends DescMessage>(schema: Desc, response: MessageShape<Desc>): void {
+  const result = VALIDATOR.validate(schema, response);
+  if (result.kind === "invalid") throw invalidResponse();
+  if (result.kind === "error") throw result.error;
 }
 
 function invalidResponse(): SessionMediaProjectionClientError {
