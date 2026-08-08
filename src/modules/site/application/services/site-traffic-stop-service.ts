@@ -63,6 +63,8 @@ export class SiteTrafficStopService {
         approvalRef: input.approvalRef,
         siteRef: input.siteRef,
         operation: `site.traffic-stop.${input.action}`,
+        environment: context.environment,
+        region: context.region,
         effectDigest: siteTrafficStopEffectDigest(input),
       }, context);
       let result: ReturnType<typeof beginSiteTrafficStop> | undefined;

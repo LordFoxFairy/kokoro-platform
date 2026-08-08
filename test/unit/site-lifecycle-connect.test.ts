@@ -45,7 +45,7 @@ const verifiedContext = Object.freeze({}) as VerifiedRequestSecurityContext;
 describe("Site lifecycle Connect provider", () => {
   it("binds the maker approval to the exact Site activation facts and reason", async () => {
     const requestApproval = vi.fn(async () => ({
-      approvalRef: "approval:1", state: "pending" as const,
+      approvalRef: "10000000-0000-4000-8000-000000000001", state: "pending" as const,
       recordedAt: "2026-07-29T12:00:00.000Z",
       expiresAt: "2026-07-29T12:10:00.000Z",
     }));
@@ -56,12 +56,13 @@ describe("Site lifecycle Connect provider", () => {
     const request = approvalRequest();
 
     await expect(service.requestActivationApproval(request, transport)).resolves.toMatchObject({
-      approvalRef: "approval:1", state: SiteEffectApprovalState.PENDING,
+      approvalRef: "10000000-0000-4000-8000-000000000001", state: SiteEffectApprovalState.PENDING,
     });
     expect(requestApproval).toHaveBeenCalledWith(expect.objectContaining({
       commandId: "018f1212-1212-7212-8212-121212121212",
       idempotencyKey: "idempotency-key-0001",
-      approvalRef: "approval:1", siteRef: "site:alpha", candidateReleaseRef: "release:7",
+      approvalRef: "10000000-0000-4000-8000-000000000001", siteRef: "site:alpha",
+      candidateReleaseRef: "release:7",
       expectedActiveReleaseRef: null, audience: "kokoro-session",
       sessionContractRevision: "session-v7", reason: "launch approved",
     }), verifiedContext);
@@ -81,7 +82,8 @@ describe("Site lifecycle Connect provider", () => {
     });
     expect(activate).toHaveBeenCalledWith(expect.objectContaining({
       commandId: "018f1212-1212-7212-8212-121212121212",
-      idempotencyKey: "idempotency-key-0001", approvalRef: "approval:1",
+      idempotencyKey: "idempotency-key-0001",
+      approvalRef: "10000000-0000-4000-8000-000000000001",
       attemptRef: "attempt:1", siteRef: "site:alpha", reason: "launch approved",
     }), verifiedContext);
 
@@ -164,7 +166,7 @@ function facts() {
 function approvalRequest() {
   const claimed = context();
   const effect = create(RequestActivationApprovalEffectSchema, {
-    approvalRef: "approval:1", activation: facts(),
+    approvalRef: "10000000-0000-4000-8000-000000000001", activation: facts(),
   });
   claimed.command!.requestDigest = requestActivationApprovalRequestDigest(
     claimed, "site:alpha", effect, axes,
@@ -177,7 +179,8 @@ function approvalRequest() {
 function activationRequest() {
   const claimed = context();
   const effect = create(ApproveAndActivateEffectSchema, {
-    approvalRef: "approval:1", activationAttemptRef: "attempt:1", activation: facts(),
+    approvalRef: "10000000-0000-4000-8000-000000000001",
+    activationAttemptRef: "attempt:1", activation: facts(),
   });
   claimed.command!.requestDigest = approveAndActivateRequestDigest(
     claimed, "site:alpha", effect, axes,

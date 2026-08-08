@@ -40,7 +40,8 @@ export class SiteEffectApprovalService {
     const expiresAt = new Date(Date.parse(requestedAt) + this.#approvalLifetimeMs).toISOString();
     return this.unitOfWork.execute({ context, operation: "site.approval.request" }, async (transaction) => {
       return this.authority.request(transaction, {
-        ...input, makerSubjectRef: context.actor.subjectId, requestedAt, expiresAt,
+        ...input, environment: context.environment, region: context.region,
+        makerSubjectRef: context.actor.subjectId, requestedAt, expiresAt,
       });
     });
   }
@@ -54,7 +55,8 @@ export class SiteEffectApprovalService {
     const decidedAt = this.#now();
     return this.unitOfWork.execute({ context, operation: "site.approval.approve" }, async (transaction) => {
       await this.authority.approve(transaction, {
-        ...input, checkerSubjectRef: context.actor.subjectId, decidedAt,
+        ...input, environment: context.environment, region: context.region,
+        checkerSubjectRef: context.actor.subjectId, decidedAt,
       });
       return Object.freeze({ approvalRef: input.approvalRef, state: "approved" });
     });

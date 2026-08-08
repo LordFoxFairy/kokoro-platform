@@ -11,7 +11,7 @@ export interface SiteEffectApprovalAuthority {
   consume(
     transaction: PlatformTransaction,
     input: Readonly<{ approvalRef: string; siteRef: string; operation: SiteDangerousOperation;
-      effectDigest: string }>,
+      environment: string; region: string; effectDigest: string }>,
     context: VerifiedRequestSecurityContext,
   ): Promise<void>;
 }
@@ -22,6 +22,8 @@ export interface SiteEffectApprovalAdministration extends SiteEffectApprovalAuth
     input: Readonly<{
       approvalRef: string;
       siteRef: string;
+      environment: string;
+      region: string;
       operation: SiteDangerousOperation;
       effectDigest: string;
       reason: string;
@@ -43,6 +45,8 @@ export interface SiteEffectApprovalAdministration extends SiteEffectApprovalAuth
     input: Readonly<{
       approvalRef: string;
       siteRef: string;
+      environment: string;
+      region: string;
       operation: SiteDangerousOperation;
       effectDigest: string;
       checkerSubjectRef: string;

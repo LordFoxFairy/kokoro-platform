@@ -98,6 +98,8 @@ export class SiteLifecycleService {
         approvalRef: input.approvalRef,
         siteRef: input.siteRef,
         operation: "site.activation.begin",
+        environment: context.environment,
+        region: context.region,
         effectDigest: siteActivationEffectDigest(input),
       }, context);
       const site = await this.repository.loadSiteForUpdate(transaction, input.siteRef);

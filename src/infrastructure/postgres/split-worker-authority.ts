@@ -335,7 +335,6 @@ export const SPLIT_WORKER_RLS_AUTHORITY = Object.freeze({
       ["site_activation_attempt", "site_activation_attempt_scope"],
       ["site_deployment_binding", "site_deployment_binding_scope"],
       ["site_deployment_observation", "site_deployment_observation_scope"],
-      ["site_effect_approval", "site_effect_approval_scope"],
       ["site_project_binding", "site_project_binding_scope"],
       ["site_release", "site_release_scope"],
       ["site_traffic_stop_attempt", "site_traffic_stop_attempt_scope"],

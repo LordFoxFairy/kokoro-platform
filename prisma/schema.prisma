@@ -773,6 +773,7 @@ model AdminApproval {
   updatedAt                 DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@index([environment, region, targetSiteRef, state, expiresAt])
+  @@index([environment, region, state, admittedAt(sort: Desc), approvalRef(sort: Desc)], map: "admin_approval_pending_projection_idx")
   @@map("admin_approval")
   @@schema("platform")
 }
@@ -1508,8 +1509,10 @@ model SiteTrafficStopObservationAuthority {
 }
 
 model SiteEffectApprovalAuthority {
-  approvalRef       String    @id @map("approval_ref")
+  approvalRef       String    @id @map("approval_ref") @db.Uuid
   siteRef           String    @map("site_ref")
+  environment       String
+  region            String
   operation         String
   effectDigest      String    @map("effect_digest") @db.Char(64)
   state             String
@@ -1524,6 +1527,7 @@ model SiteEffectApprovalAuthority {
   updatedAt         DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@index([siteRef, operation, effectDigest, state, expiresAt])
+  @@index([environment, region, state, requestedAt(sort: Desc), approvalRef(sort: Desc)], map: "site_effect_approval_pending_projection_idx")
   @@map("site_effect_approval")
   @@schema("platform")
 }

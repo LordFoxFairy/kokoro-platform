@@ -58,7 +58,7 @@ describe("SiteLifecycleService", () => {
     const receipt = await service.beginActivation({
       commandId: "01983f57-8cf1-7000-8000-000000000001",
       idempotencyKey: "activation-command-01",
-      approvalRef: "approval_01",
+      approvalRef: "10000000-0000-4000-8000-000000000001",
       attemptRef: "activation_02",
       siteRef: "site_01",
       candidateReleaseRef: "release_02",
@@ -87,7 +87,7 @@ describe("SiteLifecycleService", () => {
     expect(() => service.beginActivation({
       commandId: "01983f57-8cf1-7000-8000-000000000001",
       idempotencyKey: "activation-command-01",
-      approvalRef: "approval_01",
+      approvalRef: "10000000-0000-4000-8000-000000000001",
       attemptRef: "activation_02",
       siteRef: "site_01",
       candidateReleaseRef: "release_02",

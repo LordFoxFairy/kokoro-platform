@@ -12,7 +12,7 @@ describe("Site dangerous-effect administration", () => {
   it("approves the exact activation effect before invoking the local owner service", async () => {
     const calls: Array<{ name: string; value: unknown }> = [];
     const handler = new SiteDangerousAdminHandler({
-      request: async () => ({ approvalRef: "approval_01", state: "pending" }),
+      request: async () => ({ approvalRef: "10000000-0000-4000-8000-000000000001", state: "pending" }),
       approve: async (input) => {
         calls.push({ name: "approve", value: input });
         return { approvalRef: input.approvalRef, state: "approved" };
@@ -29,7 +29,7 @@ describe("Site dangerous-effect administration", () => {
       commandId: "01983f57-8cf1-7000-8000-000000000001",
       idempotencyKey: "activation-command-01",
       attemptRef: "activation_02",
-      approvalRef: "approval_01",
+      approvalRef: "10000000-0000-4000-8000-000000000001",
       siteRef: "site_01",
       candidateReleaseRef: "release_02",
       expectedActiveReleaseRef: "release_01",
@@ -43,7 +43,7 @@ describe("Site dangerous-effect administration", () => {
       .resolves.toEqual({ attemptRef: "activation_02", state: "preparing", replayed: false });
     expect(calls.map(({ name }) => name)).toEqual(["approve", "activate"]);
     expect(calls[0]?.value).toEqual({
-      approvalRef: "approval_01",
+      approvalRef: "10000000-0000-4000-8000-000000000001",
       siteRef: "site_01",
       operation: "site.activation.begin",
       effectDigest: siteActivationEffectDigest(input),
@@ -51,15 +51,19 @@ describe("Site dangerous-effect administration", () => {
   });
 
   it("binds maker and checker to separate verified local transactions", async () => {
-    const calls: Array<{ name: string; actor: string; operation: string }> = [];
+    const calls: Array<{
+      name: string; actor: string; operation: string; environment?: string; region?: string;
+    }> = [];
     const authority: SiteEffectApprovalAdministration = {
       request: async (_transaction, input) => {
-        calls.push({ name: "request", actor: input.makerSubjectRef, operation: input.operation });
+        calls.push({ name: "request", actor: input.makerSubjectRef, operation: input.operation,
+          environment: input.environment, region: input.region });
         return { approvalRef: input.approvalRef, state: "pending", recordedAt: input.requestedAt,
           expiresAt: input.expiresAt };
       },
       approve: async (_transaction, input) => {
-        calls.push({ name: "approve", actor: input.checkerSubjectRef, operation: input.operation });
+        calls.push({ name: "approve", actor: input.checkerSubjectRef, operation: input.operation,
+          environment: input.environment, region: input.region });
       },
       consume: async () => undefined,
     };
@@ -75,7 +79,8 @@ describe("Site dangerous-effect administration", () => {
       now: () => "2026-07-30T10:00:30.000Z",
     });
     const identity = {
-      approvalRef: "approval_01", siteRef: "site_01", operation: "site.activation.begin",
+      approvalRef: "10000000-0000-4000-8000-000000000001", siteRef: "site_01",
+      operation: "site.activation.begin",
       effectDigest: "a".repeat(64), reason: "launch approved",
       commandId: "01983f57-8cf1-7000-8000-000000000001",
       idempotencyKey: "activation-approval-01", requestDigest: "b".repeat(64),
@@ -86,9 +91,11 @@ describe("Site dangerous-effect administration", () => {
 
     expect(calls).toEqual([
       { name: "transaction", actor: "operator_maker", operation: "site.approval.request" },
-      { name: "request", actor: "operator_maker", operation: "site.activation.begin" },
+      { name: "request", actor: "operator_maker", operation: "site.activation.begin",
+        environment: "production", region: "us-east-1" },
       { name: "transaction", actor: "operator_checker", operation: "site.approval.approve" },
-      { name: "approve", actor: "operator_checker", operation: "site.activation.begin" },
+      { name: "approve", actor: "operator_checker", operation: "site.activation.begin",
+        environment: "production", region: "us-east-1" },
     ]);
   });
 });

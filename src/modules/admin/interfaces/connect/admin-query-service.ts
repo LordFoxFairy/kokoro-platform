@@ -8,6 +8,7 @@ import {
   EffectiveSiteScopeSchema,
   OperatorState,
   OperatorSummarySchema,
+  PendingApprovalOwner,
   PendingApprovalSummarySchema,
   SiteSummarySchema,
   UserSummarySchema,
@@ -16,6 +17,14 @@ import type { AuthenticatedOperatorQueryContext } from
   "../../../../generated/proto/kokoro/platform/admin/v2/admin_shared_pb.js";
 
 export type AdminQueryConnectService = ServiceImpl<typeof AdminQueryServiceDescriptor>;
+
+export type AdminPendingApprovalOwner = "generic_admin" | "site_lifecycle";
+
+export interface AdminPendingApprovalCursor {
+  readonly admittedAt: string;
+  readonly owner: AdminPendingApprovalOwner;
+  readonly approvalRef: string;
+}
 
 export type AdminQueryScope =
   | Readonly<{ kind: "site"; siteRefs: readonly string[] }>
@@ -84,7 +93,8 @@ export interface AdminQueryReader {
     afterOperatorRef: string | null; limit: number;
   }>): Promise<readonly AdminOperatorRecord[]>;
   listPendingApprovals(permit: AdminQueryPermit, input: Readonly<{
-    siteRef: string | null; before: Readonly<{ admittedAt: string; approvalRef: string }> | null;
+    siteRef: string | null;
+    before: AdminPendingApprovalCursor | null;
     limit: number;
   }>): Promise<readonly AdminPendingApprovalRecord[]>;
 }
@@ -103,6 +113,7 @@ export interface AdminOperatorRecord {
 }
 
 export interface AdminPendingApprovalRecord {
+  readonly owner: AdminPendingApprovalOwner;
   readonly approvalRef: string;
   readonly operation: string;
   readonly makerRef: string;
@@ -256,28 +267,40 @@ export function createAdminQueryConnectService(input: Readonly<{
     async listPendingApprovals(request, transport) {
       const context = required(request.context); const limit = pageSize(request.pageSize);
       const cursor = request.pageToken === undefined ? null : input.cursors.decode(request.pageToken);
-      if (cursor !== null) requireCursor(cursor, ["at", "binding", "kind", "ref"], "approvals");
+      if (cursor !== null) {
+        requireCursor(cursor, ["at", "binding", "kind", "owner", "ref"], "approvals");
+      }
       const permit = await input.resolver.resolve(context, transport, {
         operation: "admin.approval.list", siteRef: request.siteId ?? null,
         resourceRefs: request.siteId === undefined ? [] : [request.siteId],
-        fieldRefs: ["approval_ref", "operation", "maker_ref", "target_site_ref", "operator_reason", "admitted_at", "expires_at"],
+        fieldRefs: [
+          "approval_ref", "owner", "operation", "maker_ref", "target_site_ref",
+          "environment", "region", "operator_reason", "admitted_at", "expires_at",
+        ],
       });
       const binding = scopedBinding(permit, request.siteId ?? "*");
       if (cursor !== null && cursor.binding !== binding) throw new Error("ADMIN_PAGE_TOKEN_INVALID");
       const rows = await input.reader.listPendingApprovals(permit, {
         siteRef: request.siteId ?? null,
-        before: cursor === null ? null : { admittedAt: cursor.at!, approvalRef: cursor.ref! },
+        before: cursor === null ? null : {
+          admittedAt: approvalInstant(cursor.at!),
+          owner: approvalOwner(cursor.owner!),
+          approvalRef: approvalRef(cursor.ref!),
+        },
         limit: limit + 1,
       });
       const visible = rows.slice(0, limit); const last = visible.at(-1);
       return { approvals: visible.map((approval) => create(PendingApprovalSummarySchema, {
+        owner: approval.owner === "generic_admin"
+          ? PendingApprovalOwner.GENERIC_ADMIN
+          : PendingApprovalOwner.SITE_LIFECYCLE,
         approvalRef: approval.approvalRef, operation: approval.operation, makerRef: approval.makerRef,
         environment: approval.environment, region: approval.region, operatorReason: approval.operatorReason,
         ...(approval.targetSiteRef === null ? {} : { targetSiteRef: approval.targetSiteRef }),
-        admittedAt: timestampFromDate(new Date(approval.admittedAt)),
-        expiresAt: timestampFromDate(new Date(approval.expiresAt)),
+        admittedAt: approvalTimestamp(approval.admittedAt),
+        expiresAt: approvalTimestamp(approval.expiresAt),
       })), ...(rows.length > limit && last !== undefined ? { nextPageToken: input.cursors.encode({
-        kind: "approvals", at: last.admittedAt, ref: last.approvalRef, binding,
+        kind: "approvals", at: last.admittedAt, owner: last.owner, ref: last.approvalRef, binding,
       }) } : {}) };
     },
   };
@@ -346,4 +369,43 @@ function pageSize(value: number): number {
 function required<Value>(value: Value | undefined): Value {
   if (value === undefined) throw new Error("ADMIN_QUERY_CONTEXT_REQUIRED");
   return value;
+}
+
+function approvalOwner(value: string): AdminPendingApprovalOwner {
+  if (value !== "generic_admin" && value !== "site_lifecycle") {
+    throw new Error("ADMIN_PAGE_TOKEN_INVALID");
+  }
+  return value;
+}
+
+function approvalRef(value: string): string {
+  if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u.test(value)) {
+    throw new Error("ADMIN_PAGE_TOKEN_INVALID");
+  }
+  return value;
+}
+
+function approvalInstant(value: string): string {
+  try {
+    approvalTimestamp(value);
+  } catch {
+    throw new Error("ADMIN_PAGE_TOKEN_INVALID");
+  }
+  return value;
+}
+
+function approvalTimestamp(value: string): Readonly<{ seconds: bigint; nanos: number }> {
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.(\d{6})Z$/u.exec(value);
+  if (match === null) throw new Error("ADMIN_APPROVAL_TIME_INVALID");
+  const base = match[1]!;
+  const microseconds = match[2]!;
+  const millisecondsText = `${base}.${microseconds.slice(0, 3)}Z`;
+  const milliseconds = Date.parse(millisecondsText);
+  if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== millisecondsText) {
+    throw new Error("ADMIN_APPROVAL_TIME_INVALID");
+  }
+  return Object.freeze({
+    seconds: BigInt(Math.floor(milliseconds / 1_000)),
+    nanos: Number(microseconds) * 1_000,
+  });
 }

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { SPLIT_WORKER_RELATION_AUTHORITY } from
+import { SPLIT_WORKER_RELATION_AUTHORITY, SPLIT_WORKER_RLS_AUTHORITY } from
   "../../src/infrastructure/postgres/split-worker-authority.js";
 
 const migrator = readFileSync(
@@ -62,6 +62,8 @@ describe("Site runtime privileges", () => {
     for (const relation of ["site_effect_approval", "asset_upload_intent", "admin_approval"]) {
       expect(relations).not.toContain(relation);
     }
+    expect(SPLIT_WORKER_RLS_AUTHORITY["site-worker"].policies.map(([relation]) => relation))
+      .not.toContain("site_effect_approval");
     expect(migrator).toContain("SPLIT_WORKER_EXACT_AUTHORITY_SQL");
     expect(client).toContain("SPLIT_WORKER_EXACT_AUTHORITY_SQL");
   });

@@ -15,6 +15,7 @@ import { lockCreditFinancialAuthority } from
 import {
   issuePlatformTransaction,
   revokePlatformTransaction,
+  type PlatformTransaction,
   type PlatformSqlTransaction,
 } from "../../src/shared/unit-of-work/platform-transaction.js";
 import {
@@ -41,6 +42,10 @@ import {
   OutboxRepository,
   type OutboxOwner,
 } from "../../src/shared/outbox-inbox/outbox.js";
+import { PostgresAdminQueryReader } from
+  "../../src/modules/admin/infrastructure/postgres/admin-query-reader.js";
+import type { AdminQueryPermit } from
+  "../../src/modules/admin/interfaces/connect/admin-query-service.js";
 
 const migratorDatabaseUrl = requireLeasedDatabaseUrl(
   process.env.DATABASE_URL_PLATFORM_MIGRATOR_TEST,
@@ -81,6 +86,321 @@ const memoryDatabaseUrls = Object.freeze({
   runtime: requireLeasedDatabaseUrl(process.env.DATABASE_URL_PLATFORM_MEMORY_RUNTIME_TEST),
   worker: requireLeasedDatabaseUrl(process.env.DATABASE_URL_PLATFORM_MEMORY_WORKER_TEST),
 });
+
+  it("projects owner-qualified approvals through exact RLS and microsecond pagination", async () => {
+    await runPlatformMigrations({ environment: platformMigrationEnvironment() });
+    const suffix = randomUUID();
+    const ownSiteRef = `site-approval-own-${suffix}`;
+    const foreignSiteRef = `site-approval-foreign-${suffix}`;
+    const operatorRef = `operator:approval:${suffix}`;
+    const checkerRef = `operator:approval-checker:${suffix}`;
+    const sharedApprovalRef = randomUUID();
+    const globalApprovalRef = randomUUID();
+    const microsecondApprovalRef = randomUUID();
+    const foreignLifecycleApprovalRef = randomUUID();
+    const crossRegionApprovalRef = randomUUID();
+    const policyApprovalRef = randomUUID();
+    const genericCommandId = randomUUID();
+    const globalCommandId = randomUUID();
+    const bootstrap = new Client({ connectionString: bootstrapDatabaseUrl });
+    const admin = new Client({ connectionString: adminDatabaseUrl });
+    await Promise.all([bootstrap.connect(), admin.connect()]);
+
+    const setOwnerContext = async (
+      operation: string,
+      subjectRef: string,
+      region = "us-east-1",
+    ): Promise<void> => {
+      await admin.query(
+        `SELECT set_config('app.operation',$1,true),set_config('app.site_id',$2,true),
+                set_config('app.environment','production',true),set_config('app.region',$3,true),
+                set_config('app.workload_kind','admin_workload',true),
+                set_config('app.actor_kind','operator',true),set_config('app.subject_id',$4,true)`,
+        [operation, ownSiteRef, region, subjectRef],
+      );
+    };
+
+    const cleanup = async (): Promise<void> => {
+      try {
+        await bootstrap.query("BEGIN");
+        await bootstrap.query("SET LOCAL session_replication_role='replica'");
+        await bootstrap.query(
+          `DELETE FROM platform.site_effect_approval WHERE approval_ref=ANY($1::uuid[])`,
+          [[sharedApprovalRef, microsecondApprovalRef, foreignLifecycleApprovalRef,
+            crossRegionApprovalRef, policyApprovalRef]],
+        );
+        await bootstrap.query(
+          `DELETE FROM platform.admin_approval WHERE approval_ref=ANY($1::uuid[])`,
+          [[sharedApprovalRef, globalApprovalRef]],
+        );
+        await bootstrap.query(
+          `DELETE FROM platform.command_receipt WHERE command_id=ANY($1::text[])`,
+          [[genericCommandId, globalCommandId]],
+        );
+        await bootstrap.query(
+          `DELETE FROM platform.admin_operator_authority WHERE operator_ref=ANY($1::text[])`,
+          [[operatorRef, checkerRef]],
+        );
+        await bootstrap.query(
+          `DELETE FROM platform.site WHERE site_ref=ANY($1::text[])`,
+          [[ownSiteRef, foreignSiteRef]],
+        );
+        await bootstrap.query("COMMIT");
+      } catch (error) {
+        await bootstrap.query("ROLLBACK");
+        throw error;
+      }
+    };
+
+    const host = {
+      adminQueryTransaction: async <Result>(
+        permit: AdminQueryPermit,
+        work: (transaction: PlatformTransaction) => Promise<Result>,
+      ): Promise<Result> => {
+        await admin.query("BEGIN");
+        const siteRefs = permit.scope.kind === "site" ? permit.scope.siteRefs
+          : permit.scope.kind === "breakglass" ? permit.scope.resourceRefs : [];
+        await admin.query(
+          `SELECT set_config('app.operation',$1,true),set_config('app.environment',$2,true),
+                  set_config('app.region',$3,true),set_config('app.workload_kind','platform_admin',true),
+                  set_config('app.actor_kind','operator',true),set_config('app.subject_id',$4,true),
+                  set_config('app.admin_scope_kind',$5,true),set_config('app.admin_site_refs',$6,true),
+                  set_config('app.site_id','',true)`,
+          [permit.operation, permit.environment, permit.region, permit.operatorRef,
+            permit.scope.kind, JSON.stringify(siteRefs)],
+        );
+        const lease = issuePlatformTransaction({
+          query: async <Row extends Record<string, unknown>>(
+            statement: string,
+            values: readonly unknown[] = [],
+          ) => {
+            const result = await admin.query<Row>(statement, [...values]);
+            return result.rows;
+          },
+          execute: async (statement: string, values: readonly unknown[] = []) => {
+            const result = await admin.query(statement, [...values]);
+            return result.rowCount ?? 0;
+          },
+        });
+        try {
+          return await work(lease.transaction);
+        } finally {
+          revokePlatformTransaction(lease);
+          await admin.query("ROLLBACK");
+        }
+      },
+    };
+
+    try {
+      await bootstrap.query(
+        `INSERT INTO platform.site(site_ref,site_key,state) VALUES
+         ($1,$2,'preview_ready'),($3,$4,'preview_ready')`,
+        [ownSiteRef, `approval-own-${suffix.slice(0, 12)}`,
+          foreignSiteRef, `approval-foreign-${suffix.slice(0, 12)}`],
+      );
+      await bootstrap.query(
+        `INSERT INTO platform.admin_operator_authority
+         (operator_ref,operator_generation,state,permissions,operator_security_epoch,
+          authorization_epoch,expires_at)
+         VALUES
+         ($1,1,'active',ARRAY['admin.approval.list'],1,1,clock_timestamp()+INTERVAL '1 hour'),
+         ($2,1,'active',ARRAY['admin.approval.list'],1,1,clock_timestamp()+INTERVAL '1 hour')`,
+        [operatorRef, checkerRef],
+      );
+      for (const [commandId, idempotencyKey] of [
+        [genericCommandId, `generic-${suffix}`],
+        [globalCommandId, `global-${suffix}`],
+      ] as const) {
+        await bootstrap.query(
+          `INSERT INTO platform.command_receipt
+           (command_id,environment,region,caller_identity,operation,idempotency_key,request_digest)
+           VALUES ($1,'production','us-east-1',$2,'admin.authority.change',$3,repeat('1',64))`,
+          [commandId, operatorRef, idempotencyKey],
+        );
+      }
+      await bootstrap.query(
+        `INSERT INTO platform.admin_approval
+         (approval_ref,command_id,request_digest,payload,payload_digest,operation,maker_ref,
+          maker_generation,maker_authorization_epoch,target_site_ref,environment,region,effect_class,
+          approval_policy,operator_reason,admitted_at,expires_at)
+         VALUES
+         ($1,$2,repeat('1',64),'{}',repeat('2',64),'admin.authority.change',$3,1,1,$4,
+          'production','us-east-1','dangerous','pre_effect','generic change',
+          '2099-08-08T12:00:00.123456Z','2100-08-08T12:00:00.000000Z'),
+         ($5,$6,repeat('1',64),'{}',repeat('2',64),'admin.authority.change',$3,1,1,NULL,
+          'production','us-east-1','dangerous','pre_effect','global change',
+          '2099-08-08T11:59:00.000000Z','2100-08-08T12:00:00.000000Z')`,
+        [sharedApprovalRef, genericCommandId, operatorRef, ownSiteRef,
+          globalApprovalRef, globalCommandId],
+      );
+      for (const [approvalRef, siteRef, region, requestedAt] of [
+        [sharedApprovalRef, ownSiteRef, "us-east-1", "2099-08-08T12:00:00.123456Z"],
+        [microsecondApprovalRef, ownSiteRef, "us-east-1", "2099-08-08T12:00:00.123123Z"],
+        [foreignLifecycleApprovalRef, foreignSiteRef, "us-east-1", "2099-08-08T11:58:00.000001Z"],
+        [crossRegionApprovalRef, ownSiteRef, "us-west-2", "2099-08-08T11:57:00.000001Z"],
+      ] as const) {
+        await bootstrap.query(
+          `INSERT INTO platform.site_effect_approval
+           (approval_ref,site_ref,environment,region,operation,effect_digest,reason,command_id,
+            idempotency_key,request_digest,state,maker_subject_ref,requested_at,expires_at)
+           VALUES ($1,$2,'production',$3,'site.activation.begin',repeat('3',64),
+                   'activate release',$4,$5,repeat('4',64),'pending',$6,$7::timestamptz,
+                   '2100-08-08T12:00:00.000000Z')`,
+          [approvalRef, siteRef, region, randomUUID(), `lifecycle-${approvalRef}`, operatorRef,
+            requestedAt],
+        );
+      }
+
+      await admin.query("BEGIN");
+      await setOwnerContext("site.approval.request", operatorRef);
+      await admin.query(
+        `INSERT INTO platform.site_effect_approval
+         (approval_ref,site_ref,environment,region,operation,effect_digest,reason,command_id,
+          idempotency_key,request_digest,state,maker_subject_ref,requested_at,expires_at)
+         VALUES ($1,$2,'production','us-east-1','site.activation.begin',repeat('5',64),
+                 'policy transition',$3,$4,repeat('6',64),'pending',$5,
+                 '2099-08-08T10:00:00.000001Z','2100-08-08T10:00:00.000001Z')`,
+        [policyApprovalRef, ownSiteRef, randomUUID(), `policy-${policyApprovalRef}`, operatorRef],
+      );
+      await admin.query("COMMIT");
+
+      await admin.query("BEGIN");
+      await setOwnerContext("site.approval.approve", checkerRef);
+      expect((await admin.query(
+        `UPDATE platform.site_effect_approval
+         SET state='approved',checker_subject_ref=$2,decided_at='2099-08-08T10:01:00.000002Z',
+             updated_at='2099-08-08T10:01:00.000002Z'
+         WHERE approval_ref=$1::uuid`,
+        [policyApprovalRef, checkerRef],
+      )).rowCount).toBe(1);
+      await admin.query("COMMIT");
+
+      await expect(bootstrap.query(
+        `UPDATE platform.site_effect_approval SET checker_subject_ref=$2
+         WHERE approval_ref=$1::uuid`,
+        [policyApprovalRef, `${checkerRef}:rewrite`],
+      )).rejects.toThrow("SITE_EFFECT_APPROVAL_CHECKER_EVIDENCE_IMMUTABLE");
+      await expect(bootstrap.query(
+        `UPDATE platform.site_effect_approval SET decided_at=decided_at+INTERVAL '1 microsecond'
+         WHERE approval_ref=$1::uuid`,
+        [policyApprovalRef],
+      )).rejects.toThrow("SITE_EFFECT_APPROVAL_CHECKER_EVIDENCE_IMMUTABLE");
+
+      await admin.query("BEGIN");
+      await setOwnerContext("site.activation.begin", checkerRef);
+      expect((await admin.query(
+        `UPDATE platform.site_effect_approval
+         SET state='consumed',consumed_request_id=$2,
+             consumed_at='2099-08-08T10:02:00.000003Z',updated_at='2099-08-08T10:02:00.000003Z'
+         WHERE approval_ref=$1::uuid`,
+        [policyApprovalRef, `request:${suffix}`],
+      )).rowCount).toBe(1);
+      await admin.query("COMMIT");
+
+      await expect(bootstrap.query(
+        `UPDATE platform.site_effect_approval SET consumed_request_id=$2
+         WHERE approval_ref=$1::uuid`,
+        [policyApprovalRef, `request:${suffix}:rewrite`],
+      )).rejects.toThrow("SITE_EFFECT_APPROVAL_CONSUMPTION_EVIDENCE_IMMUTABLE");
+      await expect(bootstrap.query(
+        `UPDATE platform.site_effect_approval SET consumed_at=consumed_at+INTERVAL '1 microsecond'
+         WHERE approval_ref=$1::uuid`,
+        [policyApprovalRef],
+      )).rejects.toThrow("SITE_EFFECT_APPROVAL_CONSUMPTION_EVIDENCE_IMMUTABLE");
+
+      const reader = new PostgresAdminQueryReader(host);
+      const basePermit = {
+        operatorRef,
+        environment: "production",
+        region: "us-east-1",
+        operation: "admin.approval.list",
+        authorityBindingDigest: "a".repeat(64),
+      } as const;
+      const siteRows = await reader.listPendingApprovals({ ...basePermit,
+        scope: { kind: "site", siteRefs: [ownSiteRef] } },
+      { siteRef: null, before: null, limit: 100 });
+      expect(siteRows.map(({ owner, approvalRef }) => `${owner}:${approvalRef}`).sort()).toEqual(
+        [
+          `generic_admin:${sharedApprovalRef}`,
+          `site_lifecycle:${sharedApprovalRef}`,
+          `site_lifecycle:${microsecondApprovalRef}`,
+        ].sort(),
+      );
+
+      const globalRows = await reader.listPendingApprovals({ ...basePermit,
+        scope: { kind: "global", grantRef: randomUUID() } },
+      { siteRef: null, before: null, limit: 100 });
+      expect(globalRows.map(({ owner, approvalRef }) => `${owner}:${approvalRef}`).sort()).toEqual(
+        [
+          `generic_admin:${sharedApprovalRef}`,
+          `generic_admin:${globalApprovalRef}`,
+          `site_lifecycle:${sharedApprovalRef}`,
+          `site_lifecycle:${microsecondApprovalRef}`,
+          `site_lifecycle:${foreignLifecycleApprovalRef}`,
+        ].sort(),
+      );
+
+      const lifecycleBreakglassRows = await reader.listPendingApprovals({ ...basePermit,
+        scope: { kind: "breakglass", grantRef: randomUUID(),
+          resourceRefs: [`site_lifecycle:${sharedApprovalRef}`], fieldAllowlist: ["approval_ref"] } },
+      { siteRef: null, before: null, limit: 100 });
+      expect(lifecycleBreakglassRows.map(({ owner, approvalRef }) => `${owner}:${approvalRef}`))
+        .toEqual([`site_lifecycle:${sharedApprovalRef}`]);
+
+      const genericBreakglassRows = await reader.listPendingApprovals({ ...basePermit,
+        scope: { kind: "breakglass", grantRef: randomUUID(),
+          resourceRefs: [`generic_admin:${sharedApprovalRef}`], fieldAllowlist: ["approval_ref"] } },
+      { siteRef: null, before: null, limit: 100 });
+      expect(genericBreakglassRows.map(({ owner, approvalRef }) => `${owner}:${approvalRef}`))
+        .toEqual([`generic_admin:${sharedApprovalRef}`]);
+
+      const crossRegionRows = await reader.listPendingApprovals({ ...basePermit, region: "us-west-2",
+        scope: { kind: "site", siteRefs: [ownSiteRef] } },
+      { siteRef: null, before: null, limit: 100 });
+      expect(crossRegionRows.map(({ owner, approvalRef }) => `${owner}:${approvalRef}`))
+        .toEqual([`site_lifecycle:${crossRegionApprovalRef}`]);
+
+      const pages: string[] = [];
+      let before: Parameters<PostgresAdminQueryReader["listPendingApprovals"]>[1]["before"] = null;
+      for (;;) {
+        const page = await reader.listPendingApprovals({ ...basePermit,
+          scope: { kind: "site", siteRefs: [ownSiteRef] } },
+        { siteRef: ownSiteRef, before, limit: 1 });
+        const row = page[0];
+        if (row === undefined) break;
+        pages.push(`${row.owner}:${row.approvalRef}`);
+        before = { admittedAt: row.admittedAt, owner: row.owner, approvalRef: row.approvalRef };
+      }
+      expect(pages).toEqual([
+        `site_lifecycle:${sharedApprovalRef}`,
+        `generic_admin:${sharedApprovalRef}`,
+        `site_lifecycle:${microsecondApprovalRef}`,
+      ]);
+
+      await admin.query("BEGIN");
+      await admin.query(
+        `SELECT set_config('app.operation','admin.site.read',true),
+                set_config('app.environment','production',true),
+                set_config('app.region','us-east-1',true),
+                set_config('app.workload_kind','platform_admin',true),
+                set_config('app.actor_kind','operator',true),
+                set_config('app.admin_scope_kind','site',true),
+                set_config('app.admin_site_refs',$1,true),set_config('app.site_id',$2,true)`,
+        [JSON.stringify([ownSiteRef]), ownSiteRef],
+      );
+      expect((await admin.query(
+        "SELECT approval_ref FROM platform.site_effect_approval WHERE site_ref=$1",
+        [ownSiteRef],
+      )).rows).toEqual([]);
+      await admin.query("ROLLBACK");
+    } finally {
+      try {
+        await cleanup();
+      } finally {
+        await Promise.all([bootstrap.end(), admin.end()]);
+      }
+    }
+  });
 const memoryRoleNames = Object.freeze({
   public: "platform_memory_public",
   runtime: "platform_memory_runtime",

@@ -2,6 +2,8 @@ import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.
 import { resolvePlatformTransaction } from
   "../../../../shared/unit-of-work/platform-transaction.js";
 import type {
+  AdminPendingApprovalCursor,
+  AdminPendingApprovalOwner,
   AdminQueryPermit,
   AdminQueryReader,
 } from "../../interfaces/connect/admin-query-service.js";
@@ -39,9 +41,10 @@ interface OperatorRow extends Record<string, unknown> {
 }
 
 interface ApprovalRow extends Record<string, unknown> {
+  owner: string;
   approvalRef: string; operation: string; makerRef: string; targetSiteRef: string | null;
   environment: string; region: string; operatorReason: string;
-  admittedAt: Date | string; expiresAt: Date | string;
+  admittedAt: string; expiresAt: string;
 }
 
 export class PostgresAdminQueryReader implements AdminQueryReader {
@@ -206,30 +209,50 @@ export class PostgresAdminQueryReader implements AdminQueryReader {
   listPendingApprovals(
     permit: AdminQueryPermit,
     input: Readonly<{ siteRef: string | null;
-      before: Readonly<{ admittedAt: string; approvalRef: string }> | null; limit: number }>,
+      before: AdminPendingApprovalCursor | null; limit: number }>,
   ) {
     if (input.siteRef !== null) requireSiteAccess(permit, input.siteRef);
     return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
       const values: unknown[] = [permit.environment, permit.region,
-        input.before?.admittedAt ?? "9999-12-31T23:59:59.999Z",
-        input.before?.approvalRef ?? "ffffffff-ffff-ffff-ffff-ffffffffffff", input.limit];
+        input.before?.admittedAt ?? null, input.before?.owner ?? null,
+        input.before?.approvalRef ?? null, input.limit];
       let scope = "TRUE";
-      if (input.siteRef !== null) { scope = "approval.target_site_ref=$6"; values.push(input.siteRef); }
+      if (input.siteRef !== null) { scope = "approval.target_site_ref=$7"; values.push(input.siteRef); }
       else if (permit.scope.kind === "site") {
-        scope = "approval.target_site_ref=ANY($6::text[])"; values.push([...permit.scope.siteRefs]);
+        scope = "approval.target_site_ref=ANY($7::TEXT[])"; values.push([...permit.scope.siteRefs]);
       } else if (permit.scope.kind === "breakglass") {
-        scope = "approval.approval_ref::text=ANY($6::text[])"; values.push([...permit.scope.resourceRefs]);
+        scope = "(approval.owner || ':' || approval.approval_ref::TEXT)=ANY($7::TEXT[])";
+        values.push([...permit.scope.resourceRefs]);
       }
       const rows = await resolvePlatformTransaction(ownerTransaction).query<ApprovalRow>(
-        `SELECT approval.approval_ref::text AS "approvalRef",approval.operation,
+        `WITH pending_approval AS (
+           SELECT 'generic_admin'::TEXT AS owner,approval.approval_ref,approval.operation,approval.maker_ref,
+                  approval.target_site_ref,approval.environment,approval.region,
+                  approval.operator_reason,approval.admitted_at,approval.expires_at
+           FROM platform.admin_approval approval
+           WHERE approval.state='pending' AND approval.expires_at>clock_timestamp()
+           UNION ALL
+           SELECT 'site_lifecycle'::TEXT AS owner,approval.approval_ref,approval.operation,
+                  approval.maker_subject_ref AS maker_ref,approval.site_ref AS target_site_ref,
+                  approval.environment,approval.region,
+                  approval.reason AS operator_reason,
+                  approval.requested_at AS admitted_at,approval.expires_at
+           FROM platform.site_effect_approval approval
+           WHERE approval.state='pending' AND approval.expires_at>clock_timestamp()
+         )
+         SELECT approval.owner,approval.approval_ref::TEXT AS "approvalRef",approval.operation,
                 approval.maker_ref AS "makerRef",approval.target_site_ref AS "targetSiteRef",
                 approval.environment,approval.region,approval.operator_reason AS "operatorReason",
-                approval.admitted_at AS "admittedAt",approval.expires_at AS "expiresAt"
-         FROM platform.admin_approval approval
-         WHERE approval.environment=$1 AND approval.region=$2 AND approval.state='pending'
-           AND approval.expires_at>clock_timestamp() AND ${scope}
-           AND (approval.admitted_at,approval.approval_ref)<($3::timestamptz,$4::uuid)
-         ORDER BY approval.admitted_at DESC,approval.approval_ref DESC LIMIT $5`,
+                to_char(approval.admitted_at AT TIME ZONE 'UTC',
+                  'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "admittedAt",
+                to_char(approval.expires_at AT TIME ZONE 'UTC',
+                  'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "expiresAt"
+         FROM pending_approval approval
+         WHERE approval.environment=$1 AND approval.region=$2 AND ${scope}
+           AND ($3::timestamptz IS NULL OR
+             (approval.admitted_at,approval.owner,approval.approval_ref)<
+             ($3::timestamptz,$4::TEXT,$5::uuid))
+         ORDER BY approval.admitted_at DESC,approval.owner DESC,approval.approval_ref DESC LIMIT $6`,
         values,
       );
       return Object.freeze(rows.map(approval));
@@ -309,10 +332,26 @@ function operator(row: OperatorRow) {
 }
 
 function approval(row: ApprovalRow) {
-  return Object.freeze({ approvalRef: text(row.approvalRef), operation: text(row.operation),
+  return Object.freeze({ owner: approvalOwner(row.owner), approvalRef: uuid(row.approvalRef),
+    operation: text(row.operation),
     makerRef: text(row.makerRef), targetSiteRef: row.targetSiteRef === null ? null : text(row.targetSiteRef),
     environment: text(row.environment), region: text(row.region), operatorReason: text(row.operatorReason),
-    admittedAt: instant(row.admittedAt), expiresAt: instant(row.expiresAt) });
+    admittedAt: preciseInstant(row.admittedAt), expiresAt: preciseInstant(row.expiresAt) });
+}
+
+function approvalOwner(value: unknown): AdminPendingApprovalOwner {
+  if (value !== "generic_admin" && value !== "site_lifecycle") {
+    throw new Error("ADMIN_QUERY_ROW_CORRUPT");
+  }
+  return value;
+}
+
+function uuid(value: unknown): string {
+  const result = text(value);
+  if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u.test(result)) {
+    throw new Error("ADMIN_QUERY_ROW_CORRUPT");
+  }
+  return result;
 }
 
 function text(value: unknown): string {
@@ -330,6 +369,20 @@ function instant(value: unknown): string {
   const date = value instanceof Date ? value : typeof value === "string" ? new Date(value) : null;
   if (date === null || !Number.isFinite(date.getTime())) throw new Error("ADMIN_QUERY_ROW_CORRUPT");
   return date.toISOString();
+}
+
+function preciseInstant(value: unknown): string {
+  const result = text(value);
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.(\d{6})Z$/u.exec(result);
+  if (match === null) throw new Error("ADMIN_QUERY_ROW_CORRUPT");
+  const base = match[1]!;
+  const microseconds = match[2]!;
+  const millisecondsText = `${base}.${microseconds.slice(0, 3)}Z`;
+  const milliseconds = Date.parse(millisecondsText);
+  if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== millisecondsText) {
+    throw new Error("ADMIN_QUERY_ROW_CORRUPT");
+  }
+  return result;
 }
 
 function stringArray(value: unknown): readonly string[] {

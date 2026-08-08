@@ -58,6 +58,15 @@ Web Admin calls the generated Admin Identity, Query, Commerce, Credit, Site Prov
 
 Each module owns its schema/migrations and domain events. Cross-module orchestration must use application ports and an explicit Platform transaction boundary.
 
+Generic dangerous Admin effects and Site lifecycle effects keep separate approval authorities:
+`platform.admin_approval` rejects Site lifecycle operations, while `platform.site_effect_approval` owns their
+UUID identity plus trusted environment/region axes. UUID identity is owner-qualified, so the two authorities may
+hold the same UUID. AdminQuery exposes one read-only pending projection by unioning both owners in exact
+`(admitted_at, owner, approval_ref)` keyset order; its opaque cursor preserves PostgreSQL microseconds and the
+owner discriminator. Exact `admin.approval.list` RLS applies environment, region and global/Site/breakglass scope
+before either owner row is visible. BreakGlass resources use canonical `generic_admin:<uuid>` and
+`site_lifecycle:<uuid>` references; no projection can write or bypass RLS.
+
 ## Runtime and security
 
 Every request resolves trusted workload and Site context before business use. The public API serves
