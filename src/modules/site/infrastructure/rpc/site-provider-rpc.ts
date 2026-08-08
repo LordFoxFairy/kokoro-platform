@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
+import { isDeploymentEnvironment } from "../../../../shared/deployment-environment.js";
 import {
   SiteProviderEffectError,
   sitePromotionCommandDigest,
@@ -82,7 +83,7 @@ export class SiteProviderRpcAdapter implements SiteDeploymentProvider {
         typeof value.providerProjectRef !== "string" || typeof value.releaseRef !== "string" ||
         typeof value.webArtifactDigest !== "string" || typeof value.releaseManifestDigest !== "string" ||
         typeof value.certificationDigest !== "string" ||
-        !includes(["development", "preview", "production"] as const, value.environment) ||
+        !isDeploymentEnvironment(value.environment) ||
         typeof value.region !== "string" || typeof value.audience !== "string" ||
         typeof value.sessionContractRevision !== "string" || typeof value.commandDigest !== "string" ||
         !digest(value.webArtifactDigest) || !digest(value.releaseManifestDigest) ||
@@ -137,7 +138,7 @@ export class SiteProviderRpcAdapter implements SiteDeploymentProvider {
         typeof value.observedAt !== "string" || !Number.isFinite(Date.parse(value.observedAt)) ||
         typeof value.operationKey !== "string" || typeof value.siteRef !== "string" ||
         typeof value.providerProjectRef !== "string" || typeof value.deploymentRef !== "string" ||
-        !includes(["development", "preview", "production"] as const, value.environment) ||
+        !isDeploymentEnvironment(value.environment) ||
         typeof value.region !== "string" || typeof value.commandDigest !== "string" ||
         !digest(value.commandDigest)) {
       throw new SiteProviderEffectError("unknown", "PROVIDER_RPC_RESPONSE_INVALID");

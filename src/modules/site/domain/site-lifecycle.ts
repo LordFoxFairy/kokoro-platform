@@ -1,3 +1,8 @@
+import {
+  isDeploymentEnvironment,
+  type DeploymentEnvironment,
+} from "../../../shared/deployment-environment.js";
+
 export type SiteState =
   | "preview_ready"
   | "active"
@@ -49,7 +54,7 @@ export interface ActivationAttempt {
   readonly siteProjectBindingRef: string;
   readonly siteProjectBindingEpoch: bigint;
   readonly runtimeBindingEpoch: bigint;
-  readonly environment: "development" | "preview" | "production";
+  readonly environment: DeploymentEnvironment;
   readonly region: string;
   readonly audience: string;
   readonly sessionContractRevision: string;
@@ -66,7 +71,7 @@ export interface SiteDeploymentBinding {
   readonly bindingRef: string;
   readonly siteRef: string;
   readonly releaseRef: string;
-  readonly environment: "development" | "preview" | "production";
+  readonly environment: DeploymentEnvironment;
   readonly region: string;
   readonly audience: string;
   readonly sessionContractRevision: string;
@@ -111,7 +116,7 @@ export function beginActivation(input: Readonly<{
   siteProjectBindingRef: string;
   siteProjectBindingEpoch: bigint;
   runtimeBindingEpoch: bigint;
-  environment: "development" | "preview" | "production";
+  environment: DeploymentEnvironment;
   region: string;
   audience: string;
   sessionContractRevision: string;
@@ -365,7 +370,7 @@ function activation(value: ActivationAttempt): void {
   bounded(value.audience, "SITE_AUDIENCE_INVALID");
   bounded(value.sessionContractRevision, "SITE_SESSION_CONTRACT_REVISION_INVALID");
   instant(value.requestedAt, "SITE_ACTIVATION_TIME_INVALID");
-  if (value.environment !== "development" && value.environment !== "preview" && value.environment !== "production") {
+  if (!isDeploymentEnvironment(value.environment)) {
     throw new Error("SITE_ENVIRONMENT_INVALID");
   }
   if (value.providerOperationKey !== null) identifier(value.providerOperationKey, "SITE_PROVIDER_OPERATION_KEY_INVALID");

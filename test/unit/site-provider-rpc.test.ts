@@ -123,7 +123,7 @@ describe("SiteProviderRpcAdapter", () => {
 
 function trafficCommand() {
   return { operationKey: "operation_01", siteRef: "site_01",
-    providerProjectRef: "project_01", deploymentRef: "deployment_01", environment: "production",
+    providerProjectRef: "project_01", deploymentRef: "deployment_01", environment: "staging",
     region: "us-east-1" } as const;
 }
 
@@ -131,7 +131,7 @@ function promotionCommand() {
   return { operationKey: "operation_01", siteRef: "site_01",
     providerProjectRef: "project_01", releaseRef: "release_02", webArtifactDigest: "a".repeat(64),
     releaseManifestDigest: "b".repeat(64), certificationDigest: "c".repeat(64),
-    environment: "production", region: "us-east-1", audience: "site-product",
+    environment: "staging", region: "us-east-1", audience: "site-product",
     sessionContractRevision: "browser-v3" } as const;
 }
 

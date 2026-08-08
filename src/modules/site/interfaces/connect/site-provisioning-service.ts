@@ -20,6 +20,10 @@ import {
 } from "../../../../generated/contracts/platform-site-provisioning@v1/digest.js";
 import type { VerifiedRequestSecurityContext } from
   "../../../../shared/security-context/index.js";
+import {
+  isDeploymentEnvironment,
+  type DeploymentEnvironment,
+} from "../../../../shared/deployment-environment.js";
 import type { ControlCommandReceiptTimestampReader } from
   "../../../admin/infrastructure/postgres/control-command-receipt-reader.js";
 import type { SitePublicationService } from
@@ -116,8 +120,8 @@ function wireReceipt(
   });
 }
 
-function siteEnvironment(value: string): "development" | "preview" | "production" {
-  if (value !== "development" && value !== "preview" && value !== "production") {
+function siteEnvironment(value: string): DeploymentEnvironment {
+  if (!isDeploymentEnvironment(value)) {
     throw new Error("SITE_PROVISIONING_ENVIRONMENT_INVALID");
   }
   return value;

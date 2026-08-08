@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
+import type { DeploymentEnvironment } from "../../../../shared/deployment-environment.js";
 import type { PlatformUnitOfWork } from "../../../../shared/unit-of-work/index.js";
 import type {
   SiteAuthorityJournal,
@@ -42,7 +43,7 @@ export class SitePublicationService {
       repositoryRef: string;
       providerNamespace: string;
       providerProjectRef: string;
-      environment: "development" | "preview" | "production";
+      environment: DeploymentEnvironment;
       workloadIdentityId: string;
     }>,
     context: VerifiedRequestSecurityContext,

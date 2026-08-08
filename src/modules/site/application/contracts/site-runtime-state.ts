@@ -5,6 +5,7 @@ import type {
   SiteTrafficStopProviderObservation,
 } from "./site-deployment-provider.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
+import type { DeploymentEnvironment } from "../../../../shared/deployment-environment.js";
 import type {
   ActivationAttempt,
   SiteAggregate,
@@ -59,7 +60,7 @@ export interface SiteRuntimeRepository {
   loadRuntimeProjectBindingForUpdate(
     transaction: PlatformTransaction,
     input: Readonly<{ bindingRef: string; siteRef: string; bindingEpoch?: bigint;
-      environment: "development" | "preview" | "production"; region: string }>,
+      environment: DeploymentEnvironment; region: string }>,
   ): Promise<Readonly<{ providerNamespace: string; providerProjectRef: string }> | null>;
   recordObservationAndCandidateDeployment(
     transaction: PlatformTransaction,
@@ -75,12 +76,12 @@ export interface SiteRuntimeRepository {
   loadDrainingRuntimeDeploymentForUpdate(
     transaction: PlatformTransaction,
     siteRef: string,
-    environment: "development" | "preview" | "production",
+    environment: DeploymentEnvironment,
     region: string,
     releaseRef: string,
   ): Promise<Readonly<{ deploymentRef: string; webArtifactDigest: string;
     providerNamespace: string; providerProjectRef: string;
-    environment: "development" | "preview" | "production"; region: string }> | null>;
+    environment: DeploymentEnvironment; region: string }> | null>;
   recordDrainObservationAndComplete(
     transaction: PlatformTransaction,
     observation: SiteDeploymentObservation,

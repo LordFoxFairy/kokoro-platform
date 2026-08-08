@@ -59,7 +59,7 @@ CREATE TABLE platform.authorization_product_binding (
   deployment_ref TEXT NOT NULL UNIQUE,
   site_ref TEXT NOT NULL REFERENCES platform.authorization_site(site_ref),
   release_ref TEXT NOT NULL,
-  environment TEXT NOT NULL CHECK (environment IN ('development','preview','production')),
+  environment TEXT NOT NULL CHECK (environment IN ('development','preview','staging','production')),
   region TEXT NOT NULL,
   audience TEXT NOT NULL,
   session_contract_revision TEXT NOT NULL,

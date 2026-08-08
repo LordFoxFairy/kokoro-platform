@@ -1,4 +1,8 @@
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
+import {
+  isDeploymentEnvironment,
+  type DeploymentEnvironment,
+} from "../../../../shared/deployment-environment.js";
 import type { PlatformUnitOfWork } from "../../../../shared/unit-of-work/index.js";
 import {
   activateObservedRelease,
@@ -423,8 +427,8 @@ function targetSite(context: VerifiedRequestSecurityContext): string {
 
 function deploymentEnvironment(
   context: VerifiedRequestSecurityContext,
-): "development" | "preview" | "production" {
-  if (context.environment !== "development" && context.environment !== "preview" && context.environment !== "production") {
+): DeploymentEnvironment {
+  if (!isDeploymentEnvironment(context.environment)) {
     throw new Error("SITE_ENVIRONMENT_INVALID");
   }
   return context.environment;

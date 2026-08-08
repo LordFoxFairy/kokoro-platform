@@ -12,6 +12,10 @@ import {
   validateWebBuildIntentShape,
   validateWebBuildMaterialBundleShape,
 } from "../../../generated/schema/site-publication/validator.js";
+import {
+  isDeploymentEnvironment,
+  type DeploymentEnvironment,
+} from "../../../shared/deployment-environment.js";
 
 export interface ImmutableRevisionBinding {
   readonly ref: string;
@@ -29,7 +33,7 @@ export interface CandidateAuthorityBinding {
 export interface SiteReleaseCandidateAuthority {
   readonly binding: CandidateAuthorityBinding;
   readonly siteRef: string;
-  readonly environment: "development" | "preview" | "staging" | "production";
+  readonly environment: DeploymentEnvironment;
   readonly launchProductProfile: ImmutableRevisionBinding;
   readonly productSurfaceCatalog: ImmutableRevisionBinding;
   readonly businessBindingsDigest: string;
@@ -328,7 +332,7 @@ function record(value: unknown, code: string): Readonly<Record<string, unknown>>
   return value as Readonly<Record<string, unknown>>;
 }
 function environment(value: string): SiteReleaseCandidateAuthority["environment"] {
-  if (value !== "development" && value !== "preview" && value !== "staging" && value !== "production") {
+  if (!isDeploymentEnvironment(value)) {
     throw new Error("SITE_PUBLICATION_ENVIRONMENT_INVALID");
   }
   return value;

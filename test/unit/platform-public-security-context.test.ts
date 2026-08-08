@@ -31,7 +31,7 @@ describe("Platform Public mutation evidence", () => {
 });
 
 function fixture(csrfSha256: string) {
-  const workload: ProductWorkloadIdentity = { certificateSha256: "a".repeat(64), workloadIdentityId: "site-web-1", siteProjectBindingRef: "binding-1", deploymentRef: "deploy-1", siteRef: "site-1", siteReleaseRef: "release-1", webArtifactDigest: "b".repeat(64), sessionContractRevision: "v1", environment: "production", region: "us-east-1", audience: "platform-public", allowedOperations: ["exchangeProductContext", "getPersonalContext"], bindingEpoch: "2", siteSecurityEpoch: "7", policyEpoch: "6", csrfSha256 };
+  const workload: ProductWorkloadIdentity = { certificateSha256: "a".repeat(64), workloadIdentityId: "site-web-1", siteProjectBindingRef: "binding-1", deploymentRef: "deploy-1", siteRef: "site-1", siteReleaseRef: "release-1", webArtifactDigest: "b".repeat(64), sessionContractRevision: "v1", environment: "staging", region: "us-east-1", audience: "platform-public", allowedOperations: ["exchangeProductContext", "getPersonalContext"], bindingEpoch: "2", siteSecurityEpoch: "7", policyEpoch: "6", csrfSha256 };
   const registry = ProductWorkloadRegistry.parse({ version: 1, registryRevision: "r1", registrations: [workload] });
   return { registry, workload };
 }

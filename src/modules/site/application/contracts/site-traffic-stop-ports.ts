@@ -1,4 +1,5 @@
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
+import type { DeploymentEnvironment } from "../../../../shared/deployment-environment.js";
 import type { SiteAggregate, SiteDeploymentBinding } from "../../domain/site-lifecycle.js";
 import type {
   SiteTrafficStopAttempt,
@@ -12,7 +13,7 @@ export interface SiteTrafficStopRepository {
   loadActiveDeploymentForUpdate(
     transaction: PlatformTransaction,
     siteRef: string,
-    environment: "development" | "preview" | "production",
+    environment: DeploymentEnvironment,
     region: string,
   ): Promise<ProviderBoundDeployment | null>;
   loadTrafficStopForUpdate(

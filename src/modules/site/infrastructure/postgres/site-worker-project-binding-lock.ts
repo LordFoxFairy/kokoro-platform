@@ -1,5 +1,6 @@
 import type { PlatformSqlTransaction } from
   "../../../../shared/unit-of-work/platform-transaction.js";
+import type { DeploymentEnvironment } from "../../../../shared/deployment-environment.js";
 
 export interface LockedSiteWorkerProjectBinding extends Record<string, unknown> {
   readonly bindingRef: string;
@@ -19,7 +20,7 @@ export interface SiteWorkerProjectBindingLock {
     sql: PlatformSqlTransaction,
     input: Readonly<{
       siteRef: string;
-      environment: "development" | "preview" | "production";
+      environment: DeploymentEnvironment;
       region: string;
     }>,
   ): Promise<LockedSiteWorkerProjectBinding | null>;
@@ -29,7 +30,7 @@ export interface SiteWorkerProjectBindingLock {
       bindingRef: string;
       siteRef: string;
       bindingEpoch?: bigint;
-      environment: "development" | "preview" | "production";
+      environment: DeploymentEnvironment;
       region: string;
     }>,
   ): Promise<LockedSiteWorkerRuntimeProjectBinding | null>;
@@ -40,7 +41,7 @@ export class PostgresSiteWorkerProjectBindingLock implements SiteWorkerProjectBi
     sql: PlatformSqlTransaction,
     input: Readonly<{
       siteRef: string;
-      environment: "development" | "preview" | "production";
+      environment: DeploymentEnvironment;
       region: string;
     }>,
   ): Promise<LockedSiteWorkerProjectBinding | null> {
@@ -61,7 +62,7 @@ export class PostgresSiteWorkerProjectBindingLock implements SiteWorkerProjectBi
       bindingRef: string;
       siteRef: string;
       bindingEpoch?: bigint;
-      environment: "development" | "preview" | "production";
+      environment: DeploymentEnvironment;
       region: string;
     }>,
   ): Promise<LockedSiteWorkerRuntimeProjectBinding | null> {

@@ -6,7 +6,8 @@ import type {
   TrustedCallerCryptographicVerifier,
   VerifiedTrustedCallerClaims,
 } from "../../../../shared/security-context/request-security-context.js";
-import type { ProductWorkloadIdentity, RuntimeEnvironment } from "../../domain/session-access-grant.js";
+import { isDeploymentEnvironment } from "../../../../shared/deployment-environment.js";
+import type { ProductWorkloadIdentity } from "../../domain/session-access-grant.js";
 import { SessionAuthorizationError } from "../../domain/session-access-grant.js";
 import { PLATFORM_PUBLIC_OPERATIONS } from "../../../../generated/contracts/openapi/platform-public/operations.gen.js";
 
@@ -69,7 +70,7 @@ export class ProductWorkloadRegistry implements TrustedCallerCryptographicVerifi
       }
       workloadIds.add(workloadIdentityId);
       const environment = reference(item.environment, 32);
-      if (!["development", "preview", "production"].includes(environment)) {
+      if (!isDeploymentEnvironment(environment)) {
         throw new Error("PRODUCT_WORKLOAD_ENVIRONMENT_INVALID");
       }
       if (!Array.isArray(item.allowedOperations) || item.allowedOperations.length < 1) {
@@ -92,7 +93,7 @@ export class ProductWorkloadRegistry implements TrustedCallerCryptographicVerifi
         siteReleaseRef: reference(item.siteReleaseRef, 128),
         webArtifactDigest: digest(item.webArtifactDigest),
         sessionContractRevision: reference(item.sessionContractRevision, 128),
-        environment: environment as RuntimeEnvironment,
+        environment,
         region: reference(item.region, 128),
         audience: reference(item.audience, 256),
         allowedOperations: Object.freeze(allowedOperations),

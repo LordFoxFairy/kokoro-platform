@@ -12,7 +12,7 @@ $$;
 ALTER TABLE platform.site_effect_approval
   ALTER COLUMN approval_ref TYPE UUID USING approval_ref::UUID,
   ADD COLUMN environment TEXT NOT NULL
-    CHECK(environment IN ('development','preview','production')),
+    CHECK(environment IN ('development','preview','staging','production')),
   ADD COLUMN region TEXT NOT NULL CHECK(length(region) BETWEEN 1 AND 64);
 
 ALTER TABLE platform.admin_approval

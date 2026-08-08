@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { DeploymentEnvironment } from "../../../../shared/deployment-environment.js";
 
 export interface SitePromotionCommand {
   readonly operationKey: string;
@@ -8,7 +9,7 @@ export interface SitePromotionCommand {
   readonly webArtifactDigest: string;
   readonly releaseManifestDigest: string;
   readonly certificationDigest: string;
-  readonly environment: "development" | "preview" | "production";
+  readonly environment: DeploymentEnvironment;
   readonly region: string;
   readonly audience: string;
   readonly sessionContractRevision: string;
@@ -46,7 +47,7 @@ export interface SiteTrafficStopCommand {
   readonly siteRef: string;
   readonly providerProjectRef: string;
   readonly deploymentRef: string;
-  readonly environment: "development" | "preview" | "production";
+  readonly environment: DeploymentEnvironment;
   readonly region: string;
 }
 

@@ -26,6 +26,7 @@ import {
   type SiteTrafficStopObservation,
 } from "../../domain/site-traffic-stop.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
+import type { DeploymentEnvironment } from "../../../../shared/deployment-environment.js";
 import {
   acquirePlatformSqlAdvisoryLock,
   resolvePlatformTransaction,
@@ -60,7 +61,7 @@ export class PostgresSiteAuthorityRepository implements
   async loadActiveProjectBindingForUpdate(
     transaction: PlatformTransaction,
     siteRef: string,
-    environment: "development" | "preview" | "production",
+    environment: DeploymentEnvironment,
     region: string,
   ): Promise<Readonly<{ bindingRef: string; bindingEpoch: bigint }> | null> {
     const rows = await resolvePlatformTransaction(transaction).query<{
@@ -326,7 +327,7 @@ export class PostgresSiteAuthorityRepository implements
   async loadDrainingDeploymentForUpdate(
     transaction: PlatformTransaction,
     siteRef: string,
-    environment: "development" | "preview" | "production",
+    environment: DeploymentEnvironment,
     releaseRef: string,
   ): Promise<Readonly<{ deploymentRef: string; webArtifactDigest: string }> | null> {
     const rows = await resolvePlatformTransaction(transaction).query<{
@@ -344,12 +345,12 @@ export class PostgresSiteAuthorityRepository implements
   async loadDrainingRuntimeDeploymentForUpdate(
     transaction: PlatformTransaction,
     siteRef: string,
-    environment: "development" | "preview" | "production",
+    environment: DeploymentEnvironment,
     region: string,
     releaseRef: string,
   ): Promise<Readonly<{ deploymentRef: string; webArtifactDigest: string;
     providerNamespace: string; providerProjectRef: string;
-    environment: "development" | "preview" | "production"; region: string }> | null> {
+    environment: DeploymentEnvironment; region: string }> | null> {
     const sql = resolvePlatformTransaction(transaction);
     if (this.workerProjectBindingLock !== undefined) {
       const project = await this.workerProjectBindingLock.lockActive(sql, {
@@ -358,7 +359,7 @@ export class PostgresSiteAuthorityRepository implements
       if (project === null) return null;
       const rows = await sql.query<{
         deploymentRef: string; webArtifactDigest: string;
-        environment: "development" | "preview" | "production"; region: string;
+        environment: DeploymentEnvironment; region: string;
       }>(
         `SELECT deployment_ref AS "deploymentRef",web_artifact_digest AS "webArtifactDigest",
                 environment,region
@@ -377,7 +378,7 @@ export class PostgresSiteAuthorityRepository implements
     }
     const rows = await sql.query<{
       deploymentRef: string; webArtifactDigest: string; providerNamespace: string;
-      providerProjectRef: string; environment: "development" | "preview" | "production";
+      providerProjectRef: string; environment: DeploymentEnvironment;
       region: string;
     }>(
       `SELECT deployment.deployment_ref AS "deploymentRef",
@@ -400,7 +401,7 @@ export class PostgresSiteAuthorityRepository implements
   async loadActiveDeploymentForUpdate(
     transaction: PlatformTransaction,
     siteRef: string,
-    environment: "development" | "preview" | "production",
+    environment: DeploymentEnvironment,
     region: string,
   ): Promise<ProviderBoundDeployment | null> {
     const sql = resolvePlatformTransaction(transaction);
@@ -792,7 +793,7 @@ type ActivationRow = Record<string, unknown> & {
   candidateManifestDigest: string; candidateCertificationDigest: string; state: string;
   siteProjectBindingRef: string; siteProjectBindingEpoch: bigint;
   runtimeBindingEpoch: bigint;
-  environment: "development" | "preview" | "production"; region: string; audience: string;
+  environment: DeploymentEnvironment; region: string; audience: string;
   sessionContractRevision: string;
   requestedAt: Date | string; providerOperationKey: string | null; deploymentRef: string | null;
   observedAt: Date | string | null;
@@ -801,7 +802,7 @@ type ActivationRow = Record<string, unknown> & {
 type TrafficStopRow = Record<string, unknown> & {
   attemptRef: string; siteRef: string; action: string; releaseRef: string; deploymentRef: string;
   bindingRef: string; runtimeBindingEpoch: bigint; providerNamespace: string;
-  environment: "development" | "preview" | "production"; region: string; state: string;
+  environment: DeploymentEnvironment; region: string; state: string;
   requestedAt: Date | string; providerOperationKey: string | null; observedAt: Date | string | null;
   failureCode: string | null;
 };

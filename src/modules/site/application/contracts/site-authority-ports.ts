@@ -1,6 +1,7 @@
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
 import type { OutboxEvent } from "../../../../shared/outbox-inbox/outbox.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
+import type { DeploymentEnvironment } from "../../../../shared/deployment-environment.js";
 import type {
   ActivationAttempt,
   SiteDeploymentBinding,
@@ -13,7 +14,7 @@ export interface SiteAuthorityRepository {
   loadActiveProjectBindingForUpdate(
     transaction: PlatformTransaction,
     siteRef: string,
-    environment: "development" | "preview" | "production",
+    environment: DeploymentEnvironment,
     region: string,
   ): Promise<Readonly<{ bindingRef: string; bindingEpoch: bigint }> | null>;
   reserveRuntimeBindingEpoch(
@@ -45,7 +46,7 @@ export interface SiteAuthorityRepository {
   loadDrainingDeploymentForUpdate(
     transaction: PlatformTransaction,
     siteRef: string,
-    environment: "development" | "preview" | "production",
+    environment: DeploymentEnvironment,
     releaseRef: string,
   ): Promise<Readonly<{ deploymentRef: string; webArtifactDigest: string }> | null>;
   recordDrainObservationAndComplete(

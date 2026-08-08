@@ -1,4 +1,5 @@
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
+import { isDeploymentEnvironment } from "../../../../shared/deployment-environment.js";
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 import type {
@@ -126,7 +127,7 @@ export class PostgresSiteEffectApprovalAuthority implements SiteEffectApprovalAd
 function verifyIdentity(input: ApprovalIdentity): void {
   uuid(input.approvalRef, "SITE_APPROVAL_REF_INVALID");
   identifier(input.siteRef, "SITE_REF_INVALID");
-  if (!["development", "preview", "production"].includes(input.environment)) {
+  if (!isDeploymentEnvironment(input.environment)) {
     throw new Error("SITE_APPROVAL_ENVIRONMENT_INVALID");
   }
   if (input.region.length < 1 || input.region.length > 64 || hasControl(input.region)) {

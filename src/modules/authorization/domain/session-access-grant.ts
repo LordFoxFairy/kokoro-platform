@@ -1,3 +1,8 @@
+import {
+  isDeploymentEnvironment,
+  type DeploymentEnvironment,
+} from "../../../shared/deployment-environment.js";
+
 export const SESSION_ACCESS_AUDIENCES = Object.freeze({
   read: "session.read",
   write: "session.write",
@@ -7,7 +12,6 @@ export const SESSION_ACCESS_AUDIENCES = Object.freeze({
 
 export type SessionAccessPurpose = keyof typeof SESSION_ACCESS_AUDIENCES;
 export type SessionAccessAudience = (typeof SESSION_ACCESS_AUDIENCES)[SessionAccessPurpose];
-export type RuntimeEnvironment = "development" | "preview" | "production";
 
 export type SessionGrantResource =
   | Readonly<{ kind: "project" }>
@@ -23,7 +27,7 @@ export interface ProductWorkloadIdentity {
   readonly siteReleaseRef: string;
   readonly webArtifactDigest: string;
   readonly sessionContractRevision: string;
-  readonly environment: RuntimeEnvironment;
+  readonly environment: DeploymentEnvironment;
   readonly region: string;
   readonly audience: string;
   readonly allowedOperations: readonly string[];
@@ -78,7 +82,7 @@ export interface ProductContextSnapshot {
   readonly siteRef: string;
   readonly siteReleaseRef: string;
   readonly webArtifactDigest: string;
-  readonly runtimeEnvironment: RuntimeEnvironment;
+  readonly runtimeEnvironment: DeploymentEnvironment;
   readonly region: string;
   readonly audience: string;
   readonly sessionContractRevision: string;
@@ -107,7 +111,7 @@ export function parsePublicProductContext(input: unknown): PublicProductContext 
     "cacheMaxAgeSeconds", "issuedAt", "expiresAt",
   ]);
   const environment = bounded(value.runtimeEnvironment, 32);
-  if (!["development", "preview", "production"].includes(environment)) throw corruptContext();
+  if (!isDeploymentEnvironment(environment)) throw corruptContext();
   const locale = strictRecord(value.localePolicy, ["defaultLocale", "allowedLocales"]);
   const modelOptionCatalogs = array(value.modelOptionCatalogs).map((raw) => {
     const catalog = strictRecord(raw, [
@@ -158,7 +162,7 @@ export function parsePublicProductContext(input: unknown): PublicProductContext 
     siteRef: bounded(value.siteRef, 128),
     siteReleaseRef: bounded(value.siteReleaseRef, 128),
     webArtifactDigest: hexDigest(value.webArtifactDigest),
-    runtimeEnvironment: environment as RuntimeEnvironment,
+    runtimeEnvironment: environment,
     region: bounded(value.region, 128),
     audience: bounded(value.audience, 256),
     sessionContractRevision: bounded(value.sessionContractRevision, 128),
@@ -211,7 +215,7 @@ export interface SessionAccessGrantBinding {
   readonly siteRef: string;
   readonly siteReleaseRef: string;
   readonly webArtifactDigest: string;
-  readonly runtimeEnvironment: RuntimeEnvironment;
+  readonly runtimeEnvironment: DeploymentEnvironment;
   readonly region: string;
   readonly sessionContractRevision: string;
   readonly projectRef: string;

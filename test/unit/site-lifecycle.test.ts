@@ -35,7 +35,7 @@ const activationBinding = Object.freeze({
   siteProjectBindingRef: "binding_01",
   siteProjectBindingEpoch: 1n,
   runtimeBindingEpoch: 8n,
-  environment: "production" as const,
+  environment: "staging" as const,
   region: "us-east-1",
   audience: "site-product",
   sessionContractRevision: "browser-v3",

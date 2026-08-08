@@ -13,7 +13,7 @@ const site: SiteAggregate = Object.freeze({
 });
 const deployment: SiteDeploymentBinding = Object.freeze({
   deploymentRef: "deployment_01", bindingRef: "binding_01", siteRef: "site_01",
-  releaseRef: "release_01", environment: "production", region: "us-east-1",
+  releaseRef: "release_01", environment: "staging", region: "us-east-1",
   audience: "site-product", sessionContractRevision: "browser-v3",
   webArtifactDigest: "a".repeat(64), bindingEpoch: 8n, state: "active",
 });

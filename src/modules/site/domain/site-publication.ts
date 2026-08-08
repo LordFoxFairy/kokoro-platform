@@ -1,3 +1,7 @@
+import {
+  isDeploymentEnvironment,
+  type DeploymentEnvironment,
+} from "../../../shared/deployment-environment.js";
 import type { SiteAggregate, SiteRelease } from "./site-lifecycle.js";
 
 export interface SiteAuthorityDefinition extends SiteAggregate {
@@ -10,7 +14,7 @@ export interface SiteProjectBinding {
   readonly repositoryRef: string;
   readonly providerNamespace: string;
   readonly providerProjectRef: string;
-  readonly environment: "development" | "preview" | "production";
+  readonly environment: DeploymentEnvironment;
   readonly region: string;
   readonly workloadIdentityId: string;
   readonly bindingEpoch: bigint;
@@ -57,7 +61,7 @@ export function createSiteProjectBinding(input: Readonly<{
   repositoryRef: string;
   providerNamespace: string;
   providerProjectRef: string;
-  environment: "development" | "preview" | "production";
+  environment: DeploymentEnvironment;
   region: string;
   workloadIdentityId: string;
 }>): SiteProjectBinding {
@@ -68,6 +72,7 @@ export function createSiteProjectBinding(input: Readonly<{
     throw new Error("SITE_PROVIDER_NAMESPACE_INVALID");
   }
   bounded(input.providerProjectRef, "SITE_PROVIDER_PROJECT_REF_INVALID");
+  if (!isDeploymentEnvironment(input.environment)) throw new Error("SITE_ENVIRONMENT_INVALID");
   bounded(input.region, "SITE_REGION_INVALID");
   bounded(input.workloadIdentityId, "SITE_WORKLOAD_IDENTITY_INVALID");
   return Object.freeze({ ...input, bindingEpoch: 1n, state: "active" });

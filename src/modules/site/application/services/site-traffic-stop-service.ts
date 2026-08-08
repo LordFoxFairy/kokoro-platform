@@ -1,4 +1,8 @@
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
+import {
+  isDeploymentEnvironment,
+  type DeploymentEnvironment,
+} from "../../../../shared/deployment-environment.js";
 import type { PlatformUnitOfWork } from "../../../../shared/unit-of-work/index.js";
 import {
   beginSiteTrafficStop,
@@ -189,9 +193,9 @@ function worker(context: VerifiedRequestSecurityContext, siteRef: string): void 
   }
   if (context.target.siteId !== siteRef) throw new Error("SITE_WORKER_SCOPE_MISMATCH");
 }
-function deploymentEnvironment(context: VerifiedRequestSecurityContext): "development" | "preview" | "production" {
-  if (!["development", "preview", "production"].includes(context.environment)) {
+function deploymentEnvironment(context: VerifiedRequestSecurityContext): DeploymentEnvironment {
+  if (!isDeploymentEnvironment(context.environment)) {
     throw new Error("SITE_ENVIRONMENT_INVALID");
   }
-  return context.environment as "development" | "preview" | "production";
+  return context.environment;
 }

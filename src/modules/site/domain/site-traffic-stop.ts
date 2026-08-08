@@ -1,3 +1,7 @@
+import {
+  isDeploymentEnvironment,
+  type DeploymentEnvironment,
+} from "../../../shared/deployment-environment.js";
 import type { SiteAggregate, SiteDeploymentBinding } from "./site-lifecycle.js";
 
 export type SiteTrafficStopAction = "suspend" | "decommission";
@@ -18,7 +22,7 @@ export interface SiteTrafficStopAttempt {
   readonly bindingRef: string;
   readonly runtimeBindingEpoch: bigint;
   readonly providerNamespace: string;
-  readonly environment: "development" | "preview" | "production";
+  readonly environment: DeploymentEnvironment;
   readonly region: string;
   readonly state: SiteTrafficStopState;
   readonly requestedAt: string;
@@ -146,7 +150,7 @@ function verifyAttempt(value: SiteTrafficStopAttempt): void {
   if (value.providerOperationKey !== null) identifier(value.providerOperationKey, "SITE_PROVIDER_OPERATION_KEY_INVALID");
   if (value.observedAt !== null) instant(value.observedAt, "SITE_TRAFFIC_STOP_TIME_INVALID");
   if (value.failureCode !== null) identifier(value.failureCode, "SITE_TRAFFIC_STOP_FAILURE_CODE_INVALID");
-  if (!(["development", "preview", "production"] as const).includes(value.environment)) {
+  if (!isDeploymentEnvironment(value.environment)) {
     throw new Error("SITE_ENVIRONMENT_INVALID");
   }
   if ((value.state === "requested") !== (value.providerOperationKey === null)) {
