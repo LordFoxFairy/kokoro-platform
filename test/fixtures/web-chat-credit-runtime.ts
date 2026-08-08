@@ -1039,7 +1039,7 @@ async function finalizeSite(
   const attemptRef = `${siteId}:activation:1`;
   const deploymentRef = prepared.deploymentRef;
   await adminLifecycle.beginActivation({ commandId: randomUUID(), idempotencyKey: `${siteId}:activate`,
-    attemptRef, approvalRef: `${siteId}:approval:1`, siteRef: siteId,
+    attemptRef, approvalRef: randomUUID(), siteRef: siteId,
     candidateReleaseRef: siteReleaseRef, expectedActiveReleaseRef: null,
     activationFactsDigest: `sha256:${"f".repeat(64)}`,
     audience: "site-product", sessionContractRevision: "session-browser-v3",

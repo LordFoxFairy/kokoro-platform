@@ -387,6 +387,16 @@ describe("Platform-owned Web Chat Credit runtime fixture", () => {
     expect(runActivation).toBeGreaterThan(beginActivation);
     expect(modelCatalog).toBeGreaterThan(runActivation);
   });
+
+  it("generates a fresh UUID for every synthetic activation approval", () => {
+    const finalizeStart = fixtureSource.indexOf("async function finalizeSite");
+    const finalizeEnd = fixtureSource.indexOf("async function setupIdentity", finalizeStart);
+    const finalizeSource = fixtureSource.slice(finalizeStart, finalizeEnd);
+
+    expect([...finalizeSource.matchAll(/approvalRef: randomUUID\(\)/gu)]).toHaveLength(1);
+    expect(finalizeSource).not.toContain(":approval:1");
+    expect(finalizeSource).not.toContain("10000000-0000-4000-8000-000000000001");
+  });
 });
 
 function createSessionTrust(privateDirectory: string, workloadIdentityId: string) {
