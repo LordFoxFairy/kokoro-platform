@@ -1,7 +1,8 @@
 ---
 architectureIndex: 1
 rootId: service.platform.memory
-owners: ["Platform Memory"]
+owners:
+  - "@LordFoxFairy"
 ---
 
 # Platform Memory module

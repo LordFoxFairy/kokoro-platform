@@ -1,7 +1,8 @@
 ---
 architectureIndex: 1
 rootId: service.platform.model-gateway
-owners: ["Platform Model Gateway"]
+owners:
+  - "@LordFoxFairy"
 ---
 
 # Platform Model Gateway

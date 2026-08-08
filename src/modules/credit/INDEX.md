@@ -1,3 +1,10 @@
+---
+architectureIndex: 1
+rootId: service.platform.credit
+owners:
+  - "@LordFoxFairy"
+---
+
 # Credit module
 
 Credit owns Grant, append-only Journal, Hold/allocation and Usage/Rating authority. It does not expose mutable balance

@@ -1,6 +1,8 @@
 ---
 architectureIndex: 1
-owners: ["Platform Architecture"]
+rootId: service.platform.shared
+owners:
+  - "@LordFoxFairy"
 ---
 
 # Shared Platform kernel

@@ -1,3 +1,10 @@
+---
+architectureIndex: 1
+rootId: service.platform.artifact
+owners:
+  - "@LordFoxFairy"
+---
+
 # Artifact owner module
 
 Platform owns Artifact identity, immutable versions, staged/finalized receipts and delivery authorization. Provider and

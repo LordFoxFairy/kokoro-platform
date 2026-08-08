@@ -1,6 +1,8 @@
 ---
 architectureIndex: 1
-owners: ["Platform Admin Control"]
+rootId: service.platform.admin-control
+owners:
+  - "@LordFoxFairy"
 ---
 
 # Admin control

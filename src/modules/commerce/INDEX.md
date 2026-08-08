@@ -1,3 +1,10 @@
+---
+architectureIndex: 1
+rootId: service.platform.commerce
+owners:
+  - "@LordFoxFairy"
+---
+
 # Commerce module
 
 Commerce is a Platform-local owner module. It shares the Platform PostgreSQL database and `PlatformUnitOfWork`; it never calls

@@ -1,6 +1,8 @@
 ---
 architectureIndex: 1
-owners: ["Platform Product Catalog"]
+rootId: service.platform.product-catalog
+owners:
+  - "@LordFoxFairy"
 ---
 
 # Product Catalog publication

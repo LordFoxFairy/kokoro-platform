@@ -1,3 +1,10 @@
+---
+architectureIndex: 1
+rootId: service.platform.identity
+owners:
+  - "@LordFoxFairy"
+---
+
 # Identity module
 
 Identity owns public account, authentication, verification, security-management and personal bootstrap facts inside the Platform

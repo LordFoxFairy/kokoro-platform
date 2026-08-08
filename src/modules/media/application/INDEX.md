@@ -1,3 +1,10 @@
+---
+architectureIndex: 1
+rootId: service.platform.media.application
+owners:
+  - "@LordFoxFairy"
+---
+
 # Media application boundary
 
 Application code coordinates Media use cases and owns outbound ports. The Root-generated request canonicalizer implements

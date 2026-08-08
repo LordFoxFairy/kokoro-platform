@@ -1,6 +1,8 @@
 ---
 architectureIndex: 1
-owners: ["Platform Model Control"]
+rootId: service.platform.model-control
+owners:
+  - "@LordFoxFairy"
 ---
 
 # ModelControl

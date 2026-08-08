@@ -1,3 +1,10 @@
+---
+architectureIndex: 1
+rootId: service.platform.site
+owners:
+  - "@LordFoxFairy"
+---
+
 # Site authority
 
 This module owns the stable Site identity, immutable SiteRelease facts, trusted project/deployment

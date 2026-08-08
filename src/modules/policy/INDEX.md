@@ -1,6 +1,8 @@
 ---
 architectureIndex: 1
-owners: ["Platform Security"]
+rootId: service.platform.policy
+owners:
+  - "@LordFoxFairy"
 ---
 
 # Policy module

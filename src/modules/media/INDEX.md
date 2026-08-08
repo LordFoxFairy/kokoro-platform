@@ -1,7 +1,8 @@
 ---
 architectureIndex: 1
 rootId: service.platform.media
-owners: ["Platform Media"]
+owners:
+  - "@LordFoxFairy"
 ---
 
 # Platform Media module
