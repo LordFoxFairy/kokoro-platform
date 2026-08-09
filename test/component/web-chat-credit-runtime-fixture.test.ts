@@ -9,6 +9,10 @@ import { createPlatformPublicProductionComposition } from
 import { PLATFORM_API_RUNTIME_CONTRACT } from
   "../../src/process/platform-api-runtime-contract.js";
 import {
+  fulfillmentOutputDigest,
+  fulfillmentOutputSetDigest,
+} from "../../src/modules/commerce/domain/canonical-fulfillment.js";
+import {
   PLATFORM_FIXTURE_API_RUNTIME_FILE_FIELDS,
   createPlatformFixtureApiRuntimeAuthority,
   createPlatformFixtureModel,
@@ -18,6 +22,7 @@ import {
   createPlatformFixtureAuthorizationEventAuthority,
   createPlatformFixtureSessionAccessAuthority,
   parsePlatformFixtureCommand,
+  verifyPlatformFixtureRedemptionLineage,
 } from "../fixtures/web-chat-credit-runtime.js";
 
 const platformApiRuntimeFiles = Object.freeze(Object.fromEntries(
@@ -233,6 +238,81 @@ describe("Platform-owned Web Chat Credit runtime fixture", () => {
       .toThrow("PLATFORM_FIXTURE_OBSERVATION_INVALID");
   });
 
+  it("derives redemption product and Grant source evidence from one exact joined lineage", () => {
+    const output = {
+      kind: "credit_grant" as const,
+      outputLineId: "credits",
+      outputOrdinal: 1,
+      occurrence: 1,
+      outputRef: "10000000-0000-4000-8000-000000000004",
+      templateRevisionRef: "credit-program:runtime:1",
+      outputVersion: 1 as const,
+    };
+    const outputDigest = fulfillmentOutputDigest(output);
+    const lineage = {
+      redemptionId: "10000000-0000-4000-8000-000000000001",
+      codeRef: "10000000-0000-4000-8000-000000000002",
+      redemptionState: "fulfilled",
+      redemptionProductVersionRef: "product:runtime:1",
+      redemptionFulfillmentRef: "10000000-0000-4000-8000-000000000003",
+      redemptionBillingAccountRef: "billing:runtime",
+      fulfillmentId: "10000000-0000-4000-8000-000000000003",
+      fulfillmentState: "committed",
+      fulfillmentSourceType: "redemption",
+      fulfillmentSourceRef: "10000000-0000-4000-8000-000000000002",
+      fulfillmentProductVersionRef: "product:runtime:1",
+      fulfillmentOutputSetDigest: fulfillmentOutputSetDigest([{ ...output, outputDigest }]),
+      fulfillmentBillingAccountRef: "billing:runtime",
+      fulfillmentIdempotencyKey: "a".repeat(64),
+      outputKind: "credit_grant",
+      outputLineId: output.outputLineId,
+      outputOrdinal: output.outputOrdinal,
+      occurrence: output.occurrence,
+      outputRef: output.outputRef,
+      templateRevisionRef: output.templateRevisionRef,
+      outputVersion: output.outputVersion,
+      outputDigest,
+      grantId: output.outputRef,
+      grantBillingAccountRef: "billing:runtime",
+      grantSourceType: "redemption",
+      grantSourceRef: `${"a".repeat(64)}:credits:1`,
+      grantCreditProgramRevisionRef: output.templateRevisionRef,
+    };
+
+    expect(verifyPlatformFixtureRedemptionLineage([lineage])).toEqual({
+      redemptionProductSourceVerified: true,
+      redemptionGrantSourceVerified: true,
+    });
+    for (const mutation of [
+      { fulfillmentSourceRef: "10000000-0000-4000-8000-000000000099" },
+      { fulfillmentProductVersionRef: "product:wrong:1" },
+      { fulfillmentOutputSetDigest: "b".repeat(64) },
+    ]) {
+      expect(verifyPlatformFixtureRedemptionLineage([{ ...lineage, ...mutation }])).toEqual({
+        redemptionProductSourceVerified: false,
+        redemptionGrantSourceVerified: false,
+      });
+    }
+    for (const mutation of [
+      { grantSourceRef: `${"a".repeat(64)}:wrong:1` },
+      { grantBillingAccountRef: "billing:wrong" },
+    ]) {
+      expect(verifyPlatformFixtureRedemptionLineage([{ ...lineage, ...mutation }])).toEqual({
+        redemptionProductSourceVerified: true,
+        redemptionGrantSourceVerified: false,
+      });
+    }
+    for (const clause of [
+      "fulfillment.source_id=redemption.code_ref::text",
+      "fulfillment.product_version_ref=redemption.product_version_ref",
+      "actual.output_kind='credit_grant'",
+      "grant_fact.billing_account_ref=fulfillment.billing_account_ref",
+      "grant_fact.source_type='redemption'",
+      "grant_fact.credit_program_revision_ref=actual.template_revision",
+      '"commerce_fulfillment_actual_output"',
+    ]) expect(fixtureSource).toContain(clause);
+  });
+
   it("sets the Gateway workload context required by FORCE RLS before observing Gateway rows", () => {
     expect(modelGatewayMigrationSource).toContain(
       "ALTER TABLE platform.model_gateway_invocation FORCE ROW LEVEL SECURITY",
@@ -362,8 +442,6 @@ describe("Platform-owned Web Chat Credit runtime fixture", () => {
           "previewRedemption",
           "confirmRedemption",
           "recoverRedemptionCommand",
-          "getRedemptionReceipt",
-          "getCreditGrant",
           "listIdentitySessions",
           "listAccountProducts",
           "getCreditSummary",

@@ -124,6 +124,10 @@ import { PLATFORM_API_RUNTIME_CONTRACT } from
   "../../src/process/platform-api-runtime-contract.js";
 import { createCommerceAdministrationComposition } from
   "../../src/process/commerce-admin-composition.js";
+import {
+  fulfillmentOutputDigest,
+  fulfillmentOutputSetDigest,
+} from "../../src/modules/commerce/domain/canonical-fulfillment.js";
 
 export type PlatformFixtureCommand = "prepare" | "finalize" | "observe";
 
@@ -264,6 +268,7 @@ const OBSERVER_RELATIONS = Object.freeze([
   "commerce_redeem_code",
   "commerce_redemption",
   "commerce_fulfillment_transaction",
+  "commerce_fulfillment_actual_output",
 ] as const);
 const UNIT = "credit_micros";
 const LIABILITY_MERCHANT = "merchant:platform-runtime";
@@ -336,6 +341,92 @@ export function createPlatformFixtureObservation(input: ObservationFields): Plat
     throw new Error("PLATFORM_FIXTURE_OBSERVATION_INVALID");
   }
   return Object.freeze({ schemaVersion: 1, kind: "platform-web-chat-credit-runtime-observation", ...input });
+}
+
+const REDEMPTION_LINEAGE_FIELDS = Object.freeze([
+  "redemptionId", "codeRef", "redemptionState", "redemptionProductVersionRef",
+  "redemptionFulfillmentRef", "redemptionBillingAccountRef", "fulfillmentId",
+  "fulfillmentState", "fulfillmentSourceType", "fulfillmentSourceRef",
+  "fulfillmentProductVersionRef", "fulfillmentOutputSetDigest",
+  "fulfillmentBillingAccountRef", "fulfillmentIdempotencyKey", "outputKind",
+  "outputLineId", "outputOrdinal", "occurrence", "outputRef", "templateRevisionRef",
+  "outputVersion", "outputDigest", "grantId", "grantBillingAccountRef",
+  "grantSourceType", "grantSourceRef", "grantCreditProgramRevisionRef",
+] as const);
+
+export function verifyPlatformFixtureRedemptionLineage(value: unknown) {
+  const failed = Object.freeze({
+    redemptionProductSourceVerified: false,
+    redemptionGrantSourceVerified: false,
+  });
+  if (!Array.isArray(value) || value.length !== 1 || !objectRecord(value[0]) ||
+      Object.keys(value[0]).length !== REDEMPTION_LINEAGE_FIELDS.length ||
+      REDEMPTION_LINEAGE_FIELDS.some((field) => !Object.hasOwn(value[0]!, field))) {
+    return failed;
+  }
+  const row = value[0];
+  try {
+    const field = (name: typeof REDEMPTION_LINEAGE_FIELDS[number]) => lineageText(row, name);
+    const outputOrdinal = lineageInteger(row.outputOrdinal);
+    const occurrence = lineageInteger(row.occurrence);
+    const outputVersion = lineageInteger(row.outputVersion);
+    if (outputVersion !== 1) return failed;
+    const output = Object.freeze({
+      kind: field("outputKind") as "credit_grant",
+      outputLineId: field("outputLineId"),
+      outputOrdinal,
+      occurrence,
+      outputRef: field("outputRef"),
+      templateRevisionRef: field("templateRevisionRef"),
+      outputVersion: 1 as const,
+    });
+    if (output.kind !== "credit_grant") return failed;
+    const storedOutputDigest = field("outputDigest");
+    const productVerified =
+      field("redemptionState") === "fulfilled" && field("fulfillmentState") === "committed" &&
+      field("fulfillmentSourceType") === "redemption" &&
+      field("redemptionFulfillmentRef") === field("fulfillmentId") &&
+      field("fulfillmentSourceRef") === field("codeRef") &&
+      field("fulfillmentProductVersionRef") === field("redemptionProductVersionRef") &&
+      field("redemptionBillingAccountRef") === field("fulfillmentBillingAccountRef") &&
+      /^[0-9a-f]{64}$/u.test(storedOutputDigest) &&
+      storedOutputDigest === fulfillmentOutputDigest(output) &&
+      field("fulfillmentOutputSetDigest") === fulfillmentOutputSetDigest([{
+        ...output,
+        outputDigest: storedOutputDigest,
+      }]);
+    const idempotencyKey = field("fulfillmentIdempotencyKey");
+    const grantVerified = productVerified && /^[0-9a-f]{64}$/u.test(idempotencyKey) &&
+      field("grantId") === output.outputRef &&
+      field("grantBillingAccountRef") === field("fulfillmentBillingAccountRef") &&
+      field("grantSourceType") === "redemption" &&
+      field("grantSourceRef") === `${idempotencyKey}:${output.outputLineId}:${output.occurrence}` &&
+      field("grantCreditProgramRevisionRef") === output.templateRevisionRef;
+    return Object.freeze({
+      redemptionProductSourceVerified: productVerified,
+      redemptionGrantSourceVerified: grantVerified,
+    });
+  } catch {
+    return failed;
+  }
+}
+
+function lineageText(
+  row: Record<string, unknown>,
+  name: typeof REDEMPTION_LINEAGE_FIELDS[number],
+): string {
+  const value = row[name];
+  if (typeof value !== "string" || value.length < 1 || value.length > 256 || control(value)) {
+    throw new Error("PLATFORM_FIXTURE_REDEMPTION_LINEAGE_INVALID");
+  }
+  return value;
+}
+
+function lineageInteger(value: unknown): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > 32) {
+    throw new Error("PLATFORM_FIXTURE_REDEMPTION_LINEAGE_INVALID");
+  }
+  return value as number;
 }
 
 export async function createPlatformFixtureAuthorizationEventAuthority() {
@@ -459,8 +550,6 @@ export async function createPlatformFixtureApiRuntimeAuthority(input: Readonly<{
       "previewRedemption",
       "confirmRedemption",
       "recoverRedemptionCommand",
-      "getRedemptionReceipt",
-      "getCreditGrant",
       "listIdentitySessions",
       "listAccountProducts",
       "getCreditSummary",
@@ -889,6 +978,7 @@ export async function observePlatformFixture(
     };
     const redemptionCounts = [counts.claimedRedemptionCodeCount, counts.redemptionCount,
       counts.redemptionFulfillmentCount, counts.redemptionGrantCount];
+    const redemptionLineage = verifyPlatformFixtureRedemptionLineage(row.redemptionLineage);
     return createPlatformFixtureObservation({ ...counts,
       providerEffectOnce: counts.providerInvocationCount === 1,
       evidenceChainFinalized: counts.providerAttemptCount === 1 && counts.finalizedEvidenceCount === 1,
@@ -899,8 +989,7 @@ export async function observePlatformFixture(
       availableConsumedDeltaEqual: row.availableConsumedDeltaEqual === true,
       redemptionFulfilledOnce: redemptionCounts.every((value) => value === 1),
       redemptionReplayStable: redemptionCounts.every((value) => value <= 1),
-      redemptionProductSourceVerified: row.redemptionProductSourceVerified === true,
-      redemptionGrantSourceVerified: row.redemptionGrantSourceVerified === true,
+      ...redemptionLineage,
     });
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
@@ -1697,8 +1786,7 @@ interface ObservationRow extends Record<string, unknown> {
   redemptionFulfillmentCount: number;
   redemptionGrantCount: number;
   availableConsumedDeltaEqual: boolean;
-  redemptionProductSourceVerified: boolean;
-  redemptionGrantSourceVerified: boolean;
+  redemptionLineage: unknown;
 }
 
 const OBSERVATION_SQL = `WITH ledger AS (
@@ -1726,11 +1814,56 @@ SELECT
     AS "redemptionFulfillmentCount",
   (SELECT count(*)::int FROM platform.credit_grant
     WHERE site_ref=$1 AND source_type='redemption') AS "redemptionGrantCount",
-  (SELECT count(*)=1 FROM platform.commerce_fulfillment_transaction
-    WHERE site_ref=$1 AND source_type='redemption' AND state='committed')
-    AS "redemptionProductSourceVerified",
-  (SELECT count(*)=1 FROM platform.credit_grant
-    WHERE site_ref=$1 AND source_type='redemption') AS "redemptionGrantSourceVerified",
+  COALESCE((SELECT jsonb_agg(jsonb_build_object(
+      'redemptionId',redemption.redemption_id::text,
+      'codeRef',redemption.code_ref::text,
+      'redemptionState',redemption.state,
+      'redemptionProductVersionRef',redemption.product_version_ref,
+      'redemptionFulfillmentRef',redemption.fulfillment_ref::text,
+      'redemptionBillingAccountRef',redemption.billing_account_ref,
+      'fulfillmentId',fulfillment.fulfillment_id::text,
+      'fulfillmentState',fulfillment.state,
+      'fulfillmentSourceType',fulfillment.source_type,
+      'fulfillmentSourceRef',fulfillment.source_id,
+      'fulfillmentProductVersionRef',fulfillment.product_version_ref,
+      'fulfillmentOutputSetDigest',fulfillment.output_set_digest,
+      'fulfillmentBillingAccountRef',fulfillment.billing_account_ref,
+      'fulfillmentIdempotencyKey',fulfillment.idempotency_key,
+      'outputKind',actual.output_kind,
+      'outputLineId',actual.output_line_id,
+      'outputOrdinal',actual.output_ordinal,
+      'occurrence',actual.occurrence,
+      'outputRef',actual.output_ref,
+      'templateRevisionRef',actual.template_revision,
+      'outputVersion',actual.output_version,
+      'outputDigest',actual.output_digest,
+      'grantId',grant_fact.credit_grant_id::text,
+      'grantBillingAccountRef',grant_fact.billing_account_ref,
+      'grantSourceType',grant_fact.source_type,
+      'grantSourceRef',grant_fact.source_ref,
+      'grantCreditProgramRevisionRef',grant_fact.credit_program_revision_ref
+    ) ORDER BY actual.output_ordinal,actual.occurrence)
+    FROM platform.commerce_redemption redemption
+    JOIN platform.commerce_fulfillment_transaction fulfillment
+      ON fulfillment.fulfillment_id=redemption.fulfillment_ref
+     AND fulfillment.site_ref=redemption.site_ref
+     AND fulfillment.state='committed'
+     AND fulfillment.source_type='redemption'
+     AND fulfillment.source_id=redemption.code_ref::text
+     AND fulfillment.product_version_ref=redemption.product_version_ref
+    JOIN platform.commerce_fulfillment_actual_output actual
+      ON actual.fulfillment_id=fulfillment.fulfillment_id
+     AND actual.output_kind='credit_grant'
+    JOIN platform.credit_grant grant_fact
+      ON grant_fact.credit_grant_id::text=actual.output_ref
+     AND grant_fact.site_ref=fulfillment.site_ref
+     AND grant_fact.billing_account_ref=fulfillment.billing_account_ref
+     AND grant_fact.source_type='redemption'
+     AND grant_fact.source_ref=fulfillment.idempotency_key || ':' ||
+       actual.output_line_id || ':' || actual.occurrence::text
+     AND grant_fact.credit_program_revision_ref=actual.template_revision
+    WHERE redemption.site_ref=$1 AND redemption.state='fulfilled'),
+    '[]'::jsonb) AS "redemptionLineage",
   (SELECT issued.total-ledger.available=ledger.consumed FROM issued CROSS JOIN ledger)
     AS "availableConsumedDeltaEqual"`;
 
