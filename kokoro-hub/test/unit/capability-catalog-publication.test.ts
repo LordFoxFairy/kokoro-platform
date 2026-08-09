@@ -18,6 +18,8 @@ import {
   CatalogProjectionState,
   FetchSkillArtifactRequestSchema,
   FreezeCatalogEffectSchema,
+  FreezeCatalogRequestSchema,
+  GetCatalogPublicationRequestSchema,
   HubCatalogService,
   HubRuntimeService,
   SkillGrantSelectionSchema,
@@ -220,7 +222,76 @@ describe("signed capability catalog publication", () => {
       ConnectError.from(error).code === Code.Canceled);
     expect(fetchArtifact).toHaveBeenCalledWith(expect.any(Object), context.signal);
   });
+
+  it("fences catalog owner calls before dispatch and after an in-flight cancellation", async () => {
+    const platformCaller = "spiffe://kokoro/platform";
+    const frozen = publicationRecord();
+    const freeze = vi.fn().mockResolvedValue(frozen);
+    const delayedGet = deferredValue<CapabilityCatalogPublicationRecord>();
+    const get = vi.fn().mockReturnValue(delayedGet.promise);
+    const catalog = createHubCatalogConnectService({
+      publication: { freeze, get },
+      caller: { resolve: () => ({ identity: platformCaller }) },
+      platformCallerIdentity: platformCaller,
+    });
+    const snapshot = create(CapabilityCatalogSnapshotSchema, SNAPSHOT);
+    const effect = create(FreezeCatalogEffectSchema, {
+      siteId: "site-a",
+      siteReleaseRef: "release-7",
+      snapshot,
+    });
+    const expired = new AbortController();
+    expired.abort(new ConnectError("request deadline exceeded", Code.DeadlineExceeded));
+    const freezeContext = createHandlerContext({
+      service: HubCatalogService,
+      method: HubCatalogService.method.freezeCatalog,
+      protocolName: "connect",
+      requestMethod: "POST",
+      url: "/kokoro.platform.capability.v1.HubCatalogService/FreezeCatalog",
+      requestSignal: expired.signal,
+    });
+    await expect(catalog.freezeCatalog(create(FreezeCatalogRequestSchema, {
+      command: {
+        commandId: "freeze-1",
+        idempotencyKey: "release-7",
+        digestAlgorithm: CommandDigestAlgorithm.SHA256_PROTOBUF_V1,
+        requestDigest: freezeCatalogRequestDigest(effect),
+      },
+      effect,
+    }), freezeContext)).rejects.toSatisfy((error: unknown) =>
+      ConnectError.from(error).code === Code.DeadlineExceeded);
+    expect(freeze).not.toHaveBeenCalled();
+
+    const canceled = new AbortController();
+    const getContext = createHandlerContext({
+      service: HubCatalogService,
+      method: HubCatalogService.method.getCatalogPublication,
+      protocolName: "connect",
+      requestMethod: "POST",
+      url: "/kokoro.platform.capability.v1.HubCatalogService/GetCatalogPublication",
+      requestSignal: canceled.signal,
+    });
+    const result = catalog.getCatalogPublication(create(GetCatalogPublicationRequestSchema, {
+      commandId: "freeze-1",
+      idempotencyKey: "release-7",
+      digestAlgorithm: CommandDigestAlgorithm.SHA256_PROTOBUF_V1,
+      requestDigest: "1".repeat(64),
+      siteId: "site-a",
+      siteReleaseRef: "release-7",
+    }), getContext);
+    await vi.waitFor(() => expect(get).toHaveBeenCalledOnce());
+    canceled.abort(new ConnectError("request canceled", Code.Canceled));
+    delayedGet.resolve(frozen);
+    await expect(result).rejects.toSatisfy((error: unknown) =>
+      ConnectError.from(error).code === Code.Canceled);
+  });
 });
+
+function deferredValue<Value>(): Readonly<{ promise: Promise<Value>; resolve(value: Value): void }> {
+  let resolvePromise: (value: Value) => void = () => undefined;
+  const promise = new Promise<Value>((resolveValue) => { resolvePromise = resolveValue; });
+  return Object.freeze({ promise, resolve: resolvePromise });
+}
 
 function publicationRecord(): CapabilityCatalogPublicationRecord {
   const { privateKey } = generateKeyPairSync("ed25519");

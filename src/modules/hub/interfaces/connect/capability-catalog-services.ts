@@ -58,14 +58,15 @@ export function createHubCatalogConnectService(input: Readonly<{
           request.command.requestDigest !== freezeCatalogRequestDigest(request.effect)) {
         throw new ConnectError("catalog freeze command invalid", Code.InvalidArgument);
       }
-      const record = await input.publication.freeze({
+      throwIfCanceled(context.signal);
+      const record = await cancellationBound(context.signal, input.publication.freeze({
         commandId: request.command.commandId,
         idempotencyKey: request.command.idempotencyKey,
         requestDigest: request.command.requestDigest,
         siteId: request.effect.siteId,
         siteReleaseRef: request.effect.siteReleaseRef,
         snapshot: mapSnapshot(request.effect.snapshot),
-      });
+      }));
       return create(FreezeCatalogResponseSchema, {
         receipt: receipt(record),
         publication: publication(record),
@@ -78,7 +79,8 @@ export function createHubCatalogConnectService(input: Readonly<{
       if (request.digestAlgorithm !== CommandDigestAlgorithm.SHA256_PROTOBUF_V1) {
         throw new ConnectError("catalog publication query invalid", Code.InvalidArgument);
       }
-      const record = await input.publication.get(request);
+      throwIfCanceled(context.signal);
+      const record = await cancellationBound(context.signal, input.publication.get(request));
       if (record === null) throw new ConnectError("catalog publication not found", Code.NotFound);
       return create(GetCatalogPublicationResponseSchema, {
         receipt: receipt(record),
