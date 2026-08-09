@@ -239,6 +239,20 @@ export const PLATFORM_FIXTURE_API_RUNTIME_FILE_FIELDS = Object.freeze([
   "identityDeliveryKeyFile",
   "identityTotpKeyRingFile",
 ] as const);
+
+// One fixture turn authorizes the Agent's 65,536-token output ceiling plus a
+// 65,536-byte conservative input-token ceiling. The representative 15-tool
+// component request locks the current shape while the explicit input ceiling
+// leaves bounded headroom for prompt and tool-schema growth.
+export const PLATFORM_FIXTURE_MODEL_USAGE_LIMITS = Object.freeze({
+  maximumInputUnits: 65_536n,
+  maximumOutputUnits: 65_536n,
+  maximumRatedAmount: 131_072n,
+  segmentMaximum: 131_072n,
+  rootCeiling: 131_072n,
+  initialGrantAmount: 1_000_000n,
+});
+
 type PlatformFixtureApiRuntimeFileField = typeof PLATFORM_FIXTURE_API_RUNTIME_FILE_FIELDS[number];
 type PlatformFixtureApiRuntimeFiles = Readonly<Record<PlatformFixtureApiRuntimeFileField, string>>;
 
@@ -1065,8 +1079,10 @@ function launchProfileFixture(siteId: string, siteReleaseRef: string) {
       approval_tools: [] as string[], review_tools: [] as string[],
       subagent_create: "deny" as const, filesystem: "read_only" as const,
     }), billing: Object.freeze({ unit: UNIT, liabilityMerchantAccountRef: LIABILITY_MERCHANT,
-      ratingPolicyRevisionRef: `${siteId}:rating-policy:chat-v1`, rootCeiling: "1000",
-      segmentMaximum: "500", surfaceRef: "chat", capabilityKey: "model.chat",
+      ratingPolicyRevisionRef: `${siteId}:rating-policy:chat-v1`,
+      rootCeiling: PLATFORM_FIXTURE_MODEL_USAGE_LIMITS.rootCeiling.toString(),
+      segmentMaximum: PLATFORM_FIXTURE_MODEL_USAGE_LIMITS.segmentMaximum.toString(),
+      surfaceRef: "chat", capabilityKey: "model.chat",
     }) });
   const publication = defineAdmissionLaunchProfilePublication({ siteId, siteReleaseRef,
     snapshot, publishedAt: new Date().toISOString() });
@@ -1348,7 +1364,8 @@ async function setupCredit(
     await new PostgresCreditGrantProgram().publishRevision(transaction, {
       revisionRef: creditProgramRevisionRef, siteId: input.siteId,
       programRef: `${input.siteId}:starter`, revision: 1n, bucketClass: "permanent",
-      unit: UNIT, amount: "1000000", burnPriority: 100, scopePolicy,
+      unit: UNIT, amount: PLATFORM_FIXTURE_MODEL_USAGE_LIMITS.initialGrantAmount.toString(),
+      burnPriority: 100, scopePolicy,
       liabilityMerchantAccountId: LIABILITY_MERCHANT, windowKind: "none", rolloverPolicy: "none",
       calendarZone: null, windowAnchor: null, expiresAfterSeconds: null,
       revisionDigest: creditProgramRevisionDigest, catalogEpoch: 1n, publishedAt: now,
@@ -1366,7 +1383,8 @@ async function setupCredit(
       creditProgramRevisionRef, creditProgramRevision: 1n,
       creditProgramRevisionDigest, sourceType: "admin_grant", sourceRef: `${input.siteId}:initial-credit`,
       sourceWindowKey: "", businessOperationKey: `${input.siteId}:initial-credit`,
-      bucketClass: "permanent", amount: "1000000", burnPriority: 100,
+      bucketClass: "permanent",
+      amount: PLATFORM_FIXTURE_MODEL_USAGE_LIMITS.initialGrantAmount.toString(), burnPriority: 100,
       scopePolicy, acquiredAt: now, effectiveAt: now, expiresAt: null,
     }] });
     if (prepared.kind !== "ready") throw new Error("PLATFORM_FIXTURE_CREDIT_UNAVAILABLE");

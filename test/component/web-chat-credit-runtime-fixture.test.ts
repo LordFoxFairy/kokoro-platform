@@ -3,7 +3,15 @@ import { createHash, verify, X509Certificate } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { UsageSettlementService } from
+  "../../src/modules/credit/application/usage-settlement-service.js";
+import type { UsageSettlementRepository } from
+  "../../src/modules/credit/application/contracts/usage-settlement-repository.js";
+import { ModelGatewayService, type ModelGatewayRequest } from
+  "../../src/modules/model-gateway/application/model-gateway-service.js";
+import { DirectOpenAiChatAdapter } from
+  "../../src/modules/model-gateway/infrastructure/http/openai-compatible-chat-adapter.js";
 import { createPlatformPublicProductionComposition } from
   "../../src/process/platform-public-composition.js";
 import { PLATFORM_API_RUNTIME_CONTRACT } from
@@ -14,6 +22,7 @@ import {
 } from "../../src/modules/commerce/domain/canonical-fulfillment.js";
 import {
   PLATFORM_FIXTURE_API_RUNTIME_FILE_FIELDS,
+  PLATFORM_FIXTURE_MODEL_USAGE_LIMITS,
   createPlatformFixtureApiRuntimeAuthority,
   createPlatformFixtureModel,
   createPlatformFixtureObservation,
@@ -59,6 +68,147 @@ const modelGatewayMigrationSource = readFileSync(new URL(
 ), "utf8");
 
 describe("Platform-owned Web Chat Credit runtime fixture", () => {
+  it("funds the representative DeepAgents maximum through the production Direct adapter", async () => {
+    const providerFetch = vi.fn(async () => new Response());
+    const adapter = new DirectOpenAiChatAdapter({
+      endpoint: "https://provider.fixture.invalid/v1",
+      apiKey: "fixture-provider-key",
+      fetch: providerFetch,
+    });
+    const prepared = adapter.prepare(representativeDeepAgentsRequest(), modelAuthorization());
+    const maximumInput = dimension(prepared.maximumDimensions, "input_tokens");
+    const maximumOutput = dimension(prepared.maximumDimensions, "output_tokens");
+    const maximumRatedAmount = maximumInput + maximumOutput;
+
+    expect(maximumInput).toBeGreaterThanOrEqual(30_213n);
+    expect(maximumInput).toBeLessThanOrEqual(PLATFORM_FIXTURE_MODEL_USAGE_LIMITS.maximumInputUnits);
+    expect(maximumOutput).toBe(65_536n);
+    expect(maximumOutput).toBe(PLATFORM_FIXTURE_MODEL_USAGE_LIMITS.maximumOutputUnits);
+    expect(PLATFORM_FIXTURE_MODEL_USAGE_LIMITS.maximumRatedAmount).toBe(
+      PLATFORM_FIXTURE_MODEL_USAGE_LIMITS.maximumInputUnits +
+      PLATFORM_FIXTURE_MODEL_USAGE_LIMITS.maximumOutputUnits,
+    );
+    expect(maximumRatedAmount).toBeLessThanOrEqual(
+      PLATFORM_FIXTURE_MODEL_USAGE_LIMITS.maximumRatedAmount,
+    );
+    expect(PLATFORM_FIXTURE_MODEL_USAGE_LIMITS.segmentMaximum)
+      .toBeGreaterThanOrEqual(PLATFORM_FIXTURE_MODEL_USAGE_LIMITS.maximumRatedAmount);
+    expect(PLATFORM_FIXTURE_MODEL_USAGE_LIMITS.rootCeiling)
+      .toBeGreaterThanOrEqual(PLATFORM_FIXTURE_MODEL_USAGE_LIMITS.segmentMaximum);
+    expect(PLATFORM_FIXTURE_MODEL_USAGE_LIMITS.initialGrantAmount)
+      .toBeGreaterThanOrEqual(PLATFORM_FIXTURE_MODEL_USAGE_LIMITS.rootCeiling);
+    expect(PLATFORM_FIXTURE_MODEL_USAGE_LIMITS.initialGrantAmount).toBe(1_000_000n);
+    expect(providerFetch).not.toHaveBeenCalled();
+    const gatewayAttemptPersist = vi.fn(async (_transaction, input) => ({
+      kind: "accepted" as const,
+      value: input.receipt,
+    }));
+    const gatewayUsage = new UsageSettlementService({
+      repository: usageRepositoryWithSegmentMaximum(
+        PLATFORM_FIXTURE_MODEL_USAGE_LIMITS.segmentMaximum,
+        gatewayAttemptPersist,
+      ),
+    });
+    const persistAccepted = vi.fn(async (_transaction, record) => ({
+      invocationRef: record.invocationRef,
+      attemptRef: record.attemptRef,
+      sequence: 1n,
+      previousFrameDigest: "0".repeat(64),
+      frameDigest: "1".repeat(64),
+      payload: { kind: "accepted" as const },
+    }));
+    const gateway = modelGatewayFixture({
+      provider: adapter,
+      usage: gatewayUsage,
+      persistAccepted,
+    });
+    const stream = gateway.stream(
+      gatewayStreamInput(representativeDeepAgentsRequest()),
+    )[Symbol.asyncIterator]();
+    await expect(stream.next()).resolves.toMatchObject({
+      done: false,
+      value: { sequence: 1n, payload: { kind: "accepted" } },
+    });
+    await stream.return?.();
+    expect(gatewayAttemptPersist).toHaveBeenCalledOnce();
+    expect(persistAccepted).toHaveBeenCalledOnce();
+    expect(providerFetch).not.toHaveBeenCalled();
+    expect(fixtureSource).toContain(
+      "rootCeiling: PLATFORM_FIXTURE_MODEL_USAGE_LIMITS.rootCeiling.toString()",
+    );
+    expect(fixtureSource).toContain(
+      "segmentMaximum: PLATFORM_FIXTURE_MODEL_USAGE_LIMITS.segmentMaximum.toString()",
+    );
+    expect(fixtureSource.match(
+      /amount: PLATFORM_FIXTURE_MODEL_USAGE_LIMITS\.initialGrantAmount\.toString\(\)/gu,
+    )).toHaveLength(2);
+  });
+
+  it("fails before invocation/provider when the old 500-unit segment receives that request", async () => {
+    const providerFetch = vi.fn(async () => new Response());
+    const provider = new DirectOpenAiChatAdapter({
+      endpoint: "https://provider.fixture.invalid/v1",
+      apiKey: "fixture-provider-key",
+      fetch: providerFetch,
+    });
+    const request = representativeDeepAgentsRequest();
+    const authorization = modelAuthorization();
+    const prepared = provider.prepare(request, authorization);
+    const persistAttemptIntent = vi.fn();
+    const usageRepository = usageRepositoryWithSegmentMaximum(500n, persistAttemptIntent);
+    const usage = new UsageSettlementService({ repository: usageRepository });
+    const usageOutcome = await usage.prepareAttempt({} as never, usageAttemptInput(
+      prepared.maximumDimensions,
+    ));
+    expect(usageOutcome).toEqual({
+      kind: "invalid_state",
+      code: "CREDIT_USAGE_ATTEMPT_CAPACITY_EXCEEDED",
+    });
+    expect(persistAttemptIntent).not.toHaveBeenCalled();
+
+    const persistAccepted = vi.fn();
+    const gateway = modelGatewayFixture({
+      provider,
+      usage,
+      persistAccepted,
+    });
+    const stream = gateway.stream(gatewayStreamInput(request))[Symbol.asyncIterator]();
+    await expect(stream.next()).rejects.toThrow("MODEL_GATEWAY_USAGE_PREPARE_INVALID_STATE");
+    expect(persistAccepted).not.toHaveBeenCalled();
+    expect(providerFetch).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when future input, output, or rating mutations exceed the attempt budget", async () => {
+    const provider = new DirectOpenAiChatAdapter({
+      endpoint: "https://provider.fixture.invalid/v1",
+      apiKey: "fixture-provider-key",
+      fetch: async () => new Response(),
+    });
+    const baseline = representativeDeepAgentsRequest();
+    const mutations = [
+      { name: "input", request: withSystemPromptGrowth(baseline, 65_536), rate: 1n },
+      { name: "output", request: { ...baseline, maxOutputTokens: 131_072 }, rate: 1n },
+      { name: "rating", request: baseline, rate: 2n },
+    ] as const;
+    for (const mutation of mutations) {
+      const prepared = provider.prepare(mutation.request, modelAuthorization());
+      const persistAttemptIntent = vi.fn();
+      const usage = new UsageSettlementService({
+        repository: usageRepositoryWithSegmentMaximum(
+          PLATFORM_FIXTURE_MODEL_USAGE_LIMITS.segmentMaximum,
+          persistAttemptIntent,
+          mutation.rate,
+        ),
+      });
+      await expect(usage.prepareAttempt({} as never, usageAttemptInput(prepared.maximumDimensions)),
+        mutation.name).resolves.toEqual({
+        kind: "invalid_state",
+        code: "CREDIT_USAGE_ATTEMPT_CAPACITY_EXCEEDED",
+      });
+      expect(persistAttemptIntent, mutation.name).not.toHaveBeenCalled();
+    }
+  });
+
   it("defaults to direct and binds each explicit provider without fallback", () => {
     const siteId = "site:web-chat-credit-runtime";
     const firstDirect = createPlatformFixtureModel(siteId, {});
@@ -505,6 +655,220 @@ describe("Platform-owned Web Chat Credit runtime fixture", () => {
     expect(finalizeSource).not.toContain("10000000-0000-4000-8000-000000000001");
   });
 });
+
+function representativeDeepAgentsRequest(): ModelGatewayRequest {
+  const tools = Array.from({ length: 15 }, (_, toolIndex) => ({
+    name: `deep_agent_tool_${toolIndex}`,
+    description: `Representative DeepAgents tool ${toolIndex}. ${"bounded description ".repeat(18)}`,
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: Object.fromEntries(Array.from({ length: 12 }, (_, propertyIndex) => [
+        `argument_${propertyIndex}`,
+        {
+          type: "string",
+          description: `Bounded argument ${propertyIndex}. ${"schema guidance ".repeat(8)}`,
+        },
+      ])),
+      required: ["argument_0"],
+    },
+  }));
+  return Object.freeze({
+    protocol: "openai.chat.completions.v1",
+    model: "chat-primary",
+    messages: Object.freeze([
+      Object.freeze({
+        role: "system" as const,
+        content: `Representative DeepAgents system policy. ${"bounded orchestration policy ".repeat(420)}`,
+        toolCalls: Object.freeze([]),
+      }),
+      Object.freeze({ role: "user" as const, content: "Complete the bounded fixture turn.",
+        toolCalls: Object.freeze([]) }),
+    ]),
+    maxOutputTokens: 65_536,
+    tools: Object.freeze(tools),
+    toolChoice: "auto",
+  });
+}
+
+function withSystemPromptGrowth(request: ModelGatewayRequest, bytes: number): ModelGatewayRequest {
+  const [system, ...remaining] = request.messages;
+  if (system === undefined || system.role !== "system") {
+    throw new Error("PLATFORM_FIXTURE_MODEL_SYSTEM_PROMPT_MISSING");
+  }
+  return Object.freeze({
+    ...request,
+    messages: Object.freeze([
+      Object.freeze({ ...system, content: `${system.content}${"x".repeat(bytes)}` }),
+      ...remaining,
+    ]),
+  });
+}
+
+function modelAuthorization() {
+  return Object.freeze({
+    modelAuthorizationHandle: `model-authorization:sha256:${"a".repeat(64)}`,
+    siteId: "site:web-chat-credit-runtime",
+    executionManifestRef: "execution-manifest:fixture",
+    authorizationSegmentRef: "authorization-segment:fixture",
+    authorizedGatewayModel: "chat-primary",
+    providerModel: "provider-chat-fixture",
+    adapterKind: "direct" as const,
+    expiresAt: "2099-01-01T00:00:00.000Z",
+  });
+}
+
+function dimension(
+  dimensions: readonly Readonly<{ dimensionKey: string; quantity: bigint }>[],
+  key: string,
+): bigint {
+  const value = dimensions.find(({ dimensionKey }) => dimensionKey === key)?.quantity;
+  if (value === undefined) throw new Error("PLATFORM_FIXTURE_MODEL_DIMENSION_MISSING");
+  return value;
+}
+
+function usageRepositoryWithSegmentMaximum(
+  maximumAmount: bigint,
+  persistAttemptIntent: ReturnType<typeof vi.fn>,
+  rate = 1n,
+): UsageSettlementRepository {
+  const context = {
+    siteId: "site:web-chat-credit-runtime",
+    billingAccountId: "billing:fixture",
+    creditAccountId: "credit-account:fixture",
+    unit: "credit_micros",
+    liabilityMerchantAccountId: "merchant:fixture",
+    ratingPolicyRevisionRef: "rating-policy:fixture",
+    executionBudgetRootRef: "budget-root:fixture",
+    executionBudgetRootState: "open",
+    executionBudgetRootVersion: 1n,
+    creditHoldRef: "credit-hold:fixture",
+    creditHoldState: "open",
+    creditHoldFenceEpoch: 1n,
+    budgetAllocationRef: "budget-allocation:fixture",
+    authorizationSegmentRef: "authorization-segment:fixture",
+    executionManifestRef: "execution-manifest:fixture",
+    expiresAt: "2099-01-01T00:00:00.000Z",
+    consumptionScope: { surfaceRef: "chat", capabilityKey: "model.chat", agentRef: null },
+    ratingSnapshotRef: null,
+    allocation: {
+      revision: 2n,
+      allocationEpoch: 1n,
+      creditCeiling: maximumAmount,
+      unassignedStock: 0n,
+      activeChildReservedStock: 0n,
+      committedStock: maximumAmount,
+      capturedCumulative: 0n,
+      returnedToParentCumulative: 0n,
+      state: "active",
+    },
+    segment: {
+      state: "committed",
+      maximumAmount,
+      allocationEpoch: 1n,
+      preparedAgainstAllocationRevision: 1n,
+      committedFromAllocationRevision: 1n,
+      committedToAllocationRevision: 2n,
+      aggregateVersion: 2n,
+      fenceEpoch: 2n,
+      resolutionKind: null,
+      resolutionRef: null,
+      committedAt: "2026-08-09T00:00:00.000Z",
+      settledAt: null,
+      releasedAt: null,
+    },
+    ratingPolicy: {
+      ratingPolicyRevisionRef: "rating-policy:fixture",
+      customerUnit: "credit_micros",
+      chargeableAttemptOutcomes: ["succeeded", "failed_after_effect"],
+      minimumAmount: 0n,
+      rules: [
+        { dimensionKey: "input_tokens", sourceUnit: "token", quantum: 1n,
+          amountPerQuantum: rate, required: true },
+        { dimensionKey: "output_tokens", sourceUnit: "token", quantum: 1n,
+          amountPerQuantum: rate, required: true },
+      ],
+    },
+  };
+  return {
+    findCommandReceipt: async () => ({ kind: "none" }),
+    lockUsageContext: async () => context,
+    loadCommittedAttemptMaximum: async () => 0n,
+    persistAttemptIntent,
+  } as unknown as UsageSettlementRepository;
+}
+
+function modelGatewayFixture(input: Readonly<{
+  provider: DirectOpenAiChatAdapter;
+  usage: UsageSettlementService;
+  persistAccepted: ReturnType<typeof vi.fn>;
+}>): ModelGatewayService {
+  const authorization = modelAuthorization();
+  return new ModelGatewayService({
+    unitOfWork: {
+      scanDispatchCandidates: async () => [],
+      execute: async (_scope, work) => work({} as never, authorization),
+    },
+    repository: {
+      lockInvocation: async () => null,
+      persistTerminal: async () => undefined,
+      persistOutcomeUnknown: async () => undefined,
+    },
+    provider: input.provider,
+    usageOwner: input.usage,
+    streamingRepository: {
+      reserveCapacity: async () => undefined,
+      persistAccepted: input.persistAccepted,
+      claimInvocation: async () => null,
+      listFrames: async (_transaction: unknown, { record }: Readonly<{
+        record: Readonly<{ invocationRef: string; attemptRef: string }>;
+      }>) => [{
+        invocationRef: record.invocationRef,
+        attemptRef: record.attemptRef,
+        sequence: 1n,
+        previousFrameDigest: "0".repeat(64),
+        frameDigest: "1".repeat(64),
+        payload: { kind: "accepted" as const },
+      }],
+    } as never,
+    clock: () => new Date("2026-08-09T00:00:00.000Z"),
+    reference: () => "fixture-reference",
+  });
+}
+
+function gatewayStreamInput(request: ModelGatewayRequest) {
+  const authorization = modelAuthorization();
+  return Object.freeze({
+    modelAuthorizationHandle: authorization.modelAuthorizationHandle,
+    logicalCallRef: "logical-call:fixture",
+    attemptRef: "attempt:fixture",
+    producerContext: "ga-run:fixture",
+    producerGeneration: 1n,
+    request,
+    afterSequence: 0n,
+    signal: new AbortController().signal,
+  });
+}
+
+function usageAttemptInput(maximumDimensions: readonly Readonly<{
+  dimensionKey: string;
+  sourceUnit: string;
+  quantity: bigint;
+}>[]) {
+  return Object.freeze({
+    siteId: "site:web-chat-credit-runtime",
+    authorizationSegmentRef: "authorization-segment:fixture",
+    executionManifestRef: "execution-manifest:fixture",
+    producerKind: "model_gateway" as const,
+    producerContext: "ga-run:fixture",
+    producerGeneration: 1n,
+    attemptRef: "attempt:fixture",
+    logicalEffectRef: "logical-call:fixture",
+    maximumDimensions,
+    businessOperationKey: "model-gateway:prepare:fixture",
+    requestDigest: "b".repeat(64),
+  });
+}
 
 function createSessionTrust(privateDirectory: string, workloadIdentityId: string) {
   const certificateAuthorityFile = join(privateDirectory, "session-ca.pem");
