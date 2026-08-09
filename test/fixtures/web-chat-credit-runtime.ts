@@ -99,6 +99,10 @@ import { verifyRequestSecurityContext, type WorkloadKind } from
 import { PlatformUnitOfWork } from "../../src/shared/unit-of-work/index.js";
 import { canonicalizeModelInventory } from
   "../../src/modules/model-control/domain/model-catalog.js";
+import {
+  DIRECT_MODEL_PROVIDER_IDENTITY,
+  DIRECT_MODEL_PROVIDER_SECRET_REF,
+} from "../../src/modules/model-control/domain/direct-model-provider-identity.js";
 import { materializeModelOptionDraftSet } from
   "../../src/modules/model-control/domain/model-option-materialization.js";
 import { createSiteReleaseModelCatalogRevision } from
@@ -873,12 +877,23 @@ export function createPlatformFixtureModel(
   const inventory = canonicalizeModelInventory({
     schemaVersion: 1,
     source: { kind: "platform-native", reference: "fixture:web-chat-credit-runtime" },
-    providers: [{ key: "fixture-provider", provider: "openai-compatible", accountKey: "primary",
-      secretRef: "secret://fixture-provider", adapterKind, priority: 0 }],
+    providers: adapterKind === "direct" ? [{
+      key: DIRECT_MODEL_PROVIDER_IDENTITY.providerKey, provider: "openai-compatible",
+      accountKey: DIRECT_MODEL_PROVIDER_IDENTITY.accountKey,
+      secretRef: DIRECT_MODEL_PROVIDER_SECRET_REF, adapterKind: "direct", priority: 0,
+    }] : [{
+      key: DIRECT_MODEL_PROVIDER_IDENTITY.providerKey, provider: "openai-compatible",
+      accountKey: DIRECT_MODEL_PROVIDER_IDENTITY.accountKey,
+      secretRef: DIRECT_MODEL_PROVIDER_SECRET_REF, adapterKind: "direct", priority: 1,
+    }, {
+      key: "fixture-provider", provider: "openai-compatible", accountKey: "litellm",
+      secretRef: "secret://fixture-provider", adapterKind: "litellm", priority: 0,
+    }],
     models: [{ key: "chat-primary", displayName: "Chat", inputModalities: ["text"],
       outputModalities: ["text"], capabilities: ["chat"], contextWindow: null, enabled: true }],
     bindings: [{ key: "binding:chat-primary", modelKey: "chat-primary",
-      providerKey: "fixture-provider", upstreamModel: "fixture-chat",
+      providerKey: adapterKind === "direct" ? DIRECT_MODEL_PROVIDER_IDENTITY.providerKey :
+        "fixture-provider", upstreamModel: "fixture-chat",
       gatewayModelName: "chat-primary", priority: 0, enabled: true }],
     productRoutes: [{ product: "chat", role: "main", modelKey: "chat-primary", position: 0,
       requiredCapabilities: ["chat"] }],
@@ -958,8 +973,12 @@ async function prepareSite(
   const modelControl = createProductModelOptionAdministrationComposition(admin, { now: clock });
   await modelControl.importInventory.import({ importId: randomUUID(),
     requestDigest: digest(`${siteId}:model-inventory:import`), inventory: fixture.inventory.document,
-    providerAvailability: [{ providerKey: "fixture-provider", status: "active", health: "healthy",
-      epoch: "1", observationRef: `${siteId}:provider-health:1`, observedAt: clock() }],
+    providerAvailability: fixture.inventory.document.providers.some(
+      (provider) => provider.adapterKind === "litellm",
+    ) ? fixture.inventory.document.providers.map((provider) => ({
+        providerKey: provider.key, status: "active" as const, health: "healthy" as const,
+        epoch: "1", observationRef: `${siteId}:provider-health:${provider.key}:1`, observedAt: clock(),
+      })) : [],
   }, await adminContext("model.inventory.import", null,
     "model_control_administration", ["model.inventory.import"]));
   await modelControl.activateInventory.activate({ activationId: randomUUID(),

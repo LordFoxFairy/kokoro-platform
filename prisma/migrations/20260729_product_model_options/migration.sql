@@ -534,7 +534,7 @@ BEGIN
       JOIN platform.model_provider_availability provider_availability
         ON provider_availability.provider_key=provider.provider_key
        AND provider_availability.status='active'
-       AND provider_availability.health IN ('healthy','degraded')
+       AND (provider_availability.health IN ('healthy','degraded') OR (provider.adapter_kind='direct' AND provider_availability.health='unknown'))
       WHERE published.publication_id=resolved_publication_id AND model.enabled),ARRAY[]::TEXT[]);
 END $$;
 

@@ -89,6 +89,14 @@ CREATE TABLE platform.model_provider_snapshot (
   secret_ref TEXT NOT NULL CHECK (platform.model_secret_reference_is_valid(secret_ref)),
   adapter_kind TEXT NOT NULL CHECK (adapter_kind IN ('litellm','direct')),
   priority INTEGER NOT NULL CHECK (priority BETWEEN 0 AND 10000),
+  CHECK (
+    (adapter_kind='direct') = (
+      provider_key='direct'
+      AND account_key='primary'
+      AND provider='openai-compatible'
+      AND secret_ref='secret://platform/model-gateway/direct'
+    )
+  ),
   PRIMARY KEY (import_id, provider_key),
   UNIQUE (import_id, provider, account_key)
 );
@@ -423,6 +431,18 @@ BEGIN
     'bindings',jsonb_array_length(canonical_payload->'bindings'),
     'productRoutes',jsonb_array_length(canonical_payload->'productRoutes')
   ) THEN RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='MODEL_INVENTORY_COUNTS_MISMATCH'; END IF;
+  IF (SELECT count(*) FROM jsonb_array_elements(canonical_payload->'providers') provider(item)
+         WHERE item->>'adapterKind'='direct')<>1
+     OR NOT EXISTS(
+       SELECT 1 FROM jsonb_array_elements(canonical_payload->'providers') provider(item)
+       WHERE item->>'adapterKind'='direct'
+         AND item->>'key'='direct'
+         AND item->>'accountKey'='primary'
+         AND item->>'provider'='openai-compatible'
+         AND item->>'secretRef'='secret://platform/model-gateway/direct'
+     ) THEN
+    RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='MODEL_DIRECT_PROVIDER_IDENTITY_MISMATCH';
+  END IF;
   IF jsonb_typeof(p_provider_availability) IS DISTINCT FROM 'array'
      OR jsonb_array_length(p_provider_availability)<>jsonb_array_length(canonical_payload->'providers')
      OR EXISTS(
@@ -549,6 +569,21 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='MODEL_INVENTORY_ACTIVATION_TARGET_INVALID';
   END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('kokoro-platform:model-inventory-activation:v1',0));
+  SELECT imported.* INTO target_import FROM platform.model_inventory_import imported
+    WHERE imported.source_digest=p_target_digest;
+  IF NOT FOUND THEN RAISE EXCEPTION USING ERRCODE='23503', MESSAGE='MODEL_INVENTORY_ACTIVATION_TARGET_NOT_FOUND'; END IF;
+  IF (SELECT count(*) FROM jsonb_array_elements(target_import.canonical_payload->'providers') provider(item)
+         WHERE item->>'adapterKind'='direct')<>1
+     OR NOT EXISTS(
+       SELECT 1 FROM jsonb_array_elements(target_import.canonical_payload->'providers') provider(item)
+       WHERE item->>'adapterKind'='direct'
+         AND item->>'key'='direct'
+         AND item->>'accountKey'='primary'
+         AND item->>'provider'='openai-compatible'
+         AND item->>'secretRef'='secret://platform/model-gateway/direct'
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='MODEL_DIRECT_PROVIDER_IDENTITY_MISMATCH';
+  END IF;
   SELECT activation.* INTO existing_activation FROM platform.model_inventory_activation activation
     WHERE activation.activation_id=p_activation_id;
   IF FOUND THEN
@@ -560,9 +595,6 @@ BEGIN
       existing_activation.activated_revision,TRUE;
     RETURN;
   END IF;
-  SELECT imported.* INTO target_import FROM platform.model_inventory_import imported
-    WHERE imported.source_digest=p_target_digest;
-  IF NOT FOUND THEN RAISE EXCEPTION USING ERRCODE='23503', MESSAGE='MODEL_INVENTORY_ACTIVATION_TARGET_NOT_FOUND'; END IF;
   SELECT revision INTO current_revision FROM platform.model_inventory_pointer WHERE singleton IS TRUE FOR UPDATE;
   IF NOT FOUND THEN
     IF p_expected_revision<>0 THEN RAISE EXCEPTION USING ERRCODE='40001', MESSAGE='MODEL_POINTER_REVISION_CONFLICT'; END IF;
@@ -719,7 +751,8 @@ CREATE FUNCTION platform.resolve_model_candidates(
   p_site_id TEXT, p_product TEXT, p_route_role TEXT
 ) RETURNS TABLE(
   result_inventory_digest TEXT,result_policy_status TEXT,result_policy_revision BIGINT,
-  result_model_key TEXT,result_binding_key TEXT,result_provider_key TEXT,result_gateway_model_name TEXT,
+  result_model_key TEXT,result_binding_key TEXT,result_provider_key TEXT,result_adapter_kind TEXT,
+  result_gateway_model_name TEXT,
   result_execution_boundary TEXT,result_position INTEGER,result_binding_priority INTEGER,result_provider_priority INTEGER,
   result_input_modalities TEXT[],result_output_modalities TEXT[],result_capabilities TEXT[],result_context_window INTEGER,
   result_provider_status TEXT,result_provider_health TEXT,result_model_status TEXT,result_binding_status TEXT,
@@ -767,12 +800,18 @@ BEGIN
   SELECT catalog.source_digest::TEXT,
     CASE WHEN policy.site_id IS NULL THEN 'missing' WHEN policy.enabled THEN 'enabled' ELSE 'disabled' END,
     COALESCE(policy.revision,0),route.model_key,binding.binding_key,provider.provider_key,
+    provider.adapter_kind,
     binding.gateway_model_name,'model_gateway',route.position,binding.priority,provider.priority,
     model.input_modalities,model.output_modalities,model.capabilities,model.context_window,
-    COALESCE(provider_availability.status,'disabled'),COALESCE(provider_availability.health,'unknown'),
+    CASE
+      WHEN provider_availability.status='active'
+       AND provider_availability.health='unknown'
+       AND provider.adapter_kind<>'direct' THEN 'disabled'
+      ELSE COALESCE(provider_availability.status,'disabled')
+    END,COALESCE(provider_availability.health,'unknown'),
     CASE WHEN model.enabled IS NOT TRUE THEN 'disabled' ELSE COALESCE(model_availability.status,'disabled') END,
     CASE WHEN binding.enabled THEN 'active' ELSE 'disabled' END,route.required_capabilities
-  FROM catalog LEFT JOIN policy ON TRUE LEFT JOIN routes ON TRUE
+  FROM catalog LEFT JOIN policy ON TRUE LEFT JOIN routes route ON TRUE
   LEFT JOIN platform.model_definition_snapshot model ON model.import_id=catalog.import_id AND model.model_key=route.model_key
   LEFT JOIN platform.model_provider_binding_snapshot binding ON binding.import_id=catalog.import_id AND binding.model_key=model.model_key
   LEFT JOIN platform.model_provider_snapshot provider ON provider.import_id=catalog.import_id AND provider.provider_key=binding.provider_key

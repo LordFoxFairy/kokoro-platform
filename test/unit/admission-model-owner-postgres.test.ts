@@ -7,8 +7,11 @@ import {
 import { PostgresAdmissionModelOwner } from "../../src/modules/admission/infrastructure/postgres/admission-model-owner.js";
 import type { AdmissionModelCatalogRepository } from "../../src/modules/model-control/application/contracts/product-model-option-ports.js";
 import type { PlatformTransaction } from "../../src/shared/unit-of-work/index.js";
+import { DIRECT_MODEL_PROVIDER_IDENTITY } from
+  "../../src/modules/model-control/domain/direct-model-provider-identity.js";
 
 const transaction = Object.freeze({}) as PlatformTransaction;
+const directIdentity = DIRECT_MODEL_PROVIDER_IDENTITY;
 
 describe("Postgres Admission Model owner", () => {
   it("uses the published option orchestration order and deterministic healthy binding", async () => {
@@ -22,11 +25,13 @@ describe("Postgres Admission Model owner", () => {
         {
           modelKey: "chat-fallback", modelPosition: 1, bindingKey: "binding:z",
           bindingPriority: 1, providerPriority: 1, adapterKind: "direct",
-          provider: "anthropic", upstreamModel: "claude-direct", gatewayModelName: "unused",
+          providerKey: directIdentity.providerKey,
+          provider: "openai-compatible", upstreamModel: "claude-direct", gatewayModelName: "unused",
         },
         {
           modelKey: "chat-fallback", modelPosition: 1, bindingKey: "binding:a",
           bindingPriority: 0, providerPriority: 9, adapterKind: "litellm",
+          providerKey: "litellm-primary",
           provider: "openai-compatible", upstreamModel: "unused", gatewayModelName: "chat-fallback-gateway",
         },
       ],
@@ -63,7 +68,8 @@ describe("Postgres Admission Model owner", () => {
       runtimeCandidates: [{
         modelKey: "chat-primary", modelPosition: 0, bindingKey: "binding:direct",
         bindingPriority: 0, providerPriority: 0, adapterKind: "direct",
-        provider: "anthropic", upstreamModel: "claude-sonnet-4", gatewayModelName: "chat-direct",
+        providerKey: directIdentity.providerKey,
+        provider: "openai-compatible", upstreamModel: "claude-sonnet-4", gatewayModelName: "chat-direct",
       }],
     }));
 
@@ -84,7 +90,30 @@ describe("Postgres Admission Model owner", () => {
         modelLabel: "Standard",
       },
     });
-    expect(JSON.stringify(result)).not.toMatch(/secret|account|binding|anthropic/u);
+    expect(JSON.stringify(result)).not.toMatch(/secret|account|binding|openai-compatible/u);
+  });
+
+  it("rejects a Direct runtime candidate outside the configured Gateway identity", async () => {
+    const fixture = modelFixture();
+    const owner = new PostgresAdmissionModelOwner(repository({
+      siteId: "site-a",
+      siteReleaseRef: "release-a",
+      inventoryDigest: fixture.inventory.digest,
+      optionRevision: fixture.option,
+      runtimeCandidates: [{
+        modelKey: "chat-primary", modelPosition: 0, bindingKey: "binding:direct",
+        bindingPriority: 0, providerPriority: 0, adapterKind: "direct",
+        providerKey: "operator-chosen",
+        provider: "openai-compatible", upstreamModel: "provider-chat-v1",
+        gatewayModelName: "chat-primary",
+      }],
+    }));
+
+    await expect(owner.resolve(transaction, {
+      siteId: "site-a",
+      configurationRevisionId: "release-a",
+      modelOptionRevisionRef: fixture.option.modelOptionRevisionRef,
+    })).rejects.toThrow("ADMISSION_MODEL_DIRECT_PROVIDER_IDENTITY_MISMATCH");
   });
 
   it("denies an unpublished option, unsupported effort, or unavailable runtime", async () => {

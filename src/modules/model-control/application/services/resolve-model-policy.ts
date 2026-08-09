@@ -151,6 +151,8 @@ function resultFromDecision(
 function rejection(candidate: ModelCandidate, requested: readonly string[]): string | null {
   if (candidate.providerStatus !== "active") return "provider_disabled";
   if (candidate.providerHealth === "down") return "provider_down";
+  if (candidate.providerHealth === "unknown" && candidate.adapterKind !== "direct")
+    return "provider_unknown";
   if (candidate.modelStatus !== "active") return "model_disabled";
   if (candidate.bindingStatus !== "active") return "binding_disabled";
   if (

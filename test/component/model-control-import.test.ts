@@ -518,6 +518,7 @@ function candidate(modelKey: string, health: "healthy" | "unknown" | "down", pos
     modelKey,
     bindingKey: `binding-${modelKey}`,
     providerKey: `provider-${modelKey}`,
+    adapterKind: "direct" as const,
     gatewayModelName: modelKey,
     executionBoundary: "model_gateway" as const,
     position,

@@ -58,6 +58,11 @@ LiteLLM is installed only when its endpoint and key file are both explicitly pre
 replaces the required Direct baseline. Health, readiness and drain are process-owned; shutdown stops
 admission, waits to a deadline, then aborts in-flight work.
 
+The one required Direct adapter owns the MVP's single runtime credential. ModelControl's fixed `direct`/`primary` inventory identity
+and runtime-managed secret marker identify that slot but contain no secret and are not additional deployment settings. Multiple
+logical models and upstream model names may bind to the same Direct credential. No health reporter is required to make this
+baseline selectable: Direct alone may start at `unknown`; optional LiteLLM remains ineligible until explicitly healthy or degraded.
+
 Admission mints the opaque authorization handle, places it inside the sealed RunRequest and binds it into the execution-manifest
 digest. GA supplies that handle plus stable logical-call, attempt and producer-generation identities. Image, music and video
 generation use their own product routes and generation adapters; they must not be smuggled through the chat corpus. No GA graph,

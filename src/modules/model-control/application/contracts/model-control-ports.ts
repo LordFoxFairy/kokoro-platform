@@ -42,6 +42,7 @@ export interface ModelCandidate {
   readonly modelKey: string;
   readonly bindingKey: string;
   readonly providerKey: string;
+  readonly adapterKind: "direct" | "litellm";
   readonly gatewayModelName: string;
   readonly executionBoundary: "model_gateway";
   readonly position: number;

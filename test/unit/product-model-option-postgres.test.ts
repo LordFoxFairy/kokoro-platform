@@ -255,7 +255,8 @@ describe("Postgres Product ModelOption repository", () => {
           runtimeCandidates: [{
             modelKey: "chat-primary", modelPosition: 0,
             bindingKey: "binding:chat-primary", bindingPriority: 0, providerPriority: 0,
-            adapterKind: "litellm", provider: "openai-compatible",
+            adapterKind: "litellm", providerKey: "litellm-primary",
+            provider: "openai-compatible",
             upstreamModel: "chat-primary", gatewayModelName: "chat-primary",
           }],
         }] as unknown as readonly Row[];

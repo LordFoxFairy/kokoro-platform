@@ -180,6 +180,7 @@ export class PostgresModelControlRepository implements ModelControlRepository {
 const CANDIDATE_SQL = `SELECT result_inventory_digest AS "inventoryDigest",
   result_policy_status AS "policyStatus",result_policy_revision::text AS "policyRevision",
   result_model_key AS "modelKey",result_binding_key AS "bindingKey",result_provider_key AS "providerKey",
+  result_adapter_kind AS "adapterKind",
   result_gateway_model_name AS "gatewayModelName",result_execution_boundary AS "executionBoundary",
   result_position AS position,result_binding_priority AS "bindingPriority",result_provider_priority AS "providerPriority",
   result_input_modalities AS "inputModalities",result_output_modalities AS "outputModalities",
@@ -205,6 +206,7 @@ interface CandidateRow extends Record<string, unknown> {
   modelKey: string | null;
   bindingKey: string;
   providerKey: string;
+  adapterKind: ModelCandidate["adapterKind"];
   gatewayModelName: string;
   executionBoundary: "model_gateway";
   position: number;

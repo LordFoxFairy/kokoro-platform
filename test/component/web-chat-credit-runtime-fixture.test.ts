@@ -68,8 +68,11 @@ describe("Platform-owned Web Chat Credit runtime fixture", () => {
       PLATFORM_FIXTURE_MODEL_PROVIDER: "litellm",
     });
 
-    expect(firstDirect.inventory.document.providers[0]?.adapterKind).toBe("direct");
-    expect(firstLiteLlm.inventory.document.providers[0]?.adapterKind).toBe("litellm");
+    const selectedAdapter = (fixture: typeof firstDirect) => fixture.inventory.document.providers
+      .find((provider) => provider.key === fixture.inventory.document.bindings[0]?.providerKey)
+      ?.adapterKind;
+    expect(selectedAdapter(firstDirect)).toBe("direct");
+    expect(selectedAdapter(firstLiteLlm)).toBe("litellm");
     expect(firstDirect.inventory.digest).toBe(explicitDirect.inventory.digest);
     expect(firstDirect.modelOptionRevisionRef).toBe(explicitDirect.modelOptionRevisionRef);
     expect(firstDirect.inventory.digest).toBe(retriedDirect.inventory.digest);

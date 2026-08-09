@@ -15,6 +15,10 @@ Callers import `ModelControlApplication` from this module's public `index.ts`. S
 port and an opaque UoW; no separate per-domain Model service participates. The PostgreSQL repository is private composition material.
 Provider execution and secrets remain behind the remote Model Gateway: selection returns only a safe gateway route. `direct` and
 `litellm` describe adapters internal to Model Gateway and never authorize Platform or a product to execute against a provider.
+The MVP has one non-configurable Direct inventory identity: provider key `direct`, account key `primary`, protocol label
+`openai-compatible`, and the runtime-managed marker `secret://platform/model-gateway/direct`. The marker is not a credential and
+never replaces the Gateway's required endpoint/key files. Import, activation, the snapshot table and Admission all enforce this
+identity; operator-facing model differences belong in binding `upstreamModel`, Gateway aliases and display labels instead.
 
 `ModelControlService` is the typed operator ingress mounted on the existing Admin mTLS listener. It is a provider adapter over the
 same local application services, not a new deployable and never a Platform self-RPC hop. Inventory import/activation and global
@@ -68,10 +72,12 @@ provider-availability report command: it atomically compare-and-swaps the provid
 Provider status/health is therefore a mutable operational fact, never a catalog-release mutation.
 
 Runtime selection requires an explicit Site policy. `down` providers and disabled providers/models/bindings are rejected;
-`unknown` and `degraded` remain eligible cold-start/degraded candidates. Resolution orders product/Site position first, then health,
-binding priority, provider priority and binding key. It records the full candidate/rejection effect and selected fallback under a
-decision digest. The policy-input digest is recomputed locally from Site/product/role/capabilities, never trusted from a caller, and
-no resolution performs remote I/O in the UoW.
+`degraded` remains eligible, while `unknown` is eligible only for the required Direct adapter's cold start. Empty or omitted import
+availability therefore starts Direct as `active/unknown` and every optional non-Direct provider as `disabled/unknown`; even a later
+`active/unknown` LiteLLM report is rejected until it reports `healthy` or `degraded`. Resolution orders product/Site position first,
+then health, binding priority, provider priority and binding key. It records the full candidate/rejection effect and selected
+fallback under a decision digest. The policy-input digest is recomputed locally from Site/product/role/capabilities, never trusted
+from a caller, and no resolution performs remote I/O in the UoW.
 
 Fresh deployments author canonical Platform-native inventories and materialize native option drafts into immutable revisions. There is no
 legacy database exporter, rollback authority, or migration CLI in the production path. Publication remains relational

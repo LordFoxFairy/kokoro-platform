@@ -45,6 +45,7 @@ export interface AdmissionModelRuntimeCandidate {
   readonly bindingPriority: number;
   readonly providerPriority: number;
   readonly adapterKind: ProviderAdapterKind;
+  readonly providerKey: string;
   readonly provider: string;
   readonly upstreamModel: string;
   readonly gatewayModelName: string;

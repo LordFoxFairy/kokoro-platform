@@ -49,6 +49,14 @@ import { PostgresAdminQueryReader } from
   "../../src/modules/admin/infrastructure/postgres/admin-query-reader.js";
 import type { AdminQueryPermit } from
   "../../src/modules/admin/interfaces/connect/admin-query-service.js";
+import { canonicalizeModelInventory } from
+  "../../src/modules/model-control/domain/model-catalog.js";
+import { materializeModelOptionDraftSet } from
+  "../../src/modules/model-control/domain/model-option-materialization.js";
+import { createSiteReleaseModelCatalogRevision } from
+  "../../src/modules/model-control/domain/product-model-option.js";
+import { canonicalizeSiteModelPolicy } from
+  "../../src/modules/model-control/domain/site-model-policy.js";
 
 const migratorDatabaseUrl = requireLeasedDatabaseUrl(
   process.env.DATABASE_URL_PLATFORM_MIGRATOR_TEST,
@@ -518,6 +526,314 @@ describe("Platform PostgreSQL foundation", () => {
     );
     await modelGatewayDatabase?.disconnect();
   });
+
+  it("binds the one Direct credential through real import, activation, selection and Admission", async () => {
+    const suffix = randomUUID();
+    const siteRef = `direct-model-site-${suffix}`;
+    const releaseRef = `direct-model-release-${suffix}`;
+    const operatorRef = `operator:direct-model:${suffix}`;
+    const importId = randomUUID();
+    const activationId = randomUUID();
+    const materializationId = randomUUID();
+    const publicationId = randomUUID();
+    const policyChangeId = randomUUID();
+    const unknownReportId = randomUUID();
+    const healthyReportId = randomUUID();
+    const inventory = canonicalizeModelInventory({
+      schemaVersion: 1,
+      source: { kind: "platform-native", reference: `component:direct-model:${suffix}` },
+      providers: [{
+        key: "direct", provider: "openai-compatible", accountKey: "primary",
+        secretRef: "secret://platform/model-gateway/direct", adapterKind: "direct", priority: 0,
+      }, {
+        key: "litellm-explicit", provider: "openai-compatible", accountKey: "litellm",
+        secretRef: "secret://platform/model-gateway/litellm", adapterKind: "litellm", priority: 1,
+      }],
+      models: [
+        {
+          key: "chat-primary", displayName: "Direct Chat", inputModalities: ["text"],
+          outputModalities: ["text"], capabilities: ["chat"], contextWindow: null, enabled: true,
+        },
+        {
+          key: "chat-litellm", displayName: "LiteLLM Chat", inputModalities: ["text"],
+          outputModalities: ["text"], capabilities: ["chat"], contextWindow: null, enabled: true,
+        },
+      ],
+      bindings: [
+        {
+          key: "binding:chat-primary", modelKey: "chat-primary", providerKey: "direct",
+          upstreamModel: "provider-chat-v1", gatewayModelName: "chat-primary", priority: 0,
+          enabled: true,
+        },
+        {
+          key: "binding:chat-litellm", modelKey: "chat-litellm",
+          providerKey: "litellm-explicit", upstreamModel: "provider-chat-v2",
+          gatewayModelName: "chat-litellm", priority: 0, enabled: true,
+        },
+      ],
+      productRoutes: [
+        {
+          product: "chat", role: "main", modelKey: "chat-primary", position: 0,
+          requiredCapabilities: ["chat"],
+        },
+        {
+          product: "chat", role: "main", modelKey: "chat-litellm", position: 1,
+          requiredCapabilities: ["chat"],
+        },
+      ],
+    });
+    const materialized = materializeModelOptionDraftSet({
+      inventory,
+      draftSet: {
+        schemaVersion: 1,
+        inventoryDigest: inventory.digest,
+        options: [
+          {
+            schemaVersion: 1, optionKey: "chat.standard", surface: "chat", label: "Standard",
+            description: null, tier: "standard", lifecycle: "active",
+            composition: {
+              orchestration: { primaryModelKey: "chat-primary", fallbackModelKeys: [] },
+              generation: { primaryModelKey: "chat-primary", fallbackModelKeys: [] },
+            },
+          },
+          {
+            schemaVersion: 1, optionKey: "chat.litellm", surface: "chat", label: "LiteLLM",
+            description: null, tier: "optional", lifecycle: "active",
+            composition: {
+              orchestration: { primaryModelKey: "chat-litellm", fallbackModelKeys: [] },
+              generation: { primaryModelKey: "chat-litellm", fallbackModelKeys: [] },
+            },
+          },
+        ],
+      },
+    });
+    const optionRevisionRef = materialized.optionRevisions.find(
+      ({ optionKey }) => optionKey === "chat.standard",
+    )!.modelOptionRevisionRef;
+    const liteLlmOptionRevisionRef = materialized.optionRevisions.find(
+      ({ optionKey }) => optionKey === "chat.litellm",
+    )!.modelOptionRevisionRef;
+    const catalog = createSiteReleaseModelCatalogRevision({
+      siteId: siteRef,
+      siteReleaseRef: releaseRef,
+      inventoryDigest: inventory.digest,
+      publishedAt: "2026-08-09T12:00:00.000Z",
+      surfaces: [{
+        surfaceId: "chat",
+        allowedModelOptionRevisionRefs: [optionRevisionRef, liteLlmOptionRevisionRef],
+        defaultModelOptionRevisionRef: optionRevisionRef,
+      }],
+      optionRevisions: materialized.optionRevisions,
+    });
+    const policy = canonicalizeSiteModelPolicy({
+      schemaVersion: 1,
+      siteId: siteRef,
+      product: "chat",
+      enabled: true,
+      catalog: { mode: "follow_active", digest: null },
+      assignmentMode: "inherit",
+      assignments: [],
+    });
+    const availability = [
+      {
+        providerKey: "direct", status: "active", health: "unknown", epoch: "0",
+        observationRef: null, observedAt: null,
+      },
+      {
+        providerKey: "litellm-explicit", status: "disabled", health: "unknown", epoch: "0",
+        observationRef: null, observedAt: null,
+      },
+    ];
+    const mismatched = canonicalizeModelInventory({
+      ...inventory.document,
+      source: { kind: "platform-native", reference: `component:direct-model:mismatch:${suffix}` },
+      providers: inventory.document.providers.map((provider) => provider.adapterKind === "direct" ? {
+        ...provider, key: "operator-chosen", accountKey: "other",
+        provider: "anthropic", secretRef: "secret://operator/chosen",
+      } : provider),
+      bindings: inventory.document.bindings.map((binding) =>
+        binding.providerKey === "direct" ? { ...binding, providerKey: "operator-chosen" } : binding),
+    });
+    const bootstrap = new Client({ connectionString: bootstrapDatabaseUrl });
+    const admin = new Client({ connectionString: adminDatabaseUrl });
+    const api = new Client({ connectionString: apiDatabaseUrl });
+    const admission = new Client({ connectionString: admissionDatabaseUrl });
+    const modelGateway = new Client({ connectionString: modelGatewayDatabaseUrl });
+    await Promise.all([
+      bootstrap.connect(), admin.connect(), api.connect(), admission.connect(), modelGateway.connect(),
+    ]);
+
+    try {
+      await bootstrap.query("BEGIN");
+      await bootstrap.query("SET CONSTRAINTS ALL DEFERRED");
+      await bootstrap.query(
+        `INSERT INTO platform.authorization_site
+           (site_ref,state,security_epoch,policy_epoch,revocation_epoch)
+         VALUES ($1,'active',1,1,1)`,
+        [siteRef],
+      );
+      await bootstrap.query(
+        `INSERT INTO platform.authorization_site_release
+           (release_ref,site_ref,state,web_artifact_digest,enabled_surface_ids,
+            feature_policy_revision,model_option_catalog_ref,agent_catalog_ref,
+            identity_issuer_label,identity_auth_strength_policy_revision,locale_policy)
+         VALUES ($1,$2,'active',repeat('a',64),'["chat"]'::jsonb,'feature-v1',$3,
+                 'agent-empty','Kokoro','auth-v1','{}'::jsonb)`,
+        [releaseRef, siteRef, catalog.modelOptionCatalogRef],
+      );
+      await bootstrap.query(
+        `INSERT INTO platform.site(site_ref,site_key,state,active_release_ref)
+         VALUES ($1,$2,'active',$3)`,
+        [siteRef, `direct-${suffix.replaceAll("-", "").slice(0, 20)}`, releaseRef],
+      );
+      await bootstrap.query(
+        `INSERT INTO platform.site_release
+           (release_ref,site_ref,state,web_artifact_digest,release_manifest_digest,
+            certification_digest,launch_profile_ref,site_config_revision_ref,legal_revision_ref,
+            feature_policy_revision,model_option_catalog_ref,agent_catalog_ref,
+            identity_issuer_label,identity_auth_strength_policy_revision,enabled_surface_ids,
+            locale_policy)
+         VALUES ($1,$2,'active',repeat('a',64),repeat('b',64),repeat('c',64),'launch-v1',
+                 'site-config-v1','legal-v1','feature-v1',$3,'agent-empty','Kokoro','auth-v1',
+                 '["chat"]'::jsonb,'{}'::jsonb)`,
+        [releaseRef, siteRef, catalog.modelOptionCatalogRef],
+      );
+      await bootstrap.query("COMMIT");
+
+      const pointer = await bootstrap.query<{ revision: string }>(
+        "SELECT revision::text AS revision FROM platform.model_inventory_pointer WHERE singleton",
+      );
+      const expectedRevision = pointer.rows[0]?.revision ?? "0";
+
+      await admin.query("BEGIN");
+      await setModelAdminContext(admin, "model.inventory.import", operatorRef);
+      await admin.query("SAVEPOINT direct_identity_mismatch");
+      await expect(admin.query(
+        `SELECT * FROM platform.import_model_inventory(
+           $1::uuid,$2,$3,$4::jsonb,$5::jsonb,$6)`,
+        [randomUUID(), mismatched.digest, mismatched.canonicalJson,
+          JSON.stringify(mismatched.counts), JSON.stringify([{ ...availability[0],
+            providerKey: "operator-chosen" }]), operatorRef],
+      )).rejects.toThrow("MODEL_DIRECT_PROVIDER_IDENTITY_MISMATCH");
+      await admin.query("ROLLBACK TO SAVEPOINT direct_identity_mismatch");
+
+      const imported = await admin.query<{ replayed: boolean }>(
+        `SELECT replayed FROM platform.import_model_inventory(
+           $1::uuid,$2,$3,$4::jsonb,$5::jsonb,$6)`,
+        [importId, inventory.digest, inventory.canonicalJson, JSON.stringify(inventory.counts),
+          JSON.stringify(availability), operatorRef],
+      );
+      const importedReplay = await admin.query<{ replayed: boolean }>(
+        `SELECT replayed FROM platform.import_model_inventory(
+           $1::uuid,$2,$3,$4::jsonb,$5::jsonb,$6)`,
+        [importId, inventory.digest, inventory.canonicalJson, JSON.stringify(inventory.counts),
+          JSON.stringify(availability), operatorRef],
+      );
+      expect(imported.rows).toEqual([{ replayed: false }]);
+      expect(importedReplay.rows).toEqual([{ replayed: true }]);
+
+      await setModelAdminContext(admin, "model.inventory.activate", operatorRef);
+      const activated = await admin.query<{ replayed: boolean }>(
+        "SELECT replayed FROM platform.activate_model_inventory($1::uuid,$2,$3::bigint,$4)",
+        [activationId, inventory.digest, expectedRevision, operatorRef],
+      );
+      const activatedReplay = await admin.query<{ replayed: boolean }>(
+        "SELECT replayed FROM platform.activate_model_inventory($1::uuid,$2,$3::bigint,$4)",
+        [activationId, inventory.digest, expectedRevision, operatorRef],
+      );
+      expect(activated.rows).toEqual([{ replayed: false }]);
+      expect(activatedReplay.rows).toEqual([{ replayed: true }]);
+
+      await setModelAdminContext(admin, "model.option.materialize", operatorRef);
+      await admin.query(
+        `SELECT * FROM platform.materialize_model_options(
+           $1::uuid,$2,$3,$4,$5,$6::jsonb,$7)`,
+        [materializationId, materialized.sourceDigest, inventory.digest,
+          materialized.materializationDigest, materialized.compilerVersion,
+          JSON.stringify(materialized.optionRevisions), operatorRef],
+      );
+
+      await setModelAdminContext(admin, "model.site-policy.change", operatorRef, siteRef);
+      await admin.query(
+        "SELECT * FROM platform.put_model_site_policy($1::uuid,$2,$3,$4,0)",
+        [policyChangeId, policy.digest, policy.canonicalJson, operatorRef],
+      );
+
+      await setModelAdminContext(
+        admin, "model.site-release-catalog.publish", operatorRef, siteRef,
+        ["model:site-release:publish"],
+      );
+      await admin.query(
+        "SELECT * FROM platform.publish_site_release_model_catalog($1::uuid,$2::jsonb,$3)",
+        [publicationId, JSON.stringify(catalog), operatorRef],
+      );
+      await admin.query("COMMIT");
+
+      await reportModelProviderAvailability(
+        modelGateway, unknownReportId, "litellm-explicit", "unknown", "0",
+      );
+      expect(await resolveModelCandidates(api, siteRef)).toEqual([
+        expect.objectContaining({
+          result_model_key: "chat-primary",
+          result_provider_key: "direct",
+          result_adapter_kind: "direct",
+          result_provider_status: "active",
+          result_provider_health: "unknown",
+        }),
+        expect.objectContaining({
+          result_model_key: "chat-litellm",
+          result_provider_key: "litellm-explicit",
+          result_adapter_kind: "litellm",
+          result_provider_status: "disabled",
+          result_provider_health: "unknown",
+        }),
+      ]);
+      expect(await loadProductRuntimeModelKeys(api, siteRef, releaseRef))
+        .toEqual(["chat-primary"]);
+      expect(await loadAdmissionRuntimeCandidates(
+        admission, siteRef, releaseRef, optionRevisionRef,
+      )).toEqual([expect.objectContaining({ adapterKind: "direct", providerKey: "direct" })]);
+      expect(await loadAdmissionRuntimeCandidates(
+        admission, siteRef, releaseRef, liteLlmOptionRevisionRef,
+      )).toEqual([]);
+
+      await reportModelProviderAvailability(
+        modelGateway, healthyReportId, "litellm-explicit", "healthy", "1",
+      );
+      expect(await loadProductRuntimeModelKeys(api, siteRef, releaseRef))
+        .toEqual(["chat-litellm", "chat-primary"]);
+      expect(await loadAdmissionRuntimeCandidates(
+        admission, siteRef, releaseRef, liteLlmOptionRevisionRef,
+      )).toEqual([expect.objectContaining({
+        adapterKind: "litellm", providerKey: "litellm-explicit",
+      })]);
+
+      await expect(bootstrap.query(
+        `INSERT INTO platform.model_provider_snapshot
+           (import_id,provider_key,provider,account_key,secret_ref,adapter_kind,priority)
+         VALUES ($1,'raw-direct','anthropic','other','secret://raw/direct','direct',0)`,
+        [importId],
+      )).rejects.toMatchObject({ code: "23514" });
+      await expect(bootstrap.query(
+        "UPDATE platform.model_provider_snapshot SET account_key='other' WHERE import_id=$1",
+        [importId],
+      )).rejects.toThrow("immutable model-control fact");
+
+      await bootstrap.query("BEGIN");
+      await bootstrap.query("SET LOCAL session_replication_role='replica'");
+      await expect(bootstrap.query(
+        "UPDATE platform.model_provider_snapshot SET adapter_kind='litellm' WHERE import_id=$1",
+        [importId],
+      )).rejects.toMatchObject({ code: "23514" });
+      await bootstrap.query("ROLLBACK");
+    } finally {
+      await Promise.allSettled([admin.query("ROLLBACK"), api.query("ROLLBACK"),
+        admission.query("ROLLBACK"), bootstrap.query("ROLLBACK"), modelGateway.query("ROLLBACK")]);
+      await Promise.all([
+        bootstrap.end(), admin.end(), api.end(), admission.end(), modelGateway.end(),
+      ]);
+    }
+  }, 60_000);
 
   it("enforces Memory feature-off identities and exact worker purge authority", async () => {
     const suffix = randomUUID();
@@ -3734,6 +4050,133 @@ function platformMigrationEnvironment(): Readonly<Record<string, string | undefi
     PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
     PATH: process.env.PATH,
   };
+}
+
+async function setModelAdminContext(
+  client: Client,
+  operation: string,
+  subjectId: string,
+  siteId = "",
+  scopes: readonly string[] = [],
+): Promise<void> {
+  await client.query(
+    `SELECT set_config('app.operation',$1,true),
+            set_config('app.workload_kind','admin_workload',true),
+            set_config('app.actor_kind','operator',true),
+            set_config('app.subject_id',$2,true),
+            set_config('app.site_id',$3,true),
+            set_config('app.purpose','model_control_administration',true),
+            set_config('app.scopes',$4,true)`,
+    [operation, subjectId, siteId, JSON.stringify(scopes)],
+  );
+}
+
+async function reportModelProviderAvailability(
+  client: Client,
+  reportId: string,
+  providerKey: string,
+  health: "unknown" | "healthy",
+  expectedEpoch: string,
+): Promise<void> {
+  const subjectId = "model-gateway:direct-mvp-component";
+  await client.query("BEGIN");
+  try {
+    await client.query(
+      `SELECT set_config('app.operation','model.availability.report',true),
+              set_config('app.workload_kind','platform_model_gateway',true),
+              set_config('app.actor_kind','workload',true),
+              set_config('app.subject_id',$1,true),
+              set_config('app.site_id','',true),
+              set_config('app.workspace_id','',true),
+              set_config('app.project_id','',true),
+              set_config('app.purpose','model_health_observation',true),
+              set_config('app.scopes','["model:availability:write"]',true)`,
+      [subjectId],
+    );
+    const receipt = await client.query<{ result_applied_epoch: string; replayed: boolean }>(
+      `SELECT result_applied_epoch::text,replayed
+         FROM platform.report_model_provider_availability(
+           $1::uuid,$2,'active',$3,$4::bigint,NULL,NULL,$5)`,
+      [reportId, providerKey, health, expectedEpoch, subjectId],
+    );
+    expect(receipt.rows).toEqual([{
+      result_applied_epoch: String(BigInt(expectedEpoch) + 1n), replayed: false,
+    }]);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  }
+}
+
+async function resolveModelCandidates(client: Client, siteId: string) {
+  await client.query("BEGIN");
+  try {
+    await client.query(
+      `SELECT set_config('app.operation','model.policy.resolve',true),
+              set_config('app.workload_kind','site_product',true),
+              set_config('app.site_id',$1,true)`,
+      [siteId],
+    );
+    return (await client.query<{
+      result_model_key: string;
+      result_provider_key: string;
+      result_adapter_kind: string;
+      result_provider_status: string;
+      result_provider_health: string;
+    }>("SELECT * FROM platform.resolve_model_candidates($1,'chat','main')", [siteId])).rows;
+  } finally {
+    await client.query("ROLLBACK").catch(() => undefined);
+  }
+}
+
+async function loadProductRuntimeModelKeys(
+  client: Client,
+  siteId: string,
+  releaseRef: string,
+): Promise<readonly string[]> {
+  await client.query("BEGIN");
+  try {
+    await client.query(
+      `SELECT set_config('app.operation','exchangeProductContext',true),
+              set_config('app.workload_kind','site_product',true),
+              set_config('app.site_id',$1,true)`,
+      [siteId],
+    );
+    const result = await client.query<{ result_runtime_available_model_keys: string[] }>(
+      "SELECT result_runtime_available_model_keys " +
+        "FROM platform.resolve_product_model_option_catalog($1,$2)",
+      [siteId, releaseRef],
+    );
+    const keys = result.rows[0]?.result_runtime_available_model_keys;
+    if (keys === undefined) throw new Error("MODEL_DIRECT_COMPONENT_PRODUCT_CONTEXT_MISSING");
+    return keys;
+  } finally {
+    await client.query("ROLLBACK").catch(() => undefined);
+  }
+}
+
+async function loadAdmissionRuntimeCandidates(
+  client: Client,
+  siteId: string,
+  releaseRef: string,
+  optionRevisionRef: string,
+): Promise<readonly unknown[]> {
+  await client.query("BEGIN");
+  try {
+    await client.query("SELECT platform.begin_admission_transaction('admission.command')");
+    await client.query("SELECT set_config('app.site_id',$1,true)", [siteId]);
+    const result = await client.query<{ result_runtime_candidates: unknown }>(
+      "SELECT result_runtime_candidates " +
+        "FROM platform.resolve_admission_model_owner($1,$2,$3)",
+      [siteId, releaseRef, optionRevisionRef],
+    );
+    const candidates = result.rows[0]?.result_runtime_candidates;
+    if (!Array.isArray(candidates)) throw new Error("MODEL_DIRECT_COMPONENT_ADMISSION_MISSING");
+    return candidates;
+  } finally {
+    await client.query("ROLLBACK").catch(() => undefined);
+  }
 }
 
 type CreditConcurrencySeed = Readonly<{

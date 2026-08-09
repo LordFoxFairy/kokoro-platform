@@ -100,6 +100,10 @@ import { PublishSiteReleaseModelCatalogService } from
   "../../src/modules/model-control/application/services/publish-site-release-model-catalog.js";
 import { PostgresModelControlCommandJournal } from
   "../../src/modules/model-control/infrastructure/postgres/model-control-command-journal.js";
+import {
+  DIRECT_MODEL_PROVIDER_IDENTITY,
+  DIRECT_MODEL_PROVIDER_SECRET_REF,
+} from "../../src/modules/model-control/domain/direct-model-provider-identity.js";
 
 const transport = {} as HandlerContext;
 const verifiedContext = Object.freeze({}) as VerifiedRequestSecurityContext;
@@ -149,8 +153,9 @@ describe("ModelControl Connect provider", () => {
         schemaVersion: 1,
         source: { kind: "platform-native", reference: "inventory:2026-07-29" },
         providers: [{
-          key: "provider-a", provider: "openai-compatible", accountKey: "primary",
-          secretRef: "secret://provider-a", adapterKind: "litellm", priority: 0,
+          key: "direct", provider: "openai-compatible", accountKey: "primary",
+          secretRef: "secret://platform/model-gateway/direct",
+          adapterKind: "direct", priority: 0,
         }],
         models: [{
           key: "chat-primary", displayName: "Chat", inputModalities: ["text"],
@@ -158,7 +163,7 @@ describe("ModelControl Connect provider", () => {
           enabled: true,
         }],
         bindings: [{
-          key: "binding:chat-primary", modelKey: "chat-primary", providerKey: "provider-a",
+          key: "binding:chat-primary", modelKey: "chat-primary", providerKey: "direct",
           upstreamModel: "chat-primary", gatewayModelName: "chat-primary", priority: 0,
           enabled: true,
         }],
@@ -168,7 +173,7 @@ describe("ModelControl Connect provider", () => {
         }],
       },
       providerAvailability: [{
-        providerKey: "provider-a", status: "active", health: "healthy", epoch: "7",
+        providerKey: "direct", status: "active", health: "healthy", epoch: "7",
         observationRef: "health:7", observedAt: "2026-07-29T12:00:00.000Z",
       }],
     }, verifiedContext);
@@ -826,8 +831,10 @@ function inventory() {
   return create(CanonicalModelInventorySchema, {
     sourceReference: "inventory:2026-07-29",
     providers: [{
-      key: "provider-a", provider: "openai-compatible", accountKey: "primary",
-      secretRef: "secret://provider-a", adapterKind: ProviderAdapterKind.LITELLM, priority: 0,
+      key: DIRECT_MODEL_PROVIDER_IDENTITY.providerKey, provider: "openai-compatible",
+      accountKey: DIRECT_MODEL_PROVIDER_IDENTITY.accountKey,
+      secretRef: DIRECT_MODEL_PROVIDER_SECRET_REF,
+      adapterKind: ProviderAdapterKind.DIRECT, priority: 0,
     }],
     models: [{
       key: "chat-primary", displayName: "Chat", inputModalities: ["text"],
@@ -835,7 +842,8 @@ function inventory() {
       enabled: true,
     }],
     bindings: [{
-      key: "binding:chat-primary", modelKey: "chat-primary", providerKey: "provider-a",
+      key: "binding:chat-primary", modelKey: "chat-primary",
+      providerKey: DIRECT_MODEL_PROVIDER_IDENTITY.providerKey,
       upstreamModel: "chat-primary", gatewayModelName: "chat-primary", priority: 0,
       enabled: true,
     }],
@@ -852,7 +860,8 @@ function importRequest(includeAvailability = true, effectCommandId = commandId) 
     inventory: inventory(),
     providerAvailability: includeAvailability
       ? [{
-          providerKey: "provider-a", status: ProviderOperationalStatus.ACTIVE,
+          providerKey: DIRECT_MODEL_PROVIDER_IDENTITY.providerKey,
+          status: ProviderOperationalStatus.ACTIVE,
           health: ProviderHealth.HEALTHY, epoch: 7n, observationRef: "health:7",
           observedAt: timestampFromDate(new Date("2026-07-29T12:00:00.000Z")),
         }]

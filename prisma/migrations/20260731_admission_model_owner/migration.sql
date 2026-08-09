@@ -57,6 +57,19 @@ BEGIN
      WHERE published.publication_id=resolved_publication_id
        AND published.revision_ref=p_model_option_revision_ref
   ) THEN RETURN; END IF;
+  IF (SELECT count(*) FROM platform.model_provider_snapshot provider
+      WHERE provider.import_id=resolved_inventory_import_id AND provider.adapter_kind='direct')<>1
+     OR NOT EXISTS(
+       SELECT 1 FROM platform.model_provider_snapshot provider
+       WHERE provider.import_id=resolved_inventory_import_id
+         AND provider.adapter_kind='direct'
+         AND provider.provider_key='direct'
+         AND provider.account_key='primary'
+         AND provider.provider='openai-compatible'
+         AND provider.secret_ref='secret://platform/model-gateway/direct'
+     ) THEN
+    RAISE EXCEPTION USING ERRCODE='22023',MESSAGE='ADMISSION_MODEL_DIRECT_PROVIDER_IDENTITY_MISMATCH';
+  END IF;
 
   RETURN QUERY SELECT
     p_site_id,
@@ -71,6 +84,7 @@ BEGIN
         'bindingPriority',provider_binding.priority,
         'providerPriority',provider.priority,
         'adapterKind',provider.adapter_kind,
+        'providerKey',provider.provider_key,
         'provider',provider.provider,
         'upstreamModel',provider_binding.upstream_model,
         'gatewayModelName',provider_binding.gateway_model_name
@@ -94,7 +108,7 @@ BEGIN
         JOIN platform.model_provider_availability provider_availability
           ON provider_availability.provider_key=provider.provider_key
          AND provider_availability.status='active'
-         AND provider_availability.health IN ('healthy','degraded')
+         AND (provider_availability.health IN ('healthy','degraded') OR (provider.adapter_kind='direct' AND provider_availability.health='unknown'))
        WHERE binding.revision_ref=p_model_option_revision_ref
          AND binding.inventory_import_id=resolved_inventory_import_id
          AND binding.composition_slot='orchestration'

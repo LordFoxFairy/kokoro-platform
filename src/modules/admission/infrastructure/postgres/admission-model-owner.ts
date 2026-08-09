@@ -6,6 +6,8 @@ import type {
   AdmissionModelOwnerPort,
   AdmissionOwnerResolution,
 } from "../../application/platform-admission-owner-authority.js";
+import { DIRECT_MODEL_PROVIDER_IDENTITY } from
+  "../../../model-control/domain/direct-model-provider-identity.js";
 
 type ModelResolution = Awaited<ReturnType<AdmissionModelOwnerPort["resolve"]>>;
 
@@ -49,7 +51,14 @@ export class PostgresAdmissionModelOwner implements AdmissionModelOwnerPort {
         throw new Error("ADMISSION_MODEL_OWNER_CORRUPT");
       }
       return candidate;
-    }).sort((left, right) =>
+    });
+    if (candidates.some((candidate) => candidate.adapterKind === "direct" && (
+      candidate.providerKey !== DIRECT_MODEL_PROVIDER_IDENTITY.providerKey ||
+      candidate.provider !== DIRECT_MODEL_PROVIDER_IDENTITY.provider
+    ))) {
+      throw new Error("ADMISSION_MODEL_DIRECT_PROVIDER_IDENTITY_MISMATCH");
+    }
+    candidates.sort((left, right) =>
       left.modelPosition - right.modelPosition ||
       left.bindingPriority - right.bindingPriority ||
       left.providerPriority - right.providerPriority ||

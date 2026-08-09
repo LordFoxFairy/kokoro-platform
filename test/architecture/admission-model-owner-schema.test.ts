@@ -23,7 +23,9 @@ describe("Admission Model owner database boundary", () => {
     expect(migration).toContain("composition_slot='orchestration'");
     expect(migration).toContain("model_availability.status='active'");
     expect(migration).toContain("provider_availability.health IN ('healthy','degraded')");
-    expect(migration).not.toContain("provider.secret_ref");
+    expect(migration).toContain(
+      "provider.secret_ref='secret://platform/model-gateway/direct'",
+    );
     expect(migration).not.toContain("'secretRef'");
     expect(migration).not.toContain("'accountKey'");
     expect(migration).toContain("REVOKE ALL ON FUNCTION platform.resolve_admission_model_owner(TEXT,TEXT,TEXT) FROM PUBLIC");
@@ -31,5 +33,6 @@ describe("Admission Model owner database boundary", () => {
       expect(source).toContain("platform.resolve_admission_model_owner(text,text,text)");
     }
     expect(composition).toContain("model: new PostgresAdmissionModelOwner()");
+    expect(composition).not.toContain("directProviderIdentity");
   });
 });

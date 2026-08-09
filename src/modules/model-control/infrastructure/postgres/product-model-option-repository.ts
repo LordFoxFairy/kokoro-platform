@@ -264,8 +264,9 @@ function parseAdmissionRuntimeCandidate(value: unknown): AdmissionModelRuntimeCa
   const candidate = value as Record<string, unknown>;
   if (
     Object.keys(candidate).sort().join(",") !==
-      "adapterKind,bindingKey,bindingPriority,gatewayModelName,modelKey,modelPosition,provider,providerPriority,upstreamModel" ||
+      "adapterKind,bindingKey,bindingPriority,gatewayModelName,modelKey,modelPosition,provider,providerKey,providerPriority,upstreamModel" ||
     !identifier(candidate.modelKey) || !identifier(candidate.bindingKey) ||
+    !identifier(candidate.providerKey) ||
     !identifier(candidate.provider) || !boundedRuntimeName(candidate.upstreamModel) ||
     !boundedRuntimeName(candidate.gatewayModelName) ||
     !position(candidate.modelPosition) || !position(candidate.bindingPriority) ||
@@ -279,6 +280,7 @@ function parseAdmissionRuntimeCandidate(value: unknown): AdmissionModelRuntimeCa
     bindingPriority: candidate.bindingPriority,
     providerPriority: candidate.providerPriority,
     adapterKind: candidate.adapterKind,
+    providerKey: candidate.providerKey,
     provider: candidate.provider,
     upstreamModel: candidate.upstreamModel,
     gatewayModelName: candidate.gatewayModelName,
