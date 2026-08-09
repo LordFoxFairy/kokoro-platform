@@ -14,6 +14,7 @@ import {
   ModelMessageRole,
   ModelMessageSchema,
   ModelToolChoice,
+  StreamModelRequestSchema,
 } from "../../src/generated/proto/kokoro/platform/model/v1/model_gateway_pb.js";
 import {
   createPostgresModelGatewayDatabase,
@@ -209,18 +210,39 @@ export async function runModelGatewayCreditFixture(
         toolChoice: ModelToolChoice.NONE,
       }),
     });
-    const first = await client.invokeModel(request);
+    let firstInvocationRef = "";
+    let firstTerminalCount = 0;
+    let firstTerminalKind = "";
+    let firstInputTokens: bigint | undefined;
+    let firstOutputTokens: bigint | undefined;
+    for await (const frame of client.streamModel(create(StreamModelRequestSchema, {
+      invocation: request,
+      afterSequence: 0n,
+    }))) {
+      if (firstInvocationRef.length === 0) firstInvocationRef = frame.invocationRef;
+      if (frame.invocationRef !== firstInvocationRef) {
+        throw new Error("MODEL_GATEWAY_CREDIT_FIXTURE_INVOCATION_CHANGED");
+      }
+      if (frame.payload.case === "completed" || frame.payload.case === "failed" ||
+          frame.payload.case === "outcomeUnknown") {
+        firstTerminalCount += 1;
+        firstTerminalKind = frame.payload.case;
+      }
+      if (frame.payload.case === "completed") {
+        firstInputTokens = frame.payload.value.usage?.inputTokens;
+        firstOutputTokens = frame.payload.value.usage?.outputTokens;
+      }
+    }
     const replay = await client.invokeModel(request);
-    const firstCompleted = first.outcome.case === "completed";
+    const firstCompleted = firstTerminalCount === 1 && firstTerminalKind === "completed";
     const replayCompleted = replay.outcome.case === "completed";
-    const usage = first.outcome.case === "completed" ? first.outcome.value.usage : undefined;
     return createModelGatewayCreditFixtureResult({
       firstCompleted,
       replayCompleted,
       replayAttached: replay.replayed,
-      sameInvocation: first.invocationRef.length > 0 && first.invocationRef === replay.invocationRef,
-      inputTokens: bigintNumber(usage?.inputTokens),
-      outputTokens: bigintNumber(usage?.outputTokens),
+      sameInvocation: firstInvocationRef.length > 0 && firstInvocationRef === replay.invocationRef,
+      inputTokens: bigintNumber(firstInputTokens),
+      outputTokens: bigintNumber(firstOutputTokens),
     });
   } finally {
     session.abort(new Error("MODEL_GATEWAY_CREDIT_FIXTURE_COMPLETE"));

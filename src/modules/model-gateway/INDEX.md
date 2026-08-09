@@ -49,6 +49,13 @@ transaction-per-client busy poll. The unary `InvokeModel` API aggregates this sa
 provider path. The Gateway role receives only INSERT, fenced mutation columns, and SELECT on the five queue identity/fence columns
 that PostgreSQL must evaluate for those mutations; it has no table-level queue SELECT or access to queued authorization payloads.
 
+After the provider emits one terminal, the dispatch stays active until that exact terminal is durable or process shutdown begins.
+A non-committed success/failure finalization error immediately switches to one stable, message-free owner-evidence reference and an
+`outcome_unknown` terminalization attempt. Terminalization-only retries start at 100 ms and double to a 2-second maximum delay;
+they never re-enter adapter selection or provider streaming. A commit-ambiguous finalize/unknown retry first observes the durable
+invocation, replays its original terminal, and cannot append a second terminal frame. If shutdown wins while storage remains
+unavailable, restart maintenance marks the expired dispatch `outcome_unknown` without preparing or invoking any provider.
+
 The production listener is private HTTP/2 ConnectRPC over TLS 1.3 mutual authentication and an exact certificate
 fingerprint/SPIFFE allowlist. Only the configured GA SPIFFE identity may invoke the RPC. Trusted provider reconciliation remains an
 internal application/worker path; it is deliberately not caller-accessible. It can finalize only an existing `outcome_unknown`

@@ -83,6 +83,7 @@ describe("Model Gateway Credit production runtime fixture", () => {
     expect(fixtureSource).toContain("createModelGatewayProductionComposition");
     expect(fixtureSource).toContain("createPostgresModelGatewayDatabase");
     expect(fixtureSource).toContain("createConnectTransport");
+    expect(fixtureSource).toContain("client.streamModel");
     expect(fixtureSource).toContain("client.invokeModel");
     expect(fixtureSource).toContain('"genpkey", "-algorithm", "RSA"');
     expect(fixtureSource).not.toContain('"genrsa"');

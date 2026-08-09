@@ -319,6 +319,9 @@ export class ModelGatewayService {
   readonly #providerHardTimeoutMs: number;
   readonly #maximumActive: number;
   readonly #maximumQueued: number;
+  readonly #terminalizationRetryInitialMs: number;
+  readonly #terminalizationRetryMaximumMs: number;
+  readonly #shutdownController = new AbortController();
   readonly #dispatches = new Map<string, Readonly<{
     controller: AbortController;
     promise: Promise<void>;
@@ -340,6 +343,8 @@ export class ModelGatewayService {
     maximumActive?: number;
     maximumQueued?: number;
     frameWaiter?: ModelGatewayFrameWaiter;
+    terminalizationRetryInitialMs?: number;
+    terminalizationRetryMaximumMs?: number;
   }>) {
     this.#clock = dependencies.clock ?? (() => new Date());
     this.#reference = dependencies.reference ?? (() => randomUUID());
@@ -348,6 +353,8 @@ export class ModelGatewayService {
     this.#providerHardTimeoutMs = dependencies.providerHardTimeoutMs ?? 120_000;
     this.#maximumActive = dependencies.maximumActive ?? 64;
     this.#maximumQueued = dependencies.maximumQueued ?? 256;
+    this.#terminalizationRetryInitialMs = dependencies.terminalizationRetryInitialMs ?? 100;
+    this.#terminalizationRetryMaximumMs = dependencies.terminalizationRetryMaximumMs ?? 2_000;
     if (!Number.isInteger(this.#dispatchRecoveryAfterMs) ||
         this.#dispatchRecoveryAfterMs < 1_000 || this.#dispatchRecoveryAfterMs > 600_000) {
       throw new Error("MODEL_GATEWAY_DISPATCH_RECOVERY_WINDOW_INVALID");
@@ -359,6 +366,13 @@ export class ModelGatewayService {
         !Number.isInteger(this.#maximumQueued) || this.#maximumQueued < 1 ||
         this.#maximumQueued > 100_000) {
       throw new Error("MODEL_GATEWAY_STREAMING_LIMIT_INVALID");
+    }
+    if (!Number.isInteger(this.#terminalizationRetryInitialMs) ||
+        this.#terminalizationRetryInitialMs < 1 || this.#terminalizationRetryInitialMs > 10_000 ||
+        !Number.isInteger(this.#terminalizationRetryMaximumMs) ||
+        this.#terminalizationRetryMaximumMs < this.#terminalizationRetryInitialMs ||
+        this.#terminalizationRetryMaximumMs > 10_000) {
+      throw new Error("MODEL_GATEWAY_TERMINALIZATION_RETRY_INVALID");
     }
   }
 
@@ -540,6 +554,7 @@ export class ModelGatewayService {
     if (!Number.isInteger(deadlineMs) || deadlineMs < 1 || deadlineMs > 60_000) {
       throw new Error("MODEL_GATEWAY_SHUTDOWN_DEADLINE_INVALID");
     }
+    this.#shutdownController.abort("platform-shutdown");
     this.#maintenanceController?.abort("platform-shutdown");
     for (const dispatch of this.#dispatches.values()) dispatch.controller.abort("platform-shutdown");
     await Promise.race([
@@ -679,9 +694,11 @@ export class ModelGatewayService {
   #startDispatch(record: ModelGatewayInvocationRecord, prepared: PreparedModelProviderRequest): void {
     if (this.#dispatches.has(record.invocationRef)) return;
     const controller = new AbortController();
-    const promise = this.#runDispatch(record, prepared, controller).catch(() => undefined).finally(() => {
-      this.#dispatches.delete(record.invocationRef);
-    });
+    const promise = this.#runDispatch(record, prepared, controller)
+      .catch(() => waitForAbort(this.#shutdownController.signal))
+      .finally(() => {
+        this.#dispatches.delete(record.invocationRef);
+      });
     this.#dispatches.set(record.invocationRef, Object.freeze({ controller, promise }));
   }
 
@@ -691,7 +708,11 @@ export class ModelGatewayService {
     controller: AbortController,
   ): Promise<void> {
     const timeout = AbortSignal.timeout(this.#providerHardTimeoutMs);
-    const signal = AbortSignal.any([controller.signal, timeout]);
+    const signal = AbortSignal.any([
+      controller.signal,
+      timeout,
+      this.#shutdownController.signal,
+    ]);
     const heartbeatController = new AbortController();
     let heartbeatFailure: unknown;
     const heartbeat = this.#heartbeatLoop(record, heartbeatController.signal).catch((cause: unknown) => {
@@ -729,11 +750,41 @@ export class ModelGatewayService {
         invocationRef: record.invocationRef,
       })}`,
     });
-    if (terminal.kind === "outcome_unknown") {
-      await this.#markOutcomeUnknown(record, terminal.ownerEvidenceRef, true);
-      return;
+    if (this.#shutdownController.signal.aborted) return;
+    await this.#terminalizeProviderOutcome(record, terminal);
+  }
+
+  async #terminalizeProviderOutcome(
+    record: ModelGatewayInvocationRecord,
+    providerOutcome: ModelGatewayProviderOutcome,
+  ): Promise<void> {
+    let terminal = providerOutcome;
+    let retryDelayMs = this.#terminalizationRetryInitialMs;
+    while (!this.#shutdownController.signal.aborted) {
+      try {
+        if (terminal.kind === "outcome_unknown") {
+          await this.#markOutcomeUnknown(record, terminal.ownerEvidenceRef, true);
+        } else {
+          await this.#finalize(record, terminal, "dispatching", true);
+        }
+        return;
+      } catch {
+        if (this.#shutdownController.signal.aborted) return;
+        if (terminal.kind !== "outcome_unknown") {
+          terminal = Object.freeze({
+            kind: "outcome_unknown" as const,
+            ownerEvidenceRef: terminalizationFailureEvidence(record, terminal),
+          });
+          continue;
+        }
+        try {
+          await abortableDelay(retryDelayMs, this.#shutdownController.signal);
+        } catch {
+          return;
+        }
+        retryDelayMs = Math.min(retryDelayMs * 2, this.#terminalizationRetryMaximumMs);
+      }
     }
-    await this.#finalize(record, terminal, "dispatching", true);
   }
 
   async #heartbeatLoop(record: ModelGatewayInvocationRecord, signal: AbortSignal): Promise<void> {
@@ -1109,6 +1160,18 @@ function errorDigest(error: unknown): string {
   return createHash("sha256").update(safe).digest("hex");
 }
 
+function terminalizationFailureEvidence(
+  record: ModelGatewayInvocationRecord,
+  outcome: Extract<ModelGatewayProviderOutcome, { kind: "succeeded" | "failed" }>,
+): string {
+  return `model-gateway-terminalization:sha256:${commandDigest("terminalization-failure", {
+    invocationRef: record.invocationRef,
+    requestDigest: record.requestDigest,
+    outcomeKind: outcome.kind,
+    sourceDigest: outcome.sourceDigest,
+  })}`;
+}
+
 async function* coalesceProviderStream(
   source: AsyncIterable<ModelGatewayProviderStreamEvent>,
   signal: AbortSignal,
@@ -1220,4 +1283,9 @@ function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void
     };
     signal.addEventListener("abort", aborted, { once: true });
   });
+}
+
+function waitForAbort(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
 }
