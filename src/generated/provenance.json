@@ -2,7 +2,7 @@
   "contractRevision": "kokoro.generated-artifact-provenance.v1",
   "boundaryId": "generated-kokoro-platform@v1",
   "consumerRepository": "kokoro-platform",
-  "sourceRootCommit": "3a6566dc17f4fde97faa4132c0f23be1bb4059e9",
+  "sourceRootCommit": "7034027f1fc9969c2f2b91aff84fd466da0bf5b5",
   "sourceFiles": [
     {
       "path": "contract/buf.lock",
@@ -50,7 +50,7 @@
     },
     {
       "path": "contract/generate.mjs",
-      "sha256": "sha256:a7181eb6cfeb0ad6113a6bf9c469a76d8dee1bff7419163754e8b58d561d3991"
+      "sha256": "sha256:00ee3049d4c55020e2e7b1593596ad6f37526625c1faa3983870cc887ef14af6"
     },
     {
       "path": "contract/generate.py",
@@ -282,7 +282,7 @@
     },
     {
       "path": "contract/registry/generated-consumers.yaml",
-      "sha256": "sha256:4abde973ab50b0b5a528a4435bdae9d1c182c89511f9a0edc5657384f9790384"
+      "sha256": "sha256:93bb553825ef5df2619df264208298940de4d9778a26d4703a7afe73a0b9f439"
     },
     {
       "path": "contract/registry/platform-session-authorization-v1.yaml",
@@ -657,6 +657,10 @@
       "sha256": "sha256:7b444d6579d65599cd579d99ad9179eba0ce441ae988c6611195acdb9dd6bf04"
     },
     {
+      "path": "src/generated/contracts/platform-commerce-fulfillment@v1/metadata.ts",
+      "sha256": "sha256:5b0d0d2c31cb72bae32e02fc5d7245174d692ab79f540b8843388e3f1174b1bf"
+    },
+    {
       "path": "src/generated/contracts/platform-credit-cost-projection-recovery@v1/digest.ts",
       "sha256": "sha256:8cf830feacf105de41ff81c027076d0555466440d53cb7f4934fa8c48f99bedc"
     },
@@ -837,6 +841,10 @@
       "sha256": "sha256:d0fbe385f9aa75f17a44f40496be3f046c0a3c4de8bc01c09e94baaea64caabc"
     },
     {
+      "path": "src/generated/proto/kokoro/platform/commerce/v1/fulfillment_pb.ts",
+      "sha256": "sha256:daa8ebe4f16917ffb0e31e23732cc3222e55ec0ebee8e911e6e161756fdc1984"
+    },
+    {
       "path": "src/generated/proto/kokoro/platform/credit/v1/admin_credit_pb.ts",
       "sha256": "sha256:03641406a64745a45b15c2ff53d1a1bf867c0a4136316aaf20e896ff474511e8"
     },
@@ -985,5 +993,5 @@
       "sha256": "sha256:5146ef2e810c42d221f63df7eea17921b69c65329e60a3ee60024c4730228c00"
     }
   ],
-  "manifestDigest": "sha256:bce70c3f0809a09c1c1dcd0a3a5ed21c42404b7017f8234b143f330ddd2f8e78"
+  "manifestDigest": "sha256:c2bb91f95f204b07f0dd24f4d10bbbfcf809fe9849a0d06cc9de61c3cc5fb531"
 }
