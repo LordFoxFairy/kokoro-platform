@@ -499,6 +499,16 @@ items:
               env:
                 - { name: KOKORO_SERVICE_PACKAGE, value: platform-admin }
                 - { name: PLATFORM_DATABASE_CREDENTIAL_CLASS, value: admin }
+                - { name: PLATFORM_COMMERCE_REDEMPTION_KEY_RING_FILE, value: /run/secrets/platform-admin/commerce-redemption-keys.json }
+              volumeMounts:
+                - { name: commerce-redemption-keyring, mountPath: /run/secrets/platform-admin, readOnly: true }
+          volumes:
+            - name: commerce-redemption-keyring
+              secret:
+                secretName: commerce-redemption-keyring
+                defaultMode: 288
+                items:
+                  - { key: commerce-redemption-keys.json, path: commerce-redemption-keys.json }
 
   - apiVersion: apps/v1
     kind: Deployment

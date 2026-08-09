@@ -540,6 +540,7 @@ deployables:
         oidc-transaction-encryption-key,
         admin-session-jose-key-ring,
         admin-page-cursor-key,
+        commerce-redemption-keyring,
         authorization-event-signing-keyring,
         site-release-certification-verification-keyring,
         site-web-build-intent-signing-keyring,

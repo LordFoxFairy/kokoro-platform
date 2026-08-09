@@ -315,6 +315,9 @@ services:
       PLATFORM_DATABASE_EXPECTED_DATABASE: ${PLATFORM_DATABASE_EXPECTED_DATABASE:-kokoro_platform}
       PLATFORM_DATABASE_MIGRATOR_ROLE: ${PLATFORM_DATABASE_MIGRATOR_ROLE:-platform_migrator}
       PLATFORM_DATABASE_ADMIN_ROLE: ${PLATFORM_DATABASE_ADMIN_ROLE:-platform_admin}
+      PLATFORM_COMMERCE_REDEMPTION_KEY_RING_FILE: /run/secrets/platform-admin/commerce-redemption-keys.json
+    volumes:
+      - { type: bind, source: "${PLATFORM_COMMERCE_REDEMPTION_KEY_RING_FILE:?required}", target: /run/secrets/platform-admin/commerce-redemption-keys.json, read_only: true }
 
   platform-asset-data-plane:
     <<: *platform-service
