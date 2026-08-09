@@ -10,6 +10,8 @@ import { OperatorAssuranceLevel } from
   "../../../../generated/proto/kokoro/common/v2/command_envelope_pb.js";
 import type { VerifiedAuthenticatedAdminAxes } from
   "../../../../generated/contracts/platform-admin-command@v2/digest.js";
+import type { VerifiedCommerceSiteAxes } from
+  "../../../../generated/contracts/platform-admin-commerce@v1/digest.js";
 import type { VerifiedAdminWorkloadAxes } from
   "../../../../generated/contracts/platform-admin-identity@v1/digest.js";
 import {
@@ -45,6 +47,7 @@ export interface VerifiedAdminPeer {
 }
 
 export type CommerceAdminCommandOperation =
+  | "commerce.credit-program.publish"
   | "commerce.entitlement-template.publish"
   | "commerce.offer.publish"
   | "commerce.redemption-program.publish"
@@ -54,8 +57,6 @@ export type CommerceAdminCommandOperation =
   | "commerce.code-batch.abandon"
   | "commerce.code-batch.suspend"
   | "commerce.code-batch.revoke";
-
-export type CreditAdminCommandOperation = "credit.program.publish";
 
 export type SiteProvisioningAdminOperation = "site.register";
 
@@ -395,7 +396,7 @@ export class AdminControlPlaneResolver implements
     }>,
   ): Promise<Readonly<{
     context: VerifiedRequestSecurityContext;
-    axes: VerifiedAuthenticatedAdminAxes;
+    axes: VerifiedCommerceSiteAxes;
   }>> {
     const authenticated = await this.authenticate(claimed, transport);
     const requested = scopeFromWire(claimed.scope);
@@ -404,36 +405,9 @@ export class AdminControlPlaneResolver implements
       [request.siteRef, ...request.resourceRefs], [], true,
     );
     return Object.freeze({
-      axes: axes(authenticated.session),
+      axes: Object.freeze({ ...axes(authenticated.session), siteId: request.siteRef }),
       context: await this.context(
         authenticated.session, request.operation, request.siteRef, scopeLabels(requested),
-        claimed.command?.commandId ?? "", [request.operation],
-      ),
-    });
-  }
-
-  async resolveCreditCommand(
-    claimed: AuthenticatedOperatorCommandContext,
-    transport: HandlerContext,
-    request: Readonly<{
-      operation: CreditAdminCommandOperation;
-      resourceRefs: readonly string[];
-    }>,
-  ): Promise<Readonly<{
-    context: VerifiedRequestSecurityContext;
-    axes: VerifiedAuthenticatedAdminAxes;
-  }>> {
-    const authenticated = await this.authenticate(claimed, transport);
-    const requested = scopeFromWire(claimed.scope);
-    if (requested.kind === "site") throw new Error("CREDIT_PROGRAM_GLOBAL_OPERATOR_REQUIRED");
-    this.authorizeScope(
-      authenticated, requested, request.operation, request.operation, null,
-      request.resourceRefs, [], true,
-    );
-    return Object.freeze({
-      axes: axes(authenticated.session),
-      context: await this.context(
-        authenticated.session, request.operation, null, scopeLabels(requested),
         claimed.command?.commandId ?? "", [request.operation],
       ),
     });

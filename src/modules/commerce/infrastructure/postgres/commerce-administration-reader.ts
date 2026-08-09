@@ -1,5 +1,5 @@
 import type { AdminQueryPermit } from "../../../admin/interfaces/connect/admin-query-service.js";
-import type { AdminQueryTransactionHost } from
+import type { AdminSiteQueryTransactionHost } from
   "../../../admin/infrastructure/postgres/admin-query-reader.js";
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 import type {
@@ -9,7 +9,10 @@ import type {
 
 export type CommerceOfferRecord = Readonly<{
   siteId: string; productRef: string; productKind: "free" | "credit_pack" | "subscription" | "bundle";
-  productVersionRef: string; revision: bigint; safeLabel: string; planVersionRef: string | null;
+  productVersionRef: string; revision: bigint; safeLabel: string;
+  planVersion: Readonly<{ planRef: string; planVersionRef: string; revision: bigint; safeLabel: string;
+    termAction: "none" | "new_subscription" | "extend_from_max" | "reject_if_active";
+    termSeconds: bigint | null; stackingScope: string; revisionDigest: string }> | null;
   fulfillmentProgramRevisionRef: string;
   outputs: readonly Readonly<{ outputLineId: string; ordinal: number; cardinality: number;
     outputKind: "subscription_term" | "entitlement_grant" | "credit_grant" | "credit_program_enrollment";
@@ -20,7 +23,7 @@ export type CommerceOfferRecord = Readonly<{
 export type RedemptionProgramRecord = Readonly<{
   siteId: string; redemptionProgramRevisionRef: string; programRef: string; revision: bigint;
   productVersionRef: string; fulfillmentProgramRevisionRef: string;
-  maxRedemptionsPerAccount: number; availabilityState: string; publishedAt: string;
+  maxRedemptionsPerAccount: number; availabilityState: "active" | "paused" | "retired"; publishedAt: string;
 }>;
 
 export type CodeBatchRecord = Readonly<{
@@ -29,7 +32,7 @@ export type CodeBatchRecord = Readonly<{
   approvalState: "pending" | "approved"; inventoryCount: number; createdByOperatorRef: string;
   startsAt: string | null; endsAt: string | null; createdAt: string; activatedAt: string | null;
   exportReceipt: Readonly<{ batchRef: string; exportCommandId: string;
-    exportedToOperatorRef: string; codeCount: number; exportedAt: string }> | null;
+    exportedToOperatorRef: string; codeCount: number; exportedAt: string }>;
 }>;
 
 export type EntitlementTemplateRevisionRecord = Readonly<{
@@ -39,7 +42,9 @@ export type EntitlementTemplateRevisionRecord = Readonly<{
 }>;
 
 export interface CommerceAdministrationReader {
-  observeCatalog(permit: AdminQueryPermit): Promise<Readonly<{ watermark: string; observedAt: string }>>;
+  observeCatalog(permit: AdminQueryPermit, siteId: string): Promise<Readonly<{
+    watermark: string; observedAt: string;
+  }>>;
   getCreditProgramRevision(permit: AdminQueryPermit, siteId: string,
     revisionRef: string): Promise<CreditGrantProgramAdministrationRecord | null>;
   listCreditProgramRevisions(permit: AdminQueryPermit,
@@ -61,6 +66,9 @@ type Page = Readonly<{ siteId: string; afterRef: string | null; watermark: strin
 interface OfferRow extends Record<string, unknown> {
   siteId: string; productRef: string; productKind: string; productVersionRef: string;
   revision: bigint | string; safeLabel: string; planVersionRef: string | null;
+  planRef: string | null; planRevision: bigint | string | null; planSafeLabel: string | null;
+  planTermAction: string | null; planTermSeconds: bigint | string | null;
+  planStackingScope: string | null; planRevisionDigest: string | null;
   fulfillmentProgramRevisionRef: string; outputs: unknown; legalTermRefs: unknown; publishedAt: Date | string;
 }
 interface ProgramRow extends Record<string, unknown> {
@@ -82,11 +90,12 @@ interface EntitlementTemplateRow extends Record<string, unknown> {
 }
 
 export class PostgresCommerceAdministrationReader implements CommerceAdministrationReader {
-  constructor(private readonly host: AdminQueryTransactionHost,
+  constructor(private readonly host: AdminSiteQueryTransactionHost,
     private readonly creditPrograms: CreditGrantProgramAdministrationReader) {}
 
-  observeCatalog(permit: AdminQueryPermit) {
-    return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
+  observeCatalog(permit: AdminQueryPermit, siteId: string) {
+    requireSite(permit, siteId);
+    return this.host.adminSiteQueryTransaction(permit, siteId, async (ownerTransaction) => {
       const rows = await resolvePlatformTransaction(ownerTransaction).query<Record<string, unknown> & {
         watermark: bigint | string; observedAt: Date | string;
       }>(`SELECT current_epoch::text AS watermark,clock_timestamp() AS "observedAt"
@@ -110,7 +119,7 @@ export class PostgresCommerceAdministrationReader implements CommerceAdministrat
 
   getEntitlementTemplateRevision(permit: AdminQueryPermit, siteId: string, revisionRef: string) {
     requireSite(permit, siteId);
-    return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
+    return this.host.adminSiteQueryTransaction(permit, siteId, async (ownerTransaction) => {
       const rows = await resolvePlatformTransaction(ownerTransaction).query<EntitlementTemplateRow>(
         `${entitlementTemplateProjection()} WHERE revision.site_ref=$1 AND revision.entitlement_template_revision_ref=$2 LIMIT 1`,
         [siteId, revisionRef],
@@ -121,7 +130,7 @@ export class PostgresCommerceAdministrationReader implements CommerceAdministrat
 
   listEntitlementTemplateRevisions(permit: AdminQueryPermit, input: Page) {
     requireSite(permit, input.siteId); requirePage(input);
-    return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
+    return this.host.adminSiteQueryTransaction(permit, input.siteId, async (ownerTransaction) => {
       const rows = await resolvePlatformTransaction(ownerTransaction).query<EntitlementTemplateRow>(
         `${entitlementTemplateProjection()} WHERE revision.site_ref=$1 AND revision.entitlement_template_revision_ref>$2
            AND revision.catalog_epoch<=$3::bigint
@@ -134,7 +143,7 @@ export class PostgresCommerceAdministrationReader implements CommerceAdministrat
 
   getOffer(permit: AdminQueryPermit, siteId: string, productVersionRef: string) {
     requireSite(permit, siteId);
-    return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
+    return this.host.adminSiteQueryTransaction(permit, siteId, async (ownerTransaction) => {
       const rows = await resolvePlatformTransaction(ownerTransaction).query<OfferRow>(
         `${offerProjection()} WHERE version.site_ref=$1 AND version.product_version_ref=$2 LIMIT 1`,
         [siteId, productVersionRef],
@@ -145,7 +154,7 @@ export class PostgresCommerceAdministrationReader implements CommerceAdministrat
 
   listOffers(permit: AdminQueryPermit, input: Page) {
     requireSite(permit, input.siteId); requirePage(input);
-    return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
+    return this.host.adminSiteQueryTransaction(permit, input.siteId, async (ownerTransaction) => {
       const rows = await resolvePlatformTransaction(ownerTransaction).query<OfferRow>(
         `${offerProjection()} WHERE version.site_ref=$1 AND version.product_version_ref>$2
            AND version.catalog_epoch<=$3::bigint
@@ -158,7 +167,7 @@ export class PostgresCommerceAdministrationReader implements CommerceAdministrat
 
   getRedemptionProgram(permit: AdminQueryPermit, siteId: string, revisionRef: string) {
     requireSite(permit, siteId);
-    return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
+    return this.host.adminSiteQueryTransaction(permit, siteId, async (ownerTransaction) => {
       const rows = await resolvePlatformTransaction(ownerTransaction).query<ProgramRow>(
         `${programProjection()} WHERE revision.site_ref=$1 AND revision.redemption_program_revision_ref=$2 LIMIT 1`,
         [siteId, revisionRef],
@@ -169,7 +178,7 @@ export class PostgresCommerceAdministrationReader implements CommerceAdministrat
 
   listRedemptionPrograms(permit: AdminQueryPermit, input: Page) {
     requireSite(permit, input.siteId); requirePage(input);
-    return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
+    return this.host.adminSiteQueryTransaction(permit, input.siteId, async (ownerTransaction) => {
       const rows = await resolvePlatformTransaction(ownerTransaction).query<ProgramRow>(
         `${programProjection()} WHERE revision.site_ref=$1 AND revision.redemption_program_revision_ref>$2
            AND revision.catalog_epoch<=$3::bigint
@@ -182,7 +191,7 @@ export class PostgresCommerceAdministrationReader implements CommerceAdministrat
 
   getCodeBatch(permit: AdminQueryPermit, siteId: string, batchRef: string) {
     requireSite(permit, siteId);
-    return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
+    return this.host.adminSiteQueryTransaction(permit, siteId, async (ownerTransaction) => {
       const rows = await resolvePlatformTransaction(ownerTransaction).query<BatchRow>(
         `${batchProjection()} WHERE batch.site_ref=$1 AND batch.batch_ref=$2::uuid LIMIT 1`,
         [siteId, batchRef],
@@ -193,7 +202,7 @@ export class PostgresCommerceAdministrationReader implements CommerceAdministrat
 
   listCodeBatches(permit: AdminQueryPermit, input: Page) {
     requireSite(permit, input.siteId); requirePage(input);
-    return this.host.adminQueryTransaction(permit, async (ownerTransaction) => {
+    return this.host.adminSiteQueryTransaction(permit, input.siteId, async (ownerTransaction) => {
       const rows = await resolvePlatformTransaction(ownerTransaction).query<BatchRow>(
         `${batchProjection()} WHERE batch.site_ref=$1 AND batch.batch_ref>$2::uuid
            AND batch.catalog_epoch<=$3::bigint ORDER BY batch.batch_ref ASC LIMIT $4`,
@@ -217,6 +226,9 @@ function offerProjection(): string {
   return `SELECT version.site_ref AS "siteId",version.product_ref AS "productRef",
     product.kind AS "productKind",version.product_version_ref AS "productVersionRef",
     version.revision,version.safe_label AS "safeLabel",version.plan_version_ref AS "planVersionRef",
+    plan.plan_ref AS "planRef",plan.revision AS "planRevision",plan.safe_label AS "planSafeLabel",
+    plan.term_action AS "planTermAction",plan.term_seconds::text AS "planTermSeconds",
+    plan.stacking_scope AS "planStackingScope",plan.revision_digest AS "planRevisionDigest",
     version.fulfillment_program_revision_ref AS "fulfillmentProgramRevisionRef",
     COALESCE((SELECT jsonb_agg(jsonb_build_object(
       'outputLineId',output.output_line_id,'ordinal',output.ordinal,'cardinality',output.cardinality,
@@ -228,7 +240,9 @@ function offerProjection(): string {
     version.legal_term_refs AS "legalTermRefs",version.published_at AS "publishedAt"
     FROM platform.commerce_catalog_product_version version
     JOIN platform.commerce_catalog_product product
-      ON product.site_ref=version.site_ref AND product.product_ref=version.product_ref`;
+      ON product.site_ref=version.site_ref AND product.product_ref=version.product_ref
+    LEFT JOIN platform.commerce_catalog_plan_version plan
+      ON plan.site_ref=version.site_ref AND plan.plan_version_ref=version.plan_version_ref`;
 }
 function programProjection(): string {
   return `SELECT revision.site_ref AS "siteId",revision.redemption_program_revision_ref AS "redemptionProgramRevisionRef",
@@ -284,24 +298,29 @@ function offer(row: OfferRow): CommerceOfferRecord {
   const kinds = ["free", "credit_pack", "subscription", "bundle"] as const;
   if (!kinds.includes(row.productKind as never)) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
   const outputs = jsonArray(row.outputs).map((value) => {
-    const item = record(value); const outputKinds = ["subscription_term", "entitlement_grant", "credit_grant"] as const;
+    const item = record(value); const outputKinds = ["subscription_term", "entitlement_grant", "credit_grant",
+      "credit_program_enrollment"] as const;
     if (!outputKinds.includes(item.outputKind as never)) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
     return Object.freeze({ outputLineId: text(item.outputLineId), ordinal: integer(item.ordinal),
       cardinality: integer(item.cardinality), outputKind: item.outputKind as typeof outputKinds[number],
       targetRevisionRef: text(item.targetRevisionRef) });
   });
+  const planVersion = row.planVersionRef === null ? noPlan(row) : plan(row);
   return Object.freeze({ siteId: text(row.siteId), productRef: text(row.productRef),
     productKind: row.productKind as typeof kinds[number], productVersionRef: text(row.productVersionRef),
     revision: positive(row.revision), safeLabel: safeLabel(row.safeLabel),
-    planVersionRef: nullableText(row.planVersionRef),
+    planVersion,
     fulfillmentProgramRevisionRef: text(row.fulfillmentProgramRevisionRef), outputs: Object.freeze(outputs),
     legalTermRefs: stringArray(row.legalTermRefs), publishedAt: instant(row.publishedAt) });
 }
 function program(row: ProgramRow): RedemptionProgramRecord {
+  const states = ["active", "paused", "retired"] as const;
+  if (!states.includes(row.availabilityState as never)) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
   return Object.freeze({ siteId: text(row.siteId), redemptionProgramRevisionRef: text(row.redemptionProgramRevisionRef),
     programRef: text(row.programRef), revision: positive(row.revision), productVersionRef: text(row.productVersionRef),
     fulfillmentProgramRevisionRef: text(row.fulfillmentProgramRevisionRef),
-    maxRedemptionsPerAccount: integer(row.maxRedemptionsPerAccount), availabilityState: text(row.availabilityState),
+    maxRedemptionsPerAccount: integer(row.maxRedemptionsPerAccount),
+    availabilityState: row.availabilityState as typeof states[number],
     publishedAt: instant(row.publishedAt) });
 }
 function batch(row: BatchRow): CodeBatchRecord {
@@ -309,15 +328,44 @@ function batch(row: BatchRow): CodeBatchRecord {
   if (!states.includes(row.state as never) || !["pending", "approved"].includes(row.approvalState)) {
     throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
   }
-  const exportReceipt = row.exportCommandId === null ? null : Object.freeze({ batchRef: text(row.batchRef),
+  if (row.exportCommandId === null || row.exportedToOperatorRef === null ||
+      row.exportCodeCount === null || row.exportedAt === null) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
+  const exportReceipt = Object.freeze({ batchRef: text(row.batchRef),
     exportCommandId: row.exportCommandId, exportedToOperatorRef: text(row.exportedToOperatorRef),
     codeCount: integer(row.exportCodeCount), exportedAt: instant(row.exportedAt) });
+  const approved = row.approvalState === "approved";
+  const activated = row.activatedAt !== null;
+  if ((["active", "suspended", "revoked"].includes(row.state) && (!approved || !activated)) ||
+      (["draft", "abandoned"].includes(row.state) && activated)) {
+    throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
+  }
   return Object.freeze({ siteId: text(row.siteId), batchRef: text(row.batchRef),
     redemptionProgramRevisionRef: text(row.redemptionProgramRevisionRef), state: row.state as typeof states[number],
     approvalState: row.approvalState as "pending" | "approved", inventoryCount: integer(row.inventoryCount),
     createdByOperatorRef: text(row.createdByOperatorRef), startsAt: nullableInstant(row.startsAt),
     endsAt: nullableInstant(row.endsAt), createdAt: instant(row.createdAt),
     activatedAt: nullableInstant(row.activatedAt), exportReceipt });
+}
+
+function noPlan(row: OfferRow): null {
+  if ([row.planRef, row.planRevision, row.planSafeLabel, row.planTermAction, row.planTermSeconds,
+    row.planStackingScope, row.planRevisionDigest].some((value) => value !== null)) {
+    throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
+  }
+  return null;
+}
+
+function plan(row: OfferRow): NonNullable<CommerceOfferRecord["planVersion"]> {
+  const actions = ["none", "new_subscription", "extend_from_max", "reject_if_active"] as const;
+  if (!actions.includes(row.planTermAction as never)) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
+  const termSeconds = nullablePositive(row.planTermSeconds);
+  if ((row.planTermAction === "none") !== (termSeconds === null)) {
+    throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
+  }
+  return Object.freeze({ planRef: text(row.planRef), planVersionRef: text(row.planVersionRef),
+    revision: positive(row.planRevision), safeLabel: safeLabel(row.planSafeLabel),
+    termAction: row.planTermAction as typeof actions[number], termSeconds,
+    stackingScope: text(row.planStackingScope), revisionDigest: digestText(row.planRevisionDigest) });
 }
 function record(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT");
@@ -328,7 +376,6 @@ function jsonArray(value: unknown): readonly unknown[] {
   if (!Array.isArray(parsed)) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT"); return parsed;
 }
 function text(value: unknown): string { if (typeof value !== "string" || value.length < 1) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT"); return value; }
-function nullableText(value: unknown): string | null { return value === null ? null : text(value); }
 function integer(value: unknown): number { if (typeof value !== "number" || !Number.isInteger(value) || value < 0) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT"); return value; }
 function positive(value: unknown): bigint { const result = typeof value === "bigint" ? value : typeof value === "string" ? BigInt(value) : 0n; if (result < 1n || result > 9_223_372_036_854_775_807n) throw new Error("COMMERCE_ADMIN_ROW_CORRUPT"); return result; }
 function nullablePositive(value: unknown): bigint | null { return value === null ? null : positive(value); }

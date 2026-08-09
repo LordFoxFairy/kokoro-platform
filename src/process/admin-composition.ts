@@ -17,6 +17,8 @@ import { SitePublicationService } from
   "../generated/proto/kokoro/platform/site/v1/site_publication_pb.js";
 import { AdminCreditService } from
   "../generated/proto/kokoro/platform/credit/v1/admin_credit_pb.js";
+import { AdminCommerceService } from
+  "../generated/proto/kokoro/platform/commerce/v1/admin_commerce_pb.js";
 import { SiteProvisioningService } from
   "../generated/proto/kokoro/platform/site/v1/site_provisioning_pb.js";
 import { ModelControlService } from
@@ -74,6 +76,9 @@ import { createAdminCreditConnectService } from
   "../modules/credit/interfaces/connect/admin-credit-service.js";
 import { PostgresAdminCreditReader } from
   "../modules/credit/infrastructure/postgres/admin-credit-reader.js";
+import { createAdminCommerceConnectService } from
+  "../modules/commerce/interfaces/connect/admin-commerce-service.js";
+import { createCommerceAdministrationComposition } from "./commerce-admin-composition.js";
 import { readBoundedPrivateFile, readBoundedRegularFile } from "./secret-files.js";
 import { createPlatformSiteAdminComposition } from "./site-admin-composition.js";
 import { createSessionAuthorizationEventSigner } from
@@ -225,6 +230,16 @@ export async function createAdminProductionComposition(input: Readonly<{
     resolver, reader: new PostgresAdminCreditReader(input.database),
     cursors,
   });
+  const commerce = await createCommerceAdministrationComposition({
+    database: input.database,
+    environment,
+  });
+  const commerceService = createAdminCommerceConnectService({
+    owner: commerce.commerce,
+    resolver,
+    reader: commerce.reader,
+    cursors,
+  });
   const unitOfWork = new PlatformUnitOfWork(input.database);
   const authorityRepository = new PostgresAdminAuthorityRepository();
   const receipts = new CommandReceiptRepository();
@@ -319,6 +334,7 @@ export async function createAdminProductionComposition(input: Readonly<{
       router.service(ModelControlService, modelControlService);
       router.service(ProductCatalogPublicationService, productCatalogService);
       router.service(AdminCreditService, creditService);
+      router.service(AdminCommerceService, commerceService);
     },
     connect: true,
     grpc: false,

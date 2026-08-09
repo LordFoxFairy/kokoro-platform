@@ -1,5 +1,6 @@
 import type { AdminQueryPermit } from "../../../admin/interfaces/connect/admin-query-service.js";
-import type { AdminQueryTransactionHost } from "../../../admin/infrastructure/postgres/admin-query-reader.js";
+import type { AdminSiteQueryTransactionHost } from
+  "../../../admin/infrastructure/postgres/admin-query-reader.js";
 import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/platform-transaction.js";
 import type {
   CreditGrantProgramAdministrationPage,
@@ -16,11 +17,11 @@ interface Row extends Record<string, unknown> {
 }
 
 export class PostgresCreditGrantProgramAdministrationReader implements CreditGrantProgramAdministrationReader {
-  constructor(private readonly host: AdminQueryTransactionHost) {}
+  constructor(private readonly host: AdminSiteQueryTransactionHost) {}
 
   getCreditProgramRevision(permit: AdminQueryPermit, siteId: string, revisionRef: string) {
     requireSite(permit, siteId);
-    return this.host.adminQueryTransaction(permit, async (transaction) => {
+    return this.host.adminSiteQueryTransaction(permit, siteId, async (transaction) => {
       const rows = await resolvePlatformTransaction(transaction).query<Row>(
         `${projection()} WHERE revision.site_ref=$1 AND revision.credit_program_revision_ref=$2 LIMIT 1`,
         [siteId, revisionRef],
@@ -32,7 +33,7 @@ export class PostgresCreditGrantProgramAdministrationReader implements CreditGra
   listCreditProgramRevisions(permit: AdminQueryPermit, input: CreditGrantProgramAdministrationPage) {
     requireSite(permit, input.siteId);
     requirePage(input);
-    return this.host.adminQueryTransaction(permit, async (transaction) => {
+    return this.host.adminSiteQueryTransaction(permit, input.siteId, async (transaction) => {
       const rows = await resolvePlatformTransaction(transaction).query<Row>(
         `${projection()} WHERE revision.site_ref=$1 AND revision.credit_program_revision_ref>$2
            AND revision.catalog_epoch<=$3::bigint
@@ -69,10 +70,11 @@ function record(row: Row): CreditGrantProgramAdministrationRecord {
   const windowAnchor = nullableText(row.windowAnchor);
   if ((row.uxBucketClass === "permanent" && (row.windowKind !== "none" || calendarZone !== null ||
       windowAnchor !== null || expiresAfterSeconds !== null)) ||
-      (row.uxBucketClass !== "permanent" && (row.windowKind !== row.uxBucketClass || calendarZone === null ||
-        expiresAfterSeconds === null ||
-        (row.uxBucketClass === "daily" && !/^daily@(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/u.test(windowAnchor ?? "")) ||
-        (row.uxBucketClass === "period" && windowAnchor !== "subscription-term-start")))) {
+      (row.uxBucketClass === "daily" && (row.windowKind !== "daily" || calendarZone === null ||
+        expiresAfterSeconds !== null ||
+        !/^daily@(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/u.test(windowAnchor ?? ""))) ||
+      (row.uxBucketClass === "period" && (row.windowKind !== "period" || calendarZone === null ||
+        windowAnchor !== "subscription-term-start"))) {
     throw new Error("CREDIT_ADMIN_ROW_CORRUPT");
   }
   return Object.freeze({ siteId: text(row.siteId), creditProgramRevisionRef: text(row.creditProgramRevisionRef),

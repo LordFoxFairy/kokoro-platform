@@ -15,13 +15,11 @@ describe("PostgresCommerceAdministrationReader", () => {
       statements.push(statement);
       return [{ watermark: "41", observedAt: new Date("2026-07-30T02:00:00.000Z") }] as never;
     } });
-    const host = {
-      adminQueryTransaction: async (_permit, work) => work(lease.transaction),
-    } as ConstructorParameters<typeof PostgresCommerceAdministrationReader>[0];
+    const host = queryHost(lease.transaction);
     const reader = new PostgresCommerceAdministrationReader(host,
       new PostgresCreditGrantProgramAdministrationReader(host));
     try {
-      await expect(reader.observeCatalog(permit("commerce.credit-program.read")))
+      await expect(reader.observeCatalog(permit("commerce.credit-program.read"), "site-1"))
         .resolves.toEqual({ watermark: "41", observedAt: "2026-07-30T02:00:00.000Z" });
       expect(statements).toEqual([expect.stringContaining("commerce_catalog_epoch_authority")]);
       expect(statements[0]).toContain("clock_timestamp()");
@@ -41,9 +39,7 @@ describe("PostgresCommerceAdministrationReader", () => {
         revisionDigest: "a".repeat(64),
         publishedAt: new Date("2026-07-30T01:00:00.000Z") }] as never;
     } });
-    const host = {
-      adminQueryTransaction: async (_permit, work) => work(lease.transaction),
-    } as ConstructorParameters<typeof PostgresCommerceAdministrationReader>[0];
+    const host = queryHost(lease.transaction);
     const reader = new PostgresCommerceAdministrationReader(host,
       new PostgresCreditGrantProgramAdministrationReader(host));
     try {
@@ -58,6 +54,26 @@ describe("PostgresCommerceAdministrationReader", () => {
     } finally { revokePlatformTransaction(lease); }
   });
 
+  it("accepts a persisted daily CreditProgram with no relative expiry", async () => {
+    const lease = issuePlatformTransaction({ execute: async () => 0, query: async () => [{
+      siteId: "site-1", creditProgramRevisionRef: "daily-v1", programRef: "daily",
+      revision: "1", uxBucketClass: "daily", unit: "credit", amount: "10", burnPriority: 1,
+      scopePolicy: { version: 1, surfaceRefs: ["chat"], capabilityKeys: ["chat.generate"],
+        agentRefs: [], allowUnattributedAgent: true }, liabilityMerchantAccountRef: "merchant:main",
+      windowKind: "daily", calendarZone: "America/New_York", windowAnchor: "daily@00:00:00",
+      rolloverPolicy: "none", expiresAfterSeconds: null, revisionDigest: "d".repeat(64),
+      publishedAt: "2026-07-30T01:00:00.000Z",
+    }] as never });
+    const host = queryHost(lease.transaction);
+    const reader = new PostgresCommerceAdministrationReader(host,
+      new PostgresCreditGrantProgramAdministrationReader(host));
+    try {
+      await expect(reader.getCreditProgramRevision(permit("commerce.credit-program.read"),
+        "site-1", "daily-v1")).resolves.toMatchObject({ uxBucketClass: "daily",
+        expiresAfterSeconds: null });
+    } finally { revokePlatformTransaction(lease); }
+  });
+
   it("lists EntitlementTemplate revisions with a stable Site-scoped watermark", async () => {
     const statements: string[] = [];
     const lease = issuePlatformTransaction({ execute: async () => 0, query: async (statement) => {
@@ -67,9 +83,7 @@ describe("PostgresCommerceAdministrationReader", () => {
         safeLabel: "Premium chat", expiresAfterSeconds: "3600", revisionDigest: "b".repeat(64),
         publishedAt: "2026-07-30T01:00:00.000Z" }] as never;
     } });
-    const host = {
-      adminQueryTransaction: async (_permit, work) => work(lease.transaction),
-    } as ConstructorParameters<typeof PostgresCommerceAdministrationReader>[0];
+    const host = queryHost(lease.transaction);
     const reader = new PostgresCommerceAdministrationReader(host,
       new PostgresCreditGrantProgramAdministrationReader(host));
     try {
@@ -91,13 +105,11 @@ describe("PostgresCommerceAdministrationReader", () => {
       const watermark = BigInt(String(parameters?.[2]));
       return writerCommitted && writerEpoch <= watermark ? [{ entitlementTemplateRevisionRef: "late-v1" }] as never : [];
     } });
-    const host = {
-      adminQueryTransaction: async (_permit, work) => work(lease.transaction),
-    } as ConstructorParameters<typeof PostgresCommerceAdministrationReader>[0];
+    const host = queryHost(lease.transaction);
     const reader = new PostgresCommerceAdministrationReader(host,
       new PostgresCreditGrantProgramAdministrationReader(host));
     try {
-      const firstPage = await reader.observeCatalog(permit("commerce.entitlement-template.read"));
+      const firstPage = await reader.observeCatalog(permit("commerce.entitlement-template.read"), "site-1");
       writerCommitted = true;
       await expect(reader.listEntitlementTemplateRevisions(permit("commerce.entitlement-template.read"), {
         siteId: "site-1", afterRef: null, watermark: firstPage.watermark, limit: 10,
@@ -109,7 +121,7 @@ describe("PostgresCommerceAdministrationReader", () => {
 
   it.each(["-1", "01", "9223372036854775808", "2026-07-30T02:00:00.000Z"])(
     "rejects a non-canonical catalog watermark (%s)", (watermark) => {
-      const host = { adminQueryTransaction: async () => {
+      const host = { adminSiteQueryTransaction: async () => {
         throw new Error("MUST_NOT_OPEN_TRANSACTION");
       } } as ConstructorParameters<typeof PostgresCommerceAdministrationReader>[0];
       const reader = new PostgresCommerceAdministrationReader(host,
@@ -119,10 +131,63 @@ describe("PostgresCommerceAdministrationReader", () => {
       })).toThrow("COMMERCE_ADMIN_PAGE_INVALID");
     },
   );
+
+  it("hydrates the complete Plan join and credit_program_enrollment output", async () => {
+    const statements: string[] = [];
+    const lease = issuePlatformTransaction({ execute: async () => 0, query: async (statement) => {
+      statements.push(statement);
+      return [{ siteId: "site-1", productRef: "subscription", productKind: "subscription",
+        productVersionRef: "subscription-v1", revision: "1", safeLabel: "Subscription",
+        planVersionRef: "plan-v1", planRef: "plan", planRevision: "1",
+        planSafeLabel: "Monthly plan", planTermAction: "new_subscription",
+        planTermSeconds: "2592000", planStackingScope: "account",
+        planRevisionDigest: "c".repeat(64), fulfillmentProgramRevisionRef: "fulfillment-v1",
+        outputs: [{ outputLineId: "credits", ordinal: 1, cardinality: 1,
+          outputKind: "credit_program_enrollment", targetRevisionRef: "credits-daily-v1" }],
+        legalTermRefs: [], publishedAt: "2026-07-30T01:00:00.000Z" }] as never;
+    } });
+    const host = queryHost(lease.transaction);
+    const reader = new PostgresCommerceAdministrationReader(host,
+      new PostgresCreditGrantProgramAdministrationReader(host));
+    try {
+      await expect(reader.getOffer(permit("commerce.offer.read"), "site-1", "subscription-v1"))
+        .resolves.toMatchObject({
+          planVersion: { planVersionRef: "plan-v1", termSeconds: 2_592_000n,
+            revisionDigest: "c".repeat(64) },
+          outputs: [{ outputKind: "credit_program_enrollment",
+            targetRevisionRef: "credits-daily-v1" }],
+        });
+      expect(statements[0]).toContain("JOIN platform.commerce_catalog_plan_version plan");
+      expect(statements[0]).toContain("output.credit_program_revision_ref");
+    } finally { revokePlatformTransaction(lease); }
+  });
+
+  it("fails closed on an unknown RedemptionProgram availability state", async () => {
+    const lease = issuePlatformTransaction({ execute: async () => 0, query: async () => [{
+      siteId: "site-1", redemptionProgramRevisionRef: "redemption-v1", programRef: "redemption",
+      revision: "1", productVersionRef: "offer-v1", fulfillmentProgramRevisionRef: "fulfillment-v1",
+      maxRedemptionsPerAccount: 1, availabilityState: "deleted",
+      publishedAt: "2026-07-30T01:00:00.000Z",
+    }] as never });
+    const host = queryHost(lease.transaction);
+    const reader = new PostgresCommerceAdministrationReader(host,
+      new PostgresCreditGrantProgramAdministrationReader(host));
+    try {
+      await expect(reader.getRedemptionProgram(permit("commerce.redemption-program.read"),
+        "site-1", "redemption-v1")).rejects.toThrow("COMMERCE_ADMIN_ROW_CORRUPT");
+    } finally { revokePlatformTransaction(lease); }
+  });
 });
 
 function permit(operation: string): AdminQueryPermit {
   return { operatorRef: "operator:1", environment: "production", region: "us-east-1",
     operation, authorityBindingDigest: "a".repeat(64),
     scope: { kind: "site", siteRefs: ["site-1"] } } as AdminQueryPermit;
+}
+
+function queryHost(transaction: ReturnType<typeof issuePlatformTransaction>["transaction"]) {
+  return {
+    adminSiteQueryTransaction: async (_permit: AdminQueryPermit, _siteId: string,
+      work: (value: typeof transaction) => Promise<unknown>) => work(transaction),
+  } as ConstructorParameters<typeof PostgresCommerceAdministrationReader>[0];
 }

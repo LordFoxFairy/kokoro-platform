@@ -12,10 +12,10 @@ Platform through HTTP/RPC and never exposes a Prisma client to application code.
 
 ## Authority in this slice
 
-- Commerce owns the immutable Credit Program product catalog end to end: branded Program ref/revision/digest values, the
-  discriminated window-policy domain, publication service and contracts, PostgreSQL readers/repositories, canonical protobuf codec,
-  and catalog composition. Its physical facts use the `commerce_credit_program_*` namespace. Credit has no Program catalog,
-  reader, codec, repository, or composition authority.
+- Commerce owns the immutable Site-scoped CreditProgram revision catalog end to end through `CommerceAdministrationService`,
+  `PostgresCommerceAdministrationRepository`, the CreditProgram owner port and the Admin reader. Its sole physical authority is
+  `commerce_credit_program_revision`; the retired global snapshot/head/catalog stack, codec and composition are deleted. Credit
+  consumes exact immutable revisions and has no Program publication or query authority.
 - `platform.command_receipt` remains the sole idempotency/result authority. `commerce_command` is a Site/actor/version snapshot
   with a foreign key to that receipt, not a second receipt implementation.
 - BillingAccount and its Site-scoped subject membership are owner facts. User commands resolve membership after the command identity
@@ -83,15 +83,18 @@ performs that verification and writes the signed evidence into `VerifiedRequestS
 
 ## Admin control plane
 
-- The revisioned `AdminCommerceService` descriptor has no production provider or router registration until its approved Commerce
-  application ports exist. An all-`Unimplemented` placeholder is not treated as a mounted control plane; Commerce remains the
-  application/repository owner and never accepts a generic route or action proxy.
+- `AdminCommerceService.v1` is mounted in the production Admin composition as one exact 20-RPC Site-scoped provider: ten writes and
+  list/get reads for CreditProgram, EntitlementTemplate, Offer, RedemptionProgram and CodeBatch. Every method explicitly
+  Protovalidates the generated request and response, resolves its typed Commerce operation, verifies the generated request digest
+  against server-attested Site/operator axes, and maps directly to `CommerceAdministrationService` or its reader. There is no
+  generic proxy, fallback, compatibility route or placeholder.
 - All ten Admin write operations bind retries to the full persisted command identity. Exact retries restore the original durable
   result and database-recorded receipt time after revalidating its SHA-256 digest; identity/digest drift becomes a typed Connect
   conflict and replay never reconstructs a result from mutable business tables.
-- CreditProgram remains Commerce-owned, but the current AdminCommerce Root hard cut no longer exposes the retired
-  publish/list/get RPCs. The catalog composition stays inside Commerce and is not mounted until a new revisioned Commerce
-  application port is approved; AdminCredit never becomes its replacement owner.
+- CreditProgram publish/list/get is the Commerce-owned Site-scoped surface under
+  `commerce.credit-program.publish|read`. EntitlementTemplate, Offer and RedemptionProgram use the corresponding
+  `commerce.<resource>.publish|read` operations; CodeBatch uses explicit issue/approve/activate/abandon/suspend/revoke/read
+  operations. AdminCredit never becomes a replacement Program owner.
 - Display labels have the same fail-closed rule at the protobuf, application, read-projection, and PostgreSQL boundaries: 1–160
   Unicode code points, exact NFC, no boundary Unicode space separator, and no Cc/Cf/Zl/Zp character. All four persisted label columns
   call one database validator whose category table is pinned to Unicode 17.0.
@@ -106,8 +109,9 @@ performs that verification and writes the signed evidence into `VerifiedRequestS
   errors or query DTOs. An exact command replay returns `delivery_unavailable`; batch queries expose only count and safe export
   receipt metadata. Code generation itself occurs only after a new receipt has been claimed, so replay cannot mint replacement
   secrets. The Admin listener does not log payloads and its telemetry redactor recognizes the secret response field.
-- List queries use HMAC-authenticated cursors bound to operator/deployment/permission scope and Site. A singleton PostgreSQL
-  authority serializes low-frequency catalog publication and assigns its epoch in the writer transaction; page one captures only
-  the committed epoch, later pages keep that epoch, and every response reports a separate database-clock `observedAt`.
+- List queries use one fresh-only HMAC cursor payload with the exact resource family, Site, authenticated permit/scope binding,
+  catalog watermark, last reference and first-page observation time. A singleton PostgreSQL authority serializes low-frequency
+  catalog publication and assigns its epoch in the writer transaction. Continuations retain both the original membership watermark
+  and `firstObservedAt`; family, Site, permit, watermark, reference, signature or payload-shape mutation fails closed before a read.
 
 All module ports accept only the opaque `PlatformTransaction`; no sibling module may introduce a second transaction or self-RPC.

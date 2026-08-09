@@ -15,6 +15,14 @@ export interface AdminQueryTransactionHost {
   ): Promise<Result>;
 }
 
+export interface AdminSiteQueryTransactionHost {
+  adminSiteQueryTransaction<Result>(
+    permit: AdminQueryPermit,
+    siteRef: string,
+    work: (transaction: PlatformTransaction) => Promise<Result>,
+  ): Promise<Result>;
+}
+
 interface SiteRow extends Record<string, unknown> {
   siteRef: string;
   status: string;

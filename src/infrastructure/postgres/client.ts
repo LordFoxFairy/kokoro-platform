@@ -1062,7 +1062,7 @@ function assertAdminQueryPermit(permit: AdminQueryPermit): void {
       "admin.operator.read",
       "admin.operator.list",
       "admin.approval.list",
-      "credit.program.read",
+      "commerce.credit-program.read",
       "commerce.entitlement-template.read",
       "commerce.offer.read",
       "commerce.redemption-program.read",
