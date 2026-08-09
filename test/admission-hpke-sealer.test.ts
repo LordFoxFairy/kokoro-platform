@@ -119,6 +119,30 @@ describe("Admission HPKE public-key sealer", () => {
     )).rejects.toThrow();
   });
 
+  it("preserves an exact millisecond authorization bound below the active key lifetime", async () => {
+    const { publicJwk } = await p256KeyPair();
+    const sealer = await HpkeGaRunRequestDraftSealer.create({
+      keyRing: {
+        version: 1,
+        activeKeyRevisionRef: keyRevisionRef,
+        keys: [{
+          keyRevisionRef,
+          audience,
+          notBefore: "2026-07-29T11:00:00.000Z",
+          notAfter: "2026-07-29T13:00:00.000Z",
+          publicJwk,
+        }],
+      },
+      expectedAudience: audience,
+      clock: () => now,
+    });
+    const maximumExpiresAt = "2026-07-29T12:04:59.987Z";
+
+    await expect(sealer.seal({ ...sealInput(), maximumExpiresAt })).resolves.toMatchObject({
+      expiresAt: maximumExpiresAt,
+    });
+  });
+
   it("fails startup for a missing, inactive, mismatched, or private-bearing public key", async () => {
     const { publicJwk } = await p256KeyPair();
     const base = {

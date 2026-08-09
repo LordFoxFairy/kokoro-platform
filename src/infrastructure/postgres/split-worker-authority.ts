@@ -312,6 +312,8 @@ export const SPLIT_WORKER_ROUTINE_AUTHORITY = Object.freeze({
     "platform.split_worker_role_identity_is_current(text)",
     "platform.lock_site_worker_project_binding(text,text,text)",
     "platform.lock_site_worker_runtime_project_binding(text,text,bigint,text,text)",
+    "platform.site_evidence_resolver_role_is_current()",
+    "platform.site_evidence_owner_role_is_current()",
   ],
   "asset-worker": [
     "platform.split_worker_role_identity_is_current(text)",

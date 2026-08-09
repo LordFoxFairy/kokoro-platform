@@ -76,6 +76,7 @@ export class GaRunRequestDraftFactory {
       siteId: string;
       ownerFacts: VerifiedGaRunRequestOwnerFacts;
       executionContext: ExecutionContextIntent;
+      maximumExpiresAt: string;
     }>,
   ): Promise<SealedGaRunRequestDraft> {
     const request = runRequestSchema.parse({
@@ -88,7 +89,14 @@ export class GaRunRequestDraftFactory {
     }
     const plaintextSha256 = createHash("sha256").update(plaintext).digest("hex");
     const startedAt = this.#now();
-    const maximumExpiresAt = new Date(startedAt + MAX_GA_RUN_REQUEST_DRAFT_TTL_MS).toISOString();
+    if (
+      !isCanonicalInstant(input.maximumExpiresAt) ||
+      Date.parse(input.maximumExpiresAt) <= startedAt
+    ) throw new Error("ADMISSION_GA_DRAFT_MAXIMUM_EXPIRY_INVALID");
+    const maximumExpiresAt = new Date(Math.min(
+      Date.parse(input.maximumExpiresAt),
+      startedAt + MAX_GA_RUN_REQUEST_DRAFT_TTL_MS,
+    )).toISOString();
     const sealerPlaintext = new Uint8Array(plaintext);
     const untrusted = await this.#sealer.seal(
       Object.freeze({

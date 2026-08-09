@@ -187,6 +187,16 @@ describe("Platform worker database authority split", () => {
     expect(SPLIT_WORKER_ROUTINE_AUTHORITY["site-worker"]).toContain(
       "platform.lock_site_worker_runtime_project_binding(text,text,bigint,text,text)",
     );
+    for (const predicate of [
+      "platform.site_evidence_resolver_role_is_current()",
+      "platform.site_evidence_owner_role_is_current()",
+    ]) {
+      expect(SPLIT_WORKER_ROUTINE_AUTHORITY["site-worker"]).toContain(predicate);
+      for (const role of ["commerce-worker", "asset-worker", "admin-worker", "identity-worker",
+        "authorization-maintenance"] as const) {
+        expect(SPLIT_WORKER_ROUTINE_AUTHORITY[role]).not.toContain(predicate);
+      }
+    }
     expect(SPLIT_WORKER_ROUTINE_AUTHORITY["admin-worker"]).toContain(
       "platform.lock_admin_worker_operator_authority(text,bigint)",
     );

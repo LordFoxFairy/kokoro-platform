@@ -372,14 +372,19 @@ export class AdmissionApplicationService {
       decision.ownerFacts.context.session_id !== command.effect.sessionId
     ) throw new Error("ADMISSION_OWNER_FACTS_INTENT_MISMATCH");
     const executionContext = mapOpaqueExecutionContextIntent(command.effect.executionContext!);
+    const preparedInput = { ...decision.prepared } as Record<string, unknown>;
+    delete preparedInput.$typeName;
+    delete preparedInput.runRequestMaterial;
+    const ownerPrepared = create(PreparedRunAuthorizationSchema, preparedInput);
+    const authorizationMaximumExpiresAt = ownerPrepared.expiresAt === undefined
+      ? ""
+      : new Date(timestampMilliseconds(ownerPrepared.expiresAt)).toISOString();
     const material = await this.#drafts.create({
       siteId: command.key.siteId,
       ownerFacts: decision.ownerFacts,
       executionContext,
+      maximumExpiresAt: authorizationMaximumExpiresAt,
     });
-    const preparedInput = { ...decision.prepared } as Record<string, unknown>;
-    delete preparedInput.$typeName;
-    delete preparedInput.runRequestMaterial;
     const prepared = create(PreparedRunAuthorizationSchema, {
       ...preparedInput,
       runRequestMaterial: create(EncryptedRunRequestMaterialSchema, {

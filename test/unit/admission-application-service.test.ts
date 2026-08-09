@@ -228,6 +228,7 @@ function service(
   owner = authority(),
   journal = new MemoryJournal(),
   clock: () => Date = () => now,
+  seal: (input: GaRunRequestDraftSealInput) => Promise<unknown> = async (input) => sealed(input),
 ) {
   return {
     owner,
@@ -236,7 +237,7 @@ function service(
       authority: owner,
       journal,
       gaRunRequestDraftFactory: new GaRunRequestDraftFactory({
-        sealer: { seal: async (input) => sealed(input) },
+        sealer: { seal },
         expectedAudience: "kokoro-session-dispatch",
         clock,
       }),
@@ -310,6 +311,35 @@ describe("Admission application provider", () => {
 
     expect(response.result.case).toBe("outcomeUnknown");
     expect(response.receipt?.state).toBe(4);
+  });
+
+  it("passes the prepared authorization expiry to sealing when time advances", async () => {
+    const authorizationExpiresAt = "2026-07-29T12:05:00.000Z";
+    const factoryNow = new Date("2026-07-29T12:00:00.001Z");
+    const seal = vi.fn(async (input: GaRunRequestDraftSealInput) => ({
+      ciphertext: new Uint8Array(32).fill(7),
+      encryptionAlgorithm: "HPKE-v1",
+      keyRevisionRef: "kms:key:revision-7",
+      audience: input.audience,
+      expiresAt: input.maximumExpiresAt,
+      plaintextSha256: input.plaintextSha256,
+    }));
+    const fixture = service(
+      authority(authorizationExpiresAt),
+      new MemoryJournal(() => factoryNow),
+      () => factoryNow,
+      seal,
+    );
+
+    const response = await fixture.service.prepareRun(prepareRequest(), caller);
+
+    expect(response.result.case).toBe("accepted");
+    expect(seal).toHaveBeenCalledOnce();
+    expect(seal.mock.calls[0]![0].maximumExpiresAt).toBe(authorizationExpiresAt);
+    if (response.result.case !== "accepted") throw new Error("expected accepted response");
+    expect(response.result.value.prepared?.runRequestMaterial?.expiresAt).toEqual(
+      timestampFromDate(new Date(authorizationExpiresAt)),
+    );
   });
 
   it("never seals owner facts whose content differs from the authenticated Session effect", async () => {

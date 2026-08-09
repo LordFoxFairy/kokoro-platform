@@ -15,6 +15,7 @@ import { createAdmissionApplicationComposition } from "../../src/process/admissi
 const digest = "a".repeat(64);
 const audience = "kokoro-session-dispatch";
 const now = new Date("2026-07-29T12:00:00.000Z");
+const authorizationMaximumExpiresAt = "2026-07-29T12:05:00.000Z";
 
 const ownerFacts: VerifiedGaRunRequestOwnerFacts = {
   kind: "run.request",
@@ -59,11 +60,14 @@ function validSealed(
   };
 }
 
-function factory(seal: GaRunRequestDraftSealer["seal"]): GaRunRequestDraftFactory {
+function factory(
+  seal: GaRunRequestDraftSealer["seal"],
+  clock: () => Date = () => now,
+): GaRunRequestDraftFactory {
   return new GaRunRequestDraftFactory({
     sealer: { seal },
     expectedAudience: audience,
-    clock: () => now,
+    clock,
   });
 }
 
@@ -107,6 +111,7 @@ describe("Admission execution-context boundary", () => {
       siteId: "site-1",
       ownerFacts: { ...ownerFacts, trace: { z: 1, a: { y: true, x: "value" } } },
       executionContext: { mode: "root" },
+      maximumExpiresAt: authorizationMaximumExpiresAt,
     });
 
     expect(sealed.plaintextSha256).toMatch(/^[0-9a-f]{64}$/u);
@@ -125,6 +130,41 @@ describe("Admission execution-context boundary", () => {
     expect(sealInput.maximumExpiresAt).toBe("2026-07-29T12:05:00.000Z");
   });
 
+  it("never extends the owner authorization when the factory clock advances", async () => {
+    const factoryNow = new Date("2026-07-29T12:00:00.001Z");
+    const seal = vi
+      .fn<GaRunRequestDraftSealer["seal"]>()
+      .mockImplementation(async (input) => validSealed(input, {
+        expiresAt: input.maximumExpiresAt,
+      }));
+
+    const sealed = await factory(seal, () => factoryNow).create({
+      siteId: "site-1",
+      ownerFacts,
+      executionContext: { mode: "root" },
+      maximumExpiresAt: authorizationMaximumExpiresAt,
+    });
+
+    expect(seal).toHaveBeenCalledOnce();
+    expect(seal.mock.calls[0]![0].maximumExpiresAt).toBe(authorizationMaximumExpiresAt);
+    expect(sealed.expiresAt).toBe(authorizationMaximumExpiresAt);
+  });
+
+  it.each([
+    ["noncanonical", "2026-07-29T12:05:00Z"],
+    ["expired", now.toISOString()],
+  ])("rejects a %s owner authorization bound before invoking the sealer", async (_case, maximumExpiresAt) => {
+    const seal = vi.fn<GaRunRequestDraftSealer["seal"]>();
+
+    await expect(factory(seal).create({
+      siteId: "site-1",
+      ownerFacts,
+      executionContext: { mode: "root" },
+      maximumExpiresAt,
+    })).rejects.toThrow("ADMISSION_GA_DRAFT_MAXIMUM_EXPIRY_INVALID");
+    expect(seal).not.toHaveBeenCalled();
+  });
+
   it("never invokes the sealer for an invalid or non-JSON request draft", async () => {
     const seal = vi.fn<GaRunRequestDraftSealer["seal"]>();
     const createDraft = factory(seal);
@@ -134,6 +174,7 @@ describe("Admission execution-context boundary", () => {
         siteId: "site-1",
         ownerFacts: { ...ownerFacts, thread_id: "" } as VerifiedGaRunRequestOwnerFacts,
         executionContext: { mode: "root" },
+        maximumExpiresAt: authorizationMaximumExpiresAt,
       }),
     ).rejects.toThrow();
     await expect(
@@ -144,6 +185,7 @@ describe("Admission execution-context boundary", () => {
           trace: { unsafe: new Date("2026-07-29T12:00:00.000Z") },
         },
         executionContext: { mode: "root" },
+        maximumExpiresAt: authorizationMaximumExpiresAt,
       }),
     ).rejects.toThrow("ADMISSION_GA_DRAFT_PLAINTEXT_INVALID");
     expect(seal).not.toHaveBeenCalled();
@@ -160,6 +202,7 @@ describe("Admission execution-context boundary", () => {
           input: { ...ownerFacts.input, content: "x".repeat(768 * 1024) },
         },
         executionContext: { mode: "root" },
+        maximumExpiresAt: authorizationMaximumExpiresAt,
       }),
     ).rejects.toThrow("ADMISSION_GA_DRAFT_PLAINTEXT_TOO_LARGE");
     expect(seal).not.toHaveBeenCalled();
@@ -172,7 +215,12 @@ describe("Admission execution-context boundary", () => {
     };
 
     await expect(
-      factory(seal).create({ siteId: "site-1", ownerFacts, executionContext: { mode: "root" } }),
+      factory(seal).create({
+        siteId: "site-1",
+        ownerFacts,
+        executionContext: { mode: "root" },
+        maximumExpiresAt: authorizationMaximumExpiresAt,
+      }),
     ).rejects.toThrow("ADMISSION_GA_DRAFT_PLAINTEXT_MUTATED");
   });
 
@@ -232,7 +280,12 @@ describe("Admission execution-context boundary", () => {
     const seal: GaRunRequestDraftSealer["seal"] = async (input) => maliciousResult(input);
 
     await expect(
-      factory(seal).create({ siteId: "site-1", ownerFacts, executionContext: { mode: "root" } }),
+      factory(seal).create({
+        siteId: "site-1",
+        ownerFacts,
+        executionContext: { mode: "root" },
+        maximumExpiresAt: authorizationMaximumExpiresAt,
+      }),
     ).rejects.toThrow("ADMISSION_GA_DRAFT_SEALED_MATERIAL_INVALID");
   });
 
