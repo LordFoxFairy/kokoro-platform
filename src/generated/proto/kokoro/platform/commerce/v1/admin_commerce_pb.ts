@@ -4,21 +4,19 @@
 
 import type { GenFile, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
-import type { GetCreditProgramRevisionRequestSchema, GetCreditProgramRevisionResponseSchema, GetEntitlementTemplateRevisionRequestSchema, GetEntitlementTemplateRevisionResponseSchema, GetFulfillmentProgramRevisionRequestSchema, GetFulfillmentProgramRevisionResponseSchema, GetGlobalCommerceCommandOutcomeRequestSchema, GetGlobalCommerceCommandOutcomeResponseSchema, GetOfferRevisionRequestSchema, GetOfferRevisionResponseSchema, GetPlanRevisionRequestSchema, GetPlanRevisionResponseSchema, GetRedemptionProgramRevisionRequestSchema, GetRedemptionProgramRevisionResponseSchema, ListCreditProgramRevisionsRequestSchema, ListCreditProgramRevisionsResponseSchema, ListEntitlementTemplateRevisionsRequestSchema, ListEntitlementTemplateRevisionsResponseSchema, ListFulfillmentProgramRevisionsRequestSchema, ListFulfillmentProgramRevisionsResponseSchema, ListOfferRevisionsRequestSchema, ListOfferRevisionsResponseSchema, ListPlanRevisionsRequestSchema, ListPlanRevisionsResponseSchema, ListRedemptionProgramRevisionsRequestSchema, ListRedemptionProgramRevisionsResponseSchema, PublishCreditProgramRevisionRequestSchema, PublishCreditProgramRevisionResponseSchema, PublishEntitlementTemplateRevisionRequestSchema, PublishEntitlementTemplateRevisionResponseSchema, PublishFulfillmentProgramRevisionRequestSchema, PublishFulfillmentProgramRevisionResponseSchema, PublishOfferRevisionRequestSchema, PublishOfferRevisionResponseSchema, PublishPlanRevisionRequestSchema, PublishPlanRevisionResponseSchema, PublishRedemptionProgramRevisionRequestSchema, PublishRedemptionProgramRevisionResponseSchema } from "./commerce_catalog_pb.js";
+import type { GetCreditProgramRevisionRequestSchema, GetCreditProgramRevisionResponseSchema, GetEntitlementTemplateRevisionRequestSchema, GetEntitlementTemplateRevisionResponseSchema, GetOfferRevisionRequestSchema, GetOfferRevisionResponseSchema, GetRedemptionProgramRevisionRequestSchema, GetRedemptionProgramRevisionResponseSchema, ListCreditProgramRevisionsRequestSchema, ListCreditProgramRevisionsResponseSchema, ListEntitlementTemplateRevisionsRequestSchema, ListEntitlementTemplateRevisionsResponseSchema, ListOfferRevisionsRequestSchema, ListOfferRevisionsResponseSchema, ListRedemptionProgramRevisionsRequestSchema, ListRedemptionProgramRevisionsResponseSchema, PublishCreditProgramRevisionRequestSchema, PublishCreditProgramRevisionResponseSchema, PublishEntitlementTemplateRevisionRequestSchema, PublishEntitlementTemplateRevisionResponseSchema, PublishOfferRevisionRequestSchema, PublishOfferRevisionResponseSchema, PublishRedemptionProgramRevisionRequestSchema, PublishRedemptionProgramRevisionResponseSchema } from "./commerce_catalog_pb.js";
 import { file_kokoro_platform_commerce_v1_commerce_catalog } from "./commerce_catalog_pb.js";
-import type { AcknowledgeCodeDeliveryRangeRequestSchema, AcknowledgeCodeDeliveryRangeResponseSchema, BeginCodeBatchDeliveryRequestSchema, BeginCodeBatchDeliveryResponseSchema, EmergencySuspendCodeBatchRequestSchema, EmergencySuspendCodeBatchResponseSchema, GetCodeBatchRequestSchema, GetCodeBatchResponseSchema, GetCodeDeliverySessionRequestSchema, GetCodeDeliverySessionResponseSchema, GetCommerceApprovalReviewRequestSchema, GetCommerceApprovalReviewResponseSchema, GetCommerceReconciliationRequestSchema, GetCommerceReconciliationResponseSchema, GetSiteCommerceAssignmentRequestSchema, GetSiteCommerceAssignmentResponseSchema, GetSiteCommerceCommandOutcomeRequestSchema, GetSiteCommerceCommandOutcomeResponseSchema, GetSourceCorrectionRequestSchema, GetSourceCorrectionResponseSchema, ListCodeBatchesRequestSchema, ListCodeBatchesResponseSchema, ListCommerceReconciliationsRequestSchema, ListCommerceReconciliationsResponseSchema, ListSiteCommerceAssignmentsRequestSchema, ListSiteCommerceAssignmentsResponseSchema, ListSourceCorrectionsRequestSchema, ListSourceCorrectionsResponseSchema, ReadCodeDeliveryRangeRequestSchema, ReadCodeDeliveryRangeResponseSchema, RequestCodeBatchIssuanceRequestSchema, RequestCodeBatchIssuanceResponseSchema, RequestCodeBatchTransitionRequestSchema, RequestCodeBatchTransitionResponseSchema, RequestCommerceReconciliationResolutionRequestSchema, RequestCommerceReconciliationResolutionResponseSchema, RequestSiteCommerceAssignmentPromotionRequestSchema, RequestSiteCommerceAssignmentPromotionResponseSchema, RequestSourceCorrectionRequestSchema, RequestSourceCorrectionResponseSchema } from "./commerce_control_pb.js";
+import type { AbandonCodeBatchRequestSchema, AbandonCodeBatchResponseSchema, ActivateCodeBatchRequestSchema, ActivateCodeBatchResponseSchema, ApproveCodeBatchRequestSchema, ApproveCodeBatchResponseSchema, GetCodeBatchRequestSchema, GetCodeBatchResponseSchema, IssueCodeBatchRequestSchema, IssueCodeBatchResponseSchema, ListCodeBatchesRequestSchema, ListCodeBatchesResponseSchema, RevokeCodeBatchRequestSchema, RevokeCodeBatchResponseSchema, SuspendCodeBatchRequestSchema, SuspendCodeBatchResponseSchema } from "./commerce_control_pb.js";
 import { file_kokoro_platform_commerce_v1_commerce_control } from "./commerce_control_pb.js";
 
 /**
  * Describes the file kokoro/platform/commerce/v1/admin_commerce.proto.
  */
 export const file_kokoro_platform_commerce_v1_admin_commerce: GenFile = /*@__PURE__*/
-  fileDesc("CjBrb2tvcm8vcGxhdGZvcm0vY29tbWVyY2UvdjEvYWRtaW5fY29tbWVyY2UucHJvdG8SG2tva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MTLtMAoUQWRtaW5Db21tZXJjZVNlcnZpY2USpQEKHFB1Ymxpc2hDcmVkaXRQcm9ncmFtUmV2aXNpb24SQC5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuUHVibGlzaENyZWRpdFByb2dyYW1SZXZpc2lvblJlcXVlc3QaQS5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuUHVibGlzaENyZWRpdFByb2dyYW1SZXZpc2lvblJlc3BvbnNlIgASnwEKGkxpc3RDcmVkaXRQcm9ncmFtUmV2aXNpb25zEj4ua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkxpc3RDcmVkaXRQcm9ncmFtUmV2aXNpb25zUmVxdWVzdBo/Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5MaXN0Q3JlZGl0UHJvZ3JhbVJldmlzaW9uc1Jlc3BvbnNlIgASmQEKGEdldENyZWRpdFByb2dyYW1SZXZpc2lvbhI8Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5HZXRDcmVkaXRQcm9ncmFtUmV2aXNpb25SZXF1ZXN0Gj0ua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkdldENyZWRpdFByb2dyYW1SZXZpc2lvblJlc3BvbnNlIgAStwEKIlB1Ymxpc2hFbnRpdGxlbWVudFRlbXBsYXRlUmV2aXNpb24SRi5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuUHVibGlzaEVudGl0bGVtZW50VGVtcGxhdGVSZXZpc2lvblJlcXVlc3QaRy5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuUHVibGlzaEVudGl0bGVtZW50VGVtcGxhdGVSZXZpc2lvblJlc3BvbnNlIgASsQEKIExpc3RFbnRpdGxlbWVudFRlbXBsYXRlUmV2aXNpb25zEkQua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkxpc3RFbnRpdGxlbWVudFRlbXBsYXRlUmV2aXNpb25zUmVxdWVzdBpFLmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5MaXN0RW50aXRsZW1lbnRUZW1wbGF0ZVJldmlzaW9uc1Jlc3BvbnNlIgASqwEKHkdldEVudGl0bGVtZW50VGVtcGxhdGVSZXZpc2lvbhJCLmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5HZXRFbnRpdGxlbWVudFRlbXBsYXRlUmV2aXNpb25SZXF1ZXN0GkMua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkdldEVudGl0bGVtZW50VGVtcGxhdGVSZXZpc2lvblJlc3BvbnNlIgASigEKE1B1Ymxpc2hQbGFuUmV2aXNpb24SNy5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuUHVibGlzaFBsYW5SZXZpc2lvblJlcXVlc3QaOC5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuUHVibGlzaFBsYW5SZXZpc2lvblJlc3BvbnNlIgAShAEKEUxpc3RQbGFuUmV2aXNpb25zEjUua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkxpc3RQbGFuUmV2aXNpb25zUmVxdWVzdBo2Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5MaXN0UGxhblJldmlzaW9uc1Jlc3BvbnNlIgASfgoPR2V0UGxhblJldmlzaW9uEjMua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkdldFBsYW5SZXZpc2lvblJlcXVlc3QaNC5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuR2V0UGxhblJldmlzaW9uUmVzcG9uc2UiABKNAQoUUHVibGlzaE9mZmVyUmV2aXNpb24SOC5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuUHVibGlzaE9mZmVyUmV2aXNpb25SZXF1ZXN0Gjkua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLlB1Ymxpc2hPZmZlclJldmlzaW9uUmVzcG9uc2UiABKHAQoSTGlzdE9mZmVyUmV2aXNpb25zEjYua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkxpc3RPZmZlclJldmlzaW9uc1JlcXVlc3QaNy5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuTGlzdE9mZmVyUmV2aXNpb25zUmVzcG9uc2UiABKBAQoQR2V0T2ZmZXJSZXZpc2lvbhI0Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5HZXRPZmZlclJldmlzaW9uUmVxdWVzdBo1Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5HZXRPZmZlclJldmlzaW9uUmVzcG9uc2UiABK0AQohUHVibGlzaEZ1bGZpbGxtZW50UHJvZ3JhbVJldmlzaW9uEkUua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLlB1Ymxpc2hGdWxmaWxsbWVudFByb2dyYW1SZXZpc2lvblJlcXVlc3QaRi5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuUHVibGlzaEZ1bGZpbGxtZW50UHJvZ3JhbVJldmlzaW9uUmVzcG9uc2UiABKuAQofTGlzdEZ1bGZpbGxtZW50UHJvZ3JhbVJldmlzaW9ucxJDLmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5MaXN0RnVsZmlsbG1lbnRQcm9ncmFtUmV2aXNpb25zUmVxdWVzdBpELmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5MaXN0RnVsZmlsbG1lbnRQcm9ncmFtUmV2aXNpb25zUmVzcG9uc2UiABKoAQodR2V0RnVsZmlsbG1lbnRQcm9ncmFtUmV2aXNpb24SQS5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuR2V0RnVsZmlsbG1lbnRQcm9ncmFtUmV2aXNpb25SZXF1ZXN0GkIua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkdldEZ1bGZpbGxtZW50UHJvZ3JhbVJldmlzaW9uUmVzcG9uc2UiABKxAQogUHVibGlzaFJlZGVtcHRpb25Qcm9ncmFtUmV2aXNpb24SRC5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuUHVibGlzaFJlZGVtcHRpb25Qcm9ncmFtUmV2aXNpb25SZXF1ZXN0GkUua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLlB1Ymxpc2hSZWRlbXB0aW9uUHJvZ3JhbVJldmlzaW9uUmVzcG9uc2UiABKrAQoeTGlzdFJlZGVtcHRpb25Qcm9ncmFtUmV2aXNpb25zEkIua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkxpc3RSZWRlbXB0aW9uUHJvZ3JhbVJldmlzaW9uc1JlcXVlc3QaQy5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuTGlzdFJlZGVtcHRpb25Qcm9ncmFtUmV2aXNpb25zUmVzcG9uc2UiABKlAQocR2V0UmVkZW1wdGlvblByb2dyYW1SZXZpc2lvbhJALmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5HZXRSZWRlbXB0aW9uUHJvZ3JhbVJldmlzaW9uUmVxdWVzdBpBLmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5HZXRSZWRlbXB0aW9uUHJvZ3JhbVJldmlzaW9uUmVzcG9uc2UiABLDAQomUmVxdWVzdFNpdGVDb21tZXJjZUFzc2lnbm1lbnRQcm9tb3Rpb24SSi5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuUmVxdWVzdFNpdGVDb21tZXJjZUFzc2lnbm1lbnRQcm9tb3Rpb25SZXF1ZXN0Gksua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLlJlcXVlc3RTaXRlQ29tbWVyY2VBc3NpZ25tZW50UHJvbW90aW9uUmVzcG9uc2UiABKiAQobTGlzdFNpdGVDb21tZXJjZUFzc2lnbm1lbnRzEj8ua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkxpc3RTaXRlQ29tbWVyY2VBc3NpZ25tZW50c1JlcXVlc3QaQC5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuTGlzdFNpdGVDb21tZXJjZUFzc2lnbm1lbnRzUmVzcG9uc2UiABKcAQoZR2V0U2l0ZUNvbW1lcmNlQXNzaWdubWVudBI9Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5HZXRTaXRlQ29tbWVyY2VBc3NpZ25tZW50UmVxdWVzdBo+Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5HZXRTaXRlQ29tbWVyY2VBc3NpZ25tZW50UmVzcG9uc2UiABKZAQoYUmVxdWVzdENvZGVCYXRjaElzc3VhbmNlEjwua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLlJlcXVlc3RDb2RlQmF0Y2hJc3N1YW5jZVJlcXVlc3QaPS5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuUmVxdWVzdENvZGVCYXRjaElzc3VhbmNlUmVzcG9uc2UiABKfAQoaUmVxdWVzdENvZGVCYXRjaFRyYW5zaXRpb24SPi5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuUmVxdWVzdENvZGVCYXRjaFRyYW5zaXRpb25SZXF1ZXN0Gj8ua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLlJlcXVlc3RDb2RlQmF0Y2hUcmFuc2l0aW9uUmVzcG9uc2UiABKcAQoZRW1lcmdlbmN5U3VzcGVuZENvZGVCYXRjaBI9Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5FbWVyZ2VuY3lTdXNwZW5kQ29kZUJhdGNoUmVxdWVzdBo+Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5FbWVyZ2VuY3lTdXNwZW5kQ29kZUJhdGNoUmVzcG9uc2UiABKTAQoWQmVnaW5Db2RlQmF0Y2hEZWxpdmVyeRI6Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5CZWdpbkNvZGVCYXRjaERlbGl2ZXJ5UmVxdWVzdBo7Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5CZWdpbkNvZGVCYXRjaERlbGl2ZXJ5UmVzcG9uc2UiABKQAQoVUmVhZENvZGVEZWxpdmVyeVJhbmdlEjkua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLlJlYWRDb2RlRGVsaXZlcnlSYW5nZVJlcXVlc3QaOi5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuUmVhZENvZGVEZWxpdmVyeVJhbmdlUmVzcG9uc2UiABKlAQocQWNrbm93bGVkZ2VDb2RlRGVsaXZlcnlSYW5nZRJALmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5BY2tub3dsZWRnZUNvZGVEZWxpdmVyeVJhbmdlUmVxdWVzdBpBLmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5BY2tub3dsZWRnZUNvZGVEZWxpdmVyeVJhbmdlUmVzcG9uc2UiABKTAQoWR2V0Q29kZURlbGl2ZXJ5U2Vzc2lvbhI6Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5HZXRDb2RlRGVsaXZlcnlTZXNzaW9uUmVxdWVzdBo7Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5HZXRDb2RlRGVsaXZlcnlTZXNzaW9uUmVzcG9uc2UiABJ+Cg9MaXN0Q29kZUJhdGNoZXMSMy5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuTGlzdENvZGVCYXRjaGVzUmVxdWVzdBo0Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5MaXN0Q29kZUJhdGNoZXNSZXNwb25zZSIAEnUKDEdldENvZGVCYXRjaBIwLmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5HZXRDb2RlQmF0Y2hSZXF1ZXN0GjEua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkdldENvZGVCYXRjaFJlc3BvbnNlIgASlgEKF1JlcXVlc3RTb3VyY2VDb3JyZWN0aW9uEjsua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLlJlcXVlc3RTb3VyY2VDb3JyZWN0aW9uUmVxdWVzdBo8Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5SZXF1ZXN0U291cmNlQ29ycmVjdGlvblJlc3BvbnNlIgASkAEKFUxpc3RTb3VyY2VDb3JyZWN0aW9ucxI5Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5MaXN0U291cmNlQ29ycmVjdGlvbnNSZXF1ZXN0Gjoua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkxpc3RTb3VyY2VDb3JyZWN0aW9uc1Jlc3BvbnNlIgASigEKE0dldFNvdXJjZUNvcnJlY3Rpb24SNy5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuR2V0U291cmNlQ29ycmVjdGlvblJlcXVlc3QaOC5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuR2V0U291cmNlQ29ycmVjdGlvblJlc3BvbnNlIgASxgEKJ1JlcXVlc3RDb21tZXJjZVJlY29uY2lsaWF0aW9uUmVzb2x1dGlvbhJLLmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5SZXF1ZXN0Q29tbWVyY2VSZWNvbmNpbGlhdGlvblJlc29sdXRpb25SZXF1ZXN0Gkwua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLlJlcXVlc3RDb21tZXJjZVJlY29uY2lsaWF0aW9uUmVzb2x1dGlvblJlc3BvbnNlIgASogEKG0xpc3RDb21tZXJjZVJlY29uY2lsaWF0aW9ucxI/Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5MaXN0Q29tbWVyY2VSZWNvbmNpbGlhdGlvbnNSZXF1ZXN0GkAua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkxpc3RDb21tZXJjZVJlY29uY2lsaWF0aW9uc1Jlc3BvbnNlIgASnAEKGUdldENvbW1lcmNlUmVjb25jaWxpYXRpb24SPS5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuR2V0Q29tbWVyY2VSZWNvbmNpbGlhdGlvblJlcXVlc3QaPi5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuR2V0Q29tbWVyY2VSZWNvbmNpbGlhdGlvblJlc3BvbnNlIgASnAEKGUdldENvbW1lcmNlQXBwcm92YWxSZXZpZXcSPS5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuR2V0Q29tbWVyY2VBcHByb3ZhbFJldmlld1JlcXVlc3QaPi5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuR2V0Q29tbWVyY2VBcHByb3ZhbFJldmlld1Jlc3BvbnNlIgASrgEKH0dldEdsb2JhbENvbW1lcmNlQ29tbWFuZE91dGNvbWUSQy5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuR2V0R2xvYmFsQ29tbWVyY2VDb21tYW5kT3V0Y29tZVJlcXVlc3QaRC5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuR2V0R2xvYmFsQ29tbWVyY2VDb21tYW5kT3V0Y29tZVJlc3BvbnNlIgASqAEKHUdldFNpdGVDb21tZXJjZUNvbW1hbmRPdXRjb21lEkEua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkdldFNpdGVDb21tZXJjZUNvbW1hbmRPdXRjb21lUmVxdWVzdBpCLmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5HZXRTaXRlQ29tbWVyY2VDb21tYW5kT3V0Y29tZVJlc3BvbnNlIgBiBnByb3RvMw", [file_kokoro_platform_commerce_v1_commerce_catalog, file_kokoro_platform_commerce_v1_commerce_control]);
+  fileDesc("CjBrb2tvcm8vcGxhdGZvcm0vY29tbWVyY2UvdjEvYWRtaW5fY29tbWVyY2UucHJvdG8SG2tva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MTLHFwoUQWRtaW5Db21tZXJjZVNlcnZpY2USpQEKHFB1Ymxpc2hDcmVkaXRQcm9ncmFtUmV2aXNpb24SQC5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuUHVibGlzaENyZWRpdFByb2dyYW1SZXZpc2lvblJlcXVlc3QaQS5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuUHVibGlzaENyZWRpdFByb2dyYW1SZXZpc2lvblJlc3BvbnNlIgASnwEKGkxpc3RDcmVkaXRQcm9ncmFtUmV2aXNpb25zEj4ua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkxpc3RDcmVkaXRQcm9ncmFtUmV2aXNpb25zUmVxdWVzdBo/Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5MaXN0Q3JlZGl0UHJvZ3JhbVJldmlzaW9uc1Jlc3BvbnNlIgASmQEKGEdldENyZWRpdFByb2dyYW1SZXZpc2lvbhI8Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5HZXRDcmVkaXRQcm9ncmFtUmV2aXNpb25SZXF1ZXN0Gj0ua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkdldENyZWRpdFByb2dyYW1SZXZpc2lvblJlc3BvbnNlIgAStwEKIlB1Ymxpc2hFbnRpdGxlbWVudFRlbXBsYXRlUmV2aXNpb24SRi5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuUHVibGlzaEVudGl0bGVtZW50VGVtcGxhdGVSZXZpc2lvblJlcXVlc3QaRy5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuUHVibGlzaEVudGl0bGVtZW50VGVtcGxhdGVSZXZpc2lvblJlc3BvbnNlIgASsQEKIExpc3RFbnRpdGxlbWVudFRlbXBsYXRlUmV2aXNpb25zEkQua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkxpc3RFbnRpdGxlbWVudFRlbXBsYXRlUmV2aXNpb25zUmVxdWVzdBpFLmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5MaXN0RW50aXRsZW1lbnRUZW1wbGF0ZVJldmlzaW9uc1Jlc3BvbnNlIgASqwEKHkdldEVudGl0bGVtZW50VGVtcGxhdGVSZXZpc2lvbhJCLmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5HZXRFbnRpdGxlbWVudFRlbXBsYXRlUmV2aXNpb25SZXF1ZXN0GkMua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkdldEVudGl0bGVtZW50VGVtcGxhdGVSZXZpc2lvblJlc3BvbnNlIgASjQEKFFB1Ymxpc2hPZmZlclJldmlzaW9uEjgua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLlB1Ymxpc2hPZmZlclJldmlzaW9uUmVxdWVzdBo5Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5QdWJsaXNoT2ZmZXJSZXZpc2lvblJlc3BvbnNlIgAShwEKEkxpc3RPZmZlclJldmlzaW9ucxI2Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5MaXN0T2ZmZXJSZXZpc2lvbnNSZXF1ZXN0Gjcua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkxpc3RPZmZlclJldmlzaW9uc1Jlc3BvbnNlIgASgQEKEEdldE9mZmVyUmV2aXNpb24SNC5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuR2V0T2ZmZXJSZXZpc2lvblJlcXVlc3QaNS5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuR2V0T2ZmZXJSZXZpc2lvblJlc3BvbnNlIgASsQEKIFB1Ymxpc2hSZWRlbXB0aW9uUHJvZ3JhbVJldmlzaW9uEkQua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLlB1Ymxpc2hSZWRlbXB0aW9uUHJvZ3JhbVJldmlzaW9uUmVxdWVzdBpFLmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5QdWJsaXNoUmVkZW1wdGlvblByb2dyYW1SZXZpc2lvblJlc3BvbnNlIgASqwEKHkxpc3RSZWRlbXB0aW9uUHJvZ3JhbVJldmlzaW9ucxJCLmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5MaXN0UmVkZW1wdGlvblByb2dyYW1SZXZpc2lvbnNSZXF1ZXN0GkMua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkxpc3RSZWRlbXB0aW9uUHJvZ3JhbVJldmlzaW9uc1Jlc3BvbnNlIgASpQEKHEdldFJlZGVtcHRpb25Qcm9ncmFtUmV2aXNpb24SQC5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuR2V0UmVkZW1wdGlvblByb2dyYW1SZXZpc2lvblJlcXVlc3QaQS5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuR2V0UmVkZW1wdGlvblByb2dyYW1SZXZpc2lvblJlc3BvbnNlIgASewoOSXNzdWVDb2RlQmF0Y2gSMi5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuSXNzdWVDb2RlQmF0Y2hSZXF1ZXN0GjMua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLklzc3VlQ29kZUJhdGNoUmVzcG9uc2UiABKBAQoQQXBwcm92ZUNvZGVCYXRjaBI0Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5BcHByb3ZlQ29kZUJhdGNoUmVxdWVzdBo1Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5BcHByb3ZlQ29kZUJhdGNoUmVzcG9uc2UiABKEAQoRQWN0aXZhdGVDb2RlQmF0Y2gSNS5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuQWN0aXZhdGVDb2RlQmF0Y2hSZXF1ZXN0GjYua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkFjdGl2YXRlQ29kZUJhdGNoUmVzcG9uc2UiABKBAQoQQWJhbmRvbkNvZGVCYXRjaBI0Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5BYmFuZG9uQ29kZUJhdGNoUmVxdWVzdBo1Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5BYmFuZG9uQ29kZUJhdGNoUmVzcG9uc2UiABKBAQoQU3VzcGVuZENvZGVCYXRjaBI0Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5TdXNwZW5kQ29kZUJhdGNoUmVxdWVzdBo1Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5TdXNwZW5kQ29kZUJhdGNoUmVzcG9uc2UiABJ+Cg9SZXZva2VDb2RlQmF0Y2gSMy5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuUmV2b2tlQ29kZUJhdGNoUmVxdWVzdBo0Lmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5SZXZva2VDb2RlQmF0Y2hSZXNwb25zZSIAEn4KD0xpc3RDb2RlQmF0Y2hlcxIzLmtva29yby5wbGF0Zm9ybS5jb21tZXJjZS52MS5MaXN0Q29kZUJhdGNoZXNSZXF1ZXN0GjQua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkxpc3RDb2RlQmF0Y2hlc1Jlc3BvbnNlIgASdQoMR2V0Q29kZUJhdGNoEjAua29rb3JvLnBsYXRmb3JtLmNvbW1lcmNlLnYxLkdldENvZGVCYXRjaFJlcXVlc3QaMS5rb2tvcm8ucGxhdGZvcm0uY29tbWVyY2UudjEuR2V0Q29kZUJhdGNoUmVzcG9uc2UiAGIGcHJvdG8z", [file_kokoro_platform_commerce_v1_commerce_catalog, file_kokoro_platform_commerce_v1_commerce_control]);
 
 /**
- * Typed Commerce administration surface. AdminCommandService is the single
- * approval, decision and receipt authority; this service owns only Commerce
- * catalog facts, typed command admission and domain projections.
+ * Typed ingress for the single shipped, Site-scoped CommerceAdministration owner.
  *
  * @generated from service kokoro.platform.commerce.v1.AdminCommerceService
  */
@@ -72,30 +70,6 @@ export const AdminCommerceService: GenService<{
     output: typeof GetEntitlementTemplateRevisionResponseSchema;
   },
   /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.PublishPlanRevision
-   */
-  publishPlanRevision: {
-    methodKind: "unary";
-    input: typeof PublishPlanRevisionRequestSchema;
-    output: typeof PublishPlanRevisionResponseSchema;
-  },
-  /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.ListPlanRevisions
-   */
-  listPlanRevisions: {
-    methodKind: "unary";
-    input: typeof ListPlanRevisionsRequestSchema;
-    output: typeof ListPlanRevisionsResponseSchema;
-  },
-  /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.GetPlanRevision
-   */
-  getPlanRevision: {
-    methodKind: "unary";
-    input: typeof GetPlanRevisionRequestSchema;
-    output: typeof GetPlanRevisionResponseSchema;
-  },
-  /**
    * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.PublishOfferRevision
    */
   publishOfferRevision: {
@@ -118,30 +92,6 @@ export const AdminCommerceService: GenService<{
     methodKind: "unary";
     input: typeof GetOfferRevisionRequestSchema;
     output: typeof GetOfferRevisionResponseSchema;
-  },
-  /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.PublishFulfillmentProgramRevision
-   */
-  publishFulfillmentProgramRevision: {
-    methodKind: "unary";
-    input: typeof PublishFulfillmentProgramRevisionRequestSchema;
-    output: typeof PublishFulfillmentProgramRevisionResponseSchema;
-  },
-  /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.ListFulfillmentProgramRevisions
-   */
-  listFulfillmentProgramRevisions: {
-    methodKind: "unary";
-    input: typeof ListFulfillmentProgramRevisionsRequestSchema;
-    output: typeof ListFulfillmentProgramRevisionsResponseSchema;
-  },
-  /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.GetFulfillmentProgramRevision
-   */
-  getFulfillmentProgramRevision: {
-    methodKind: "unary";
-    input: typeof GetFulfillmentProgramRevisionRequestSchema;
-    output: typeof GetFulfillmentProgramRevisionResponseSchema;
   },
   /**
    * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.PublishRedemptionProgramRevision
@@ -168,84 +118,52 @@ export const AdminCommerceService: GenService<{
     output: typeof GetRedemptionProgramRevisionResponseSchema;
   },
   /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.RequestSiteCommerceAssignmentPromotion
+   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.IssueCodeBatch
    */
-  requestSiteCommerceAssignmentPromotion: {
+  issueCodeBatch: {
     methodKind: "unary";
-    input: typeof RequestSiteCommerceAssignmentPromotionRequestSchema;
-    output: typeof RequestSiteCommerceAssignmentPromotionResponseSchema;
+    input: typeof IssueCodeBatchRequestSchema;
+    output: typeof IssueCodeBatchResponseSchema;
   },
   /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.ListSiteCommerceAssignments
+   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.ApproveCodeBatch
    */
-  listSiteCommerceAssignments: {
+  approveCodeBatch: {
     methodKind: "unary";
-    input: typeof ListSiteCommerceAssignmentsRequestSchema;
-    output: typeof ListSiteCommerceAssignmentsResponseSchema;
+    input: typeof ApproveCodeBatchRequestSchema;
+    output: typeof ApproveCodeBatchResponseSchema;
   },
   /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.GetSiteCommerceAssignment
+   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.ActivateCodeBatch
    */
-  getSiteCommerceAssignment: {
+  activateCodeBatch: {
     methodKind: "unary";
-    input: typeof GetSiteCommerceAssignmentRequestSchema;
-    output: typeof GetSiteCommerceAssignmentResponseSchema;
+    input: typeof ActivateCodeBatchRequestSchema;
+    output: typeof ActivateCodeBatchResponseSchema;
   },
   /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.RequestCodeBatchIssuance
+   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.AbandonCodeBatch
    */
-  requestCodeBatchIssuance: {
+  abandonCodeBatch: {
     methodKind: "unary";
-    input: typeof RequestCodeBatchIssuanceRequestSchema;
-    output: typeof RequestCodeBatchIssuanceResponseSchema;
+    input: typeof AbandonCodeBatchRequestSchema;
+    output: typeof AbandonCodeBatchResponseSchema;
   },
   /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.RequestCodeBatchTransition
+   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.SuspendCodeBatch
    */
-  requestCodeBatchTransition: {
+  suspendCodeBatch: {
     methodKind: "unary";
-    input: typeof RequestCodeBatchTransitionRequestSchema;
-    output: typeof RequestCodeBatchTransitionResponseSchema;
+    input: typeof SuspendCodeBatchRequestSchema;
+    output: typeof SuspendCodeBatchResponseSchema;
   },
   /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.EmergencySuspendCodeBatch
+   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.RevokeCodeBatch
    */
-  emergencySuspendCodeBatch: {
+  revokeCodeBatch: {
     methodKind: "unary";
-    input: typeof EmergencySuspendCodeBatchRequestSchema;
-    output: typeof EmergencySuspendCodeBatchResponseSchema;
-  },
-  /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.BeginCodeBatchDelivery
-   */
-  beginCodeBatchDelivery: {
-    methodKind: "unary";
-    input: typeof BeginCodeBatchDeliveryRequestSchema;
-    output: typeof BeginCodeBatchDeliveryResponseSchema;
-  },
-  /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.ReadCodeDeliveryRange
-   */
-  readCodeDeliveryRange: {
-    methodKind: "unary";
-    input: typeof ReadCodeDeliveryRangeRequestSchema;
-    output: typeof ReadCodeDeliveryRangeResponseSchema;
-  },
-  /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.AcknowledgeCodeDeliveryRange
-   */
-  acknowledgeCodeDeliveryRange: {
-    methodKind: "unary";
-    input: typeof AcknowledgeCodeDeliveryRangeRequestSchema;
-    output: typeof AcknowledgeCodeDeliveryRangeResponseSchema;
-  },
-  /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.GetCodeDeliverySession
-   */
-  getCodeDeliverySession: {
-    methodKind: "unary";
-    input: typeof GetCodeDeliverySessionRequestSchema;
-    output: typeof GetCodeDeliverySessionResponseSchema;
+    input: typeof RevokeCodeBatchRequestSchema;
+    output: typeof RevokeCodeBatchResponseSchema;
   },
   /**
    * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.ListCodeBatches
@@ -262,78 +180,6 @@ export const AdminCommerceService: GenService<{
     methodKind: "unary";
     input: typeof GetCodeBatchRequestSchema;
     output: typeof GetCodeBatchResponseSchema;
-  },
-  /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.RequestSourceCorrection
-   */
-  requestSourceCorrection: {
-    methodKind: "unary";
-    input: typeof RequestSourceCorrectionRequestSchema;
-    output: typeof RequestSourceCorrectionResponseSchema;
-  },
-  /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.ListSourceCorrections
-   */
-  listSourceCorrections: {
-    methodKind: "unary";
-    input: typeof ListSourceCorrectionsRequestSchema;
-    output: typeof ListSourceCorrectionsResponseSchema;
-  },
-  /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.GetSourceCorrection
-   */
-  getSourceCorrection: {
-    methodKind: "unary";
-    input: typeof GetSourceCorrectionRequestSchema;
-    output: typeof GetSourceCorrectionResponseSchema;
-  },
-  /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.RequestCommerceReconciliationResolution
-   */
-  requestCommerceReconciliationResolution: {
-    methodKind: "unary";
-    input: typeof RequestCommerceReconciliationResolutionRequestSchema;
-    output: typeof RequestCommerceReconciliationResolutionResponseSchema;
-  },
-  /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.ListCommerceReconciliations
-   */
-  listCommerceReconciliations: {
-    methodKind: "unary";
-    input: typeof ListCommerceReconciliationsRequestSchema;
-    output: typeof ListCommerceReconciliationsResponseSchema;
-  },
-  /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.GetCommerceReconciliation
-   */
-  getCommerceReconciliation: {
-    methodKind: "unary";
-    input: typeof GetCommerceReconciliationRequestSchema;
-    output: typeof GetCommerceReconciliationResponseSchema;
-  },
-  /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.GetCommerceApprovalReview
-   */
-  getCommerceApprovalReview: {
-    methodKind: "unary";
-    input: typeof GetCommerceApprovalReviewRequestSchema;
-    output: typeof GetCommerceApprovalReviewResponseSchema;
-  },
-  /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.GetGlobalCommerceCommandOutcome
-   */
-  getGlobalCommerceCommandOutcome: {
-    methodKind: "unary";
-    input: typeof GetGlobalCommerceCommandOutcomeRequestSchema;
-    output: typeof GetGlobalCommerceCommandOutcomeResponseSchema;
-  },
-  /**
-   * @generated from rpc kokoro.platform.commerce.v1.AdminCommerceService.GetSiteCommerceCommandOutcome
-   */
-  getSiteCommerceCommandOutcome: {
-    methodKind: "unary";
-    input: typeof GetSiteCommerceCommandOutcomeRequestSchema;
-    output: typeof GetSiteCommerceCommandOutcomeResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_kokoro_platform_commerce_v1_admin_commerce, 0);
