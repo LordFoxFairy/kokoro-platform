@@ -357,7 +357,7 @@ describe("Wave 2A Commerce authority schema", () => {
     );
     expect(commercePublicLocks).toContain("export const COMMERCE_PUBLIC_LOCK_ROUTINES");
     expect(commercePublicLocks).toContain(
-      '"platform.lock_commerce_redemption_billing_authority(text,text,text,text,text,text)"',
+      '"platform.lock_commerce_redemption_billing_authority(text,text,text,text,text)"',
     );
     expect(migrator).toContain("GRANT EXECUTE ON FUNCTION ${COMMERCE_PUBLIC_LOCK_ROUTINES_SQL}");
     expect(migrator).toContain('commercePublicLockPrivilegeChecks("runtime_role.rolname")');

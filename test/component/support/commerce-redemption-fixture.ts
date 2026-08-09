@@ -56,6 +56,7 @@ export type CommercePublicOperation =
 export async function provisionCommerceRedemptionFixture(input: Readonly<{
   bootstrap: Client;
   admin: PlatformTransactionalDatabaseClient;
+  maxRedemptionsPerAccount?: number;
 }>): Promise<CommerceRedemptionFixture> {
   const suffix = randomUUID().replaceAll("-", "");
   const siteId = `site:redeem:${suffix}`;
@@ -135,7 +136,7 @@ export async function provisionCommerceRedemptionFixture(input: Readonly<{
       revision: "1",
       productVersionRef,
       fulfillmentProgramRevisionRef,
-      maxRedemptionsPerAccount: 2,
+      maxRedemptionsPerAccount: input.maxRedemptionsPerAccount ?? 2,
     });
     const delivery = await production.commerce.issueBatch({
       ...await command(maker, "11", "commerce.code-batch.issue"),

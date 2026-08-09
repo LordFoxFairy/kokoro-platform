@@ -199,17 +199,24 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
       accountState: "active" | "suspended" | "closed";
       membershipState: "active" | "revoked";
       subjectGeneration: bigint | string;
-      redemptionCount: bigint | string;
     }>(BILLING_FOR_CONFIRM_SQL, [
       preview.billingAccountId,
       input.siteId,
       input.subjectId,
-      preview.redemptionProgramRevisionRef,
       input.workloadIdentityId,
       input.authorityReleaseRef,
     ]);
     const account = accounts[0];
     if (account === undefined || accounts.length !== 1) return rejected();
+    const redemptionCounts = await sql.query<Record<string, unknown> & {
+      redemptionCount: bigint | string;
+    }>(REDEMPTION_COUNT_FOR_CONFIRM_SQL, [
+      input.siteId,
+      preview.billingAccountId,
+      preview.redemptionProgramRevisionRef,
+    ]);
+    const redemptionCount = redemptionCounts[0];
+    if (redemptionCount === undefined || redemptionCounts.length !== 1) return rejected();
     const storedOutputs = await sql.query<OutputRow>(OUTPUT_FOR_CONFIRM_SQL, [
       preview.fulfillmentProgramRevisionRef,
       input.siteId,
@@ -283,7 +290,7 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
       code.safeCodeFingerprint !== preview.safeCodeFingerprint ||
       account.accountState !== "active" || account.membershipState !== "active" ||
       account.subjectGeneration.toString() !== input.subjectGeneration ||
-      BigInt(account.redemptionCount) >= BigInt(program.maxRedemptionsPerAccount)) return rejected();
+      BigInt(redemptionCount.redemptionCount) >= BigInt(program.maxRedemptionsPerAccount)) return rejected();
 
     if (subscription?.subscriptionId !== null && subscription !== null) {
       const activeTerms = await sql.query<Record<string, unknown> & { activeTermEndsAt: Date | string | null }>(
@@ -864,8 +871,15 @@ const CODE_FOR_CONFIRM_SQL = `
 
 const BILLING_FOR_CONFIRM_SQL = `
   SELECT result_account_state AS "accountState",result_membership_state AS "membershipState",
-         result_subject_generation AS "subjectGeneration",result_redemption_count AS "redemptionCount"
-  FROM platform.lock_commerce_redemption_billing_authority($1,$2,$3,$4,$5,$6)`;
+         result_subject_generation AS "subjectGeneration"
+  FROM platform.lock_commerce_redemption_billing_authority($1,$2,$3,$4,$5)`;
+
+const REDEMPTION_COUNT_FOR_CONFIRM_SQL = `
+  SELECT count(*) AS "redemptionCount"
+  FROM platform.commerce_redemption redemption
+  WHERE redemption.site_ref=$1 AND redemption.billing_account_ref=$2
+    AND redemption.redemption_program_revision_ref=$3
+    AND redemption.state IN ('fulfilled','reversed','reconciliation_required')`;
 
 const SUBSCRIPTION_FOR_CONFIRM_SQL = `
   SELECT subscription.subscription_ref AS "subscriptionId",subscription.state,

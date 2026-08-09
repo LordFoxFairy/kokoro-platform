@@ -2763,15 +2763,13 @@ CREATE FUNCTION platform.lock_commerce_redemption_billing_authority(
   p_billing_account_ref TEXT,
   p_site_ref TEXT,
   p_subject_ref TEXT,
-  p_redemption_program_revision_ref TEXT,
   p_workload_identity_id TEXT,
   p_release_ref TEXT
 )
 RETURNS TABLE(
   result_account_state TEXT,
   result_membership_state TEXT,
-  result_subject_generation BIGINT,
-  result_redemption_count BIGINT
+  result_subject_generation BIGINT
 )
 LANGUAGE plpgsql
 VOLATILE
@@ -2780,7 +2778,7 @@ AS $function$
 BEGIN
   IF NOT pg_catalog.has_function_privilege(
        SESSION_USER,
-       'platform.lock_commerce_redemption_billing_authority(text,text,text,text,text,text)',
+       'platform.lock_commerce_redemption_billing_authority(text,text,text,text,text)',
        'EXECUTE'
      )
      OR current_setting('app.workload_kind',true) IS DISTINCT FROM 'site_product'
@@ -2794,12 +2792,7 @@ BEGIN
   END IF;
 
   RETURN QUERY
-  SELECT account.state,membership.state,membership.subject_generation,
-         (SELECT count(*) FROM platform.commerce_redemption redemption
-          WHERE redemption.site_ref=account.site_ref
-            AND redemption.billing_account_ref=account.billing_account_ref
-            AND redemption.redemption_program_revision_ref=p_redemption_program_revision_ref
-            AND redemption.state IN ('fulfilled','reversed','reconciliation_required'))
+  SELECT account.state,membership.state,membership.subject_generation
   FROM platform.commerce_billing_account account
   JOIN platform.commerce_billing_account_membership membership
     ON membership.billing_account_ref=account.billing_account_ref
@@ -2811,5 +2804,5 @@ END
 $function$;
 
 REVOKE ALL ON FUNCTION platform.lock_commerce_redemption_billing_authority(
-  TEXT,TEXT,TEXT,TEXT,TEXT,TEXT
+  TEXT,TEXT,TEXT,TEXT,TEXT
 ) FROM PUBLIC;

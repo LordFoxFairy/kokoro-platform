@@ -83,7 +83,9 @@ describe("PostgresRedemptionConfirmationRepository", () => {
         if (statement.includes("FROM platform.commerce_redeem_code")) return [{ state: "available",
           batchRef: preview.batchRef, safeCodeFingerprint: preview.safeCodeFingerprint }] as never;
         if (statement.includes("FROM platform.lock_commerce_redemption_billing_authority")) return [{ accountState: "active",
-          membershipState: "active", subjectGeneration: 2n, redemptionCount: 0n }] as never;
+          membershipState: "active", subjectGeneration: 2n }] as never;
+        if (statement.includes("FROM platform.commerce_redemption redemption") &&
+            statement.includes('AS "redemptionCount"')) return [{ redemptionCount: 0n }] as never;
         if (statement.includes("FROM platform.commerce_fulfillment_program_output")) return [output] as never;
         if (statement.includes("clock_timestamp()")) return [{ effectAt: new Date("2026-07-29T01:00:00.000Z") }] as never;
         return [];
@@ -122,6 +124,13 @@ describe("PostgresRedemptionConfirmationRepository", () => {
         .toContain("state='live'");
       expect(statements.some((statement) => statement.includes("INSERT INTO platform.commerce_entitlement_grant")))
         .toBe(true);
+      const billingLock = statements.findIndex((statement) =>
+        statement.includes("FROM platform.lock_commerce_redemption_billing_authority"));
+      const redemptionCount = statements.findIndex((statement) =>
+        statement.includes("FROM platform.commerce_redemption redemption") &&
+        statement.includes('AS "redemptionCount"'));
+      expect(billingLock).toBeGreaterThanOrEqual(0);
+      expect(redemptionCount).toBe(billingLock + 1);
       expect(JSON.stringify(events)).not.toContain("previewCredential");
       expect(JSON.stringify(events)).not.toContain("credentialDigest");
       const receiptDigest = result.kind === "succeeded" ? result.receipt.outputSetDigest : null;
@@ -156,7 +165,8 @@ describe("PostgresRedemptionConfirmationRepository", () => {
         if (statement.includes("FROM platform.commerce_redeem_code")) return [{ state: "available",
           batchRef: preview.batchRef, safeCodeFingerprint: preview.safeCodeFingerprint }] as never;
         if (statement.includes("FROM platform.lock_commerce_redemption_billing_authority")) return [{ accountState: "active",
-          membershipState: "active", subjectGeneration: 2n, redemptionCount: 0n }] as never;
+          membershipState: "active", subjectGeneration: 2n }] as never;
+        if (redemptionCountStatement(statement)) return [{ redemptionCount: 0n }] as never;
         if (statement.includes("FROM platform.commerce_fulfillment_program_output")) return [output] as never;
         if (statement.includes("FROM platform.credit_account")) return [];
         if (statement.includes("clock_timestamp()")) return [{ effectAt: new Date("2026-07-29T01:00:00.000Z") }] as never;
@@ -262,7 +272,8 @@ describe("PostgresRedemptionConfirmationRepository", () => {
         if (statement.includes("FROM platform.commerce_redeem_code")) return [{ state: "available",
           batchRef: preview.batchRef, safeCodeFingerprint: preview.safeCodeFingerprint }] as never;
         if (statement.includes("FROM platform.lock_commerce_redemption_billing_authority")) return [{ accountState: "active",
-          membershipState: "active", subjectGeneration: 2n, redemptionCount: 0n }] as never;
+          membershipState: "active", subjectGeneration: 2n }] as never;
+        if (redemptionCountStatement(statement)) return [{ redemptionCount: 0n }] as never;
         if (statement.includes("FROM platform.commerce_subscription subscription")) return [];
         if (statement.includes("FROM platform.commerce_fulfillment_program_output")) return [output] as never;
         if (statement.includes("clock_timestamp()")) return [{ effectAt: new Date("2026-07-29T01:00:00.000Z") }] as never;
@@ -462,7 +473,8 @@ describe("PostgresRedemptionConfirmationRepository", () => {
         if (statement.includes("FROM platform.commerce_redeem_code")) return [{ state: "available",
           batchRef: preview.batchRef, safeCodeFingerprint: preview.safeCodeFingerprint }] as never;
         if (statement.includes("FROM platform.lock_commerce_redemption_billing_authority")) return [{ accountState: "active",
-          membershipState: "active", subjectGeneration: 2n, redemptionCount: 0n }] as never;
+          membershipState: "active", subjectGeneration: 2n }] as never;
+        if (redemptionCountStatement(statement)) return [{ redemptionCount: 0n }] as never;
         if (statement.includes("FROM platform.commerce_fulfillment_program_output")) return [output] as never;
         if (statement.includes("clock_timestamp()")) return [{ effectAt: new Date("2026-07-29T01:05:00.000Z") }] as never;
         return [];
@@ -503,7 +515,8 @@ describe("PostgresRedemptionConfirmationRepository", () => {
         if (statement.includes("FROM platform.commerce_redeem_code")) return [{ state: "available",
           batchRef: preview.batchRef, safeCodeFingerprint: preview.safeCodeFingerprint }] as never;
         if (statement.includes("FROM platform.lock_commerce_redemption_billing_authority")) return [{ accountState: "active",
-          membershipState: "active", subjectGeneration: 2n, redemptionCount: 0n }] as never;
+          membershipState: "active", subjectGeneration: 2n }] as never;
+        if (redemptionCountStatement(statement)) return [{ redemptionCount: 0n }] as never;
         if (statement.includes("FROM platform.commerce_subscription subscription")) return [];
         if (statement.includes("FROM platform.commerce_fulfillment_program_output")) return [output] as never;
         if (statement.includes("clock_timestamp()")) return [{ effectAt: new Date("2026-07-29T01:00:00.000Z") }] as never;
@@ -547,7 +560,8 @@ describe("PostgresRedemptionConfirmationRepository", () => {
         if (statement.includes("FROM platform.commerce_redeem_code")) return [{ state: "available",
           batchRef: preview.batchRef, safeCodeFingerprint: preview.safeCodeFingerprint }] as never;
         if (statement.includes("FROM platform.lock_commerce_redemption_billing_authority")) return [{ accountState: "active",
-          membershipState: "active", subjectGeneration: 2n, redemptionCount: 0n }] as never;
+          membershipState: "active", subjectGeneration: 2n }] as never;
+        if (redemptionCountStatement(statement)) return [{ redemptionCount: 0n }] as never;
         if (statement.includes("FROM platform.commerce_subscription subscription")) return [{
           subscriptionId: "00000000-0000-7000-8000-000000000901", state: "active",
           planRef: "plan-other", activeTermEndsAt: null,
@@ -732,6 +746,11 @@ function programRow(preview: ReturnType<typeof previewRow>) {
     fulfillmentProgramRevision: 1n,
     outputPlanDigest: preview.outputPlanDigest, stackingScope: null,
   };
+}
+
+function redemptionCountStatement(statement: string): boolean {
+  return statement.includes("FROM platform.commerce_redemption redemption") &&
+    statement.includes('AS "redemptionCount"');
 }
 
 function referenceFactory() {

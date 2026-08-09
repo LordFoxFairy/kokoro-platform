@@ -244,6 +244,92 @@ describe("Commerce redemption-to-credit PostgreSQL authority", () => {
       }
     }
   }, 120_000);
+
+  it("serializes a max-one account so two concurrent confirmations cannot both fulfill", async () => {
+    await runPlatformMigrations({ environment: { ...process.env,
+      DATABASE_URL_PLATFORM: migratorUrl, PLATFORM_DATABASE_CREDENTIAL_CLASS: "migrator" } });
+    const bootstrap = new Client({ connectionString: bootstrapUrl });
+    const admin = createPlatformDatabaseClient(loadPlatformDatabaseConfig("admin", {
+      DATABASE_URL_PLATFORM: adminUrl,
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: "admin",
+      PLATFORM_DATABASE_ADMIN_ROLE: adminRole,
+      PLATFORM_DATABASE_MIGRATOR_ROLE: migratorRole,
+      PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
+    }));
+    const api = createPlatformDatabaseClient(loadPlatformDatabaseConfig("api", {
+      DATABASE_URL_PLATFORM: apiUrl,
+      PLATFORM_DATABASE_CREDENTIAL_CLASS: "api",
+      PLATFORM_DATABASE_API_ROLE: apiRole,
+      PLATFORM_DATABASE_MIGRATOR_ROLE: migratorRole,
+      PLATFORM_DATABASE_EXPECTED_DATABASE: databaseName,
+    }));
+    let fixture: CommerceRedemptionFixture | undefined;
+    await Promise.all([bootstrap.connect(), admin.connect(), api.connect()]);
+    try {
+      fixture = await provisionCommerceRedemptionFixture({
+        bootstrap,
+        admin,
+        maxRedemptionsPerAccount: 1,
+      });
+      const secrets = await loadRedemptionSecretCodec(fixture.secretsPath);
+      const production = createCommercePublicApplicationComposition({ database: api, secrets });
+      const previews = [];
+      for (const rawCode of fixture.rawCodes) {
+        const previewCommandId = commandId(); fixture.commandIds.push(previewCommandId);
+        previews.push(await production.preview.execute({
+          context: await commercePublicContext(fixture, "previewRedemption"),
+          commandId: previewCommandId,
+          idempotencyKey: `preview:${previewCommandId}`,
+          code: rawCode,
+        }));
+      }
+
+      const confirmations = previews.map(async (preview) => {
+        const confirmationCommandId = commandId(); fixture!.commandIds.push(confirmationCommandId);
+        const input = Object.freeze({
+          context: await commercePublicContext(fixture!, "confirmRedemption"),
+          commandId: confirmationCommandId,
+          idempotencyKey: `confirm:${confirmationCommandId}`,
+          previewCredential: preview.preview.previewCredential,
+          legalAcceptanceRefs: Object.freeze([]),
+        });
+        return Object.freeze({ input, result: production.confirm.execute(input) });
+      });
+      const pending = await Promise.all(confirmations);
+      const results = await Promise.all(pending.map(async ({ input, result }) =>
+        Object.freeze({ input, result: await result })));
+      const succeeded = results.filter(({ result }) => result.kind === "succeeded");
+      const rejected = results.filter(({ result }) => result.kind === "rejected");
+      expect(succeeded).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0]?.result).toMatchObject({
+        kind: "rejected",
+        rejection: { code: "REDEEM_NOT_ACCEPTED", retryClass: "never", retryAfter: null },
+      });
+      for (const terminal of results) {
+        await expect(production.confirm.execute(terminal.input)).resolves.toEqual(terminal.result);
+      }
+      await expect(readConcurrentLimitFacts(bootstrap, fixture.siteId)).resolves.toEqual({
+        livePreviewCount: 1,
+        consumedPreviewCount: 1,
+        availableCodeCount: 1,
+        claimedCodeCount: 1,
+        redemptionCount: 1,
+        fulfillmentCount: 1,
+        creditGrantCount: 1,
+        grantJournalCount: 1,
+        grantJournalEntryCount: 2,
+        availableBalance: "1000",
+      });
+    } finally {
+      await Promise.allSettled([admin.disconnect(), api.disconnect()]);
+      try {
+        if (fixture !== undefined) await cleanupCommerceRedemptionFixture(bootstrap, fixture);
+      } finally {
+        await Promise.allSettled([bootstrap.end(), fixture?.removeSecrets()]);
+      }
+    }
+  }, 120_000);
 });
 
 type FulfillmentReplayRow = Readonly<{
@@ -382,6 +468,50 @@ async function readFacts(bootstrap: Client, siteId: string) {
     fulfillmentTransactionDigest: row.fulfillment_transaction_digest,
     fulfillmentOutputSetDigest: row.fulfillment_output_set_digest,
     fulfillmentOutputDigest: row.fulfillment_output_digest });
+}
+
+async function readConcurrentLimitFacts(bootstrap: Client, siteId: string) {
+  const result = await bootstrap.query<{
+    live_preview_count: number;
+    consumed_preview_count: number;
+    available_code_count: number;
+    claimed_code_count: number;
+    redemption_count: number;
+    fulfillment_count: number;
+    credit_grant_count: number;
+    grant_journal_count: number;
+    grant_journal_entry_count: number;
+    available_balance: string;
+  }>(
+    `SELECT
+       (SELECT count(*)::int FROM platform.commerce_redemption_preview
+         WHERE site_ref=$1 AND state='live') live_preview_count,
+       (SELECT count(*)::int FROM platform.commerce_redemption_preview
+         WHERE site_ref=$1 AND state='consumed') consumed_preview_count,
+       (SELECT count(*)::int FROM platform.commerce_redeem_code
+         WHERE site_ref=$1 AND state='available') available_code_count,
+       (SELECT count(*)::int FROM platform.commerce_redeem_code
+         WHERE site_ref=$1 AND state='claimed') claimed_code_count,
+       (SELECT count(*)::int FROM platform.commerce_redemption WHERE site_ref=$1) redemption_count,
+       (SELECT count(*)::int FROM platform.commerce_fulfillment_transaction
+         WHERE site_ref=$1) fulfillment_count,
+       (SELECT count(*)::int FROM platform.credit_grant WHERE site_ref=$1) credit_grant_count,
+       (SELECT count(*)::int FROM platform.credit_journal_transaction
+         WHERE site_ref=$1 AND operation_kind='grant_issue') grant_journal_count,
+       (SELECT count(*)::int FROM platform.credit_journal_entry
+         WHERE site_ref=$1 AND credit_grant_id IS NOT NULL) grant_journal_entry_count,
+       (SELECT COALESCE(sum(CASE WHEN entry_side='credit' AND account_type='customer_available'
+          THEN amount ELSE 0 END),0)::text FROM platform.credit_journal_entry
+          WHERE site_ref=$1) available_balance`,
+    [siteId],
+  );
+  const row = required(result.rows[0], "COMMERCE_COMPONENT_CONCURRENT_FACTS_REQUIRED");
+  return Object.freeze({ livePreviewCount: row.live_preview_count,
+    consumedPreviewCount: row.consumed_preview_count, availableCodeCount: row.available_code_count,
+    claimedCodeCount: row.claimed_code_count, redemptionCount: row.redemption_count,
+    fulfillmentCount: row.fulfillment_count, creditGrantCount: row.credit_grant_count,
+    grantJournalCount: row.grant_journal_count, grantJournalEntryCount: row.grant_journal_entry_count,
+    availableBalance: row.available_balance });
 }
 
 function commandId(): string { return randomUUID().replaceAll("-", ""); }
