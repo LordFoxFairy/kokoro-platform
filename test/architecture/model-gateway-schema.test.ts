@@ -21,6 +21,18 @@ describe("Model Gateway owned schema", () => {
     expect(migration).toContain("FORCE ROW LEVEL SECURITY");
     expect(migration).toContain("guard_model_gateway_invocation_transition");
     expect(migration).toContain("NEW.dispatch_fence<>OLD.dispatch_fence+1");
+    const invocationGuard = migration.slice(
+      migration.indexOf("CREATE FUNCTION platform.guard_model_gateway_invocation_transition"),
+      migration.indexOf(
+        "REVOKE ALL ON FUNCTION platform.guard_model_gateway_invocation_transition() FROM PUBLIC",
+      ),
+    );
+    expect(invocationGuard).toContain("NEW.dispatch_owner_ref IS DISTINCT FROM OLD.dispatch_owner_ref");
+    expect(invocationGuard).toContain("NEW.dispatch_fence IS DISTINCT FROM OLD.dispatch_fence");
+    expect(invocationGuard).toContain("OLD.dispatch_fence>0 AND (");
+    expect(invocationGuard).toContain(
+      "NEW.dispatch_lease_expires_at<OLD.dispatch_lease_expires_at",
+    );
     expect(migration).toContain("CREATE TABLE platform.model_gateway_frame");
     expect(migration).toContain("CREATE TABLE platform.model_gateway_capacity");
     expect(migration).toContain("list_model_gateway_dispatch_candidates");

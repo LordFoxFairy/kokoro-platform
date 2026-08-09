@@ -178,6 +178,7 @@ export interface ModelGatewayRepository {
     transaction: PlatformTransaction,
     record: ModelGatewayInvocationRecord,
     priorState: "dispatching" | "outcome_unknown",
+    authority: ModelGatewayOwnedDispatchAuthority | null,
   ): Promise<void>;
   persistOutcomeUnknown(
     transaction: PlatformTransaction,
@@ -185,6 +186,11 @@ export interface ModelGatewayRepository {
     authority: ModelGatewayOutcomeUnknownAuthority,
   ): Promise<void>;
 }
+
+export type ModelGatewayOwnedDispatchAuthority = Readonly<{
+  ownerInstanceRef: string;
+  dispatchFence: bigint;
+}>;
 
 export type ModelGatewayOutcomeUnknownAuthority =
   | Readonly<{
@@ -244,7 +250,7 @@ export interface ModelGatewayStreamingRepository {
     transaction: PlatformTransaction,
     record: ModelGatewayInvocationRecord,
     request: ModelGatewayRequest,
-  ): Promise<ModelGatewayStreamFrame>;
+  ): Promise<ModelGatewayInvocationRecord>;
   loadRequest(
     transaction: PlatformTransaction,
     record: ModelGatewayInvocationRecord,
@@ -254,7 +260,7 @@ export interface ModelGatewayStreamingRepository {
     input: Readonly<{
       record: ModelGatewayInvocationRecord;
       ownerInstanceRef: string;
-      leaseExpiresAt: string;
+      leaseDurationMs: number;
     }>,
   ): Promise<ModelGatewayInvocationRecord | null>;
   appendFrame(
@@ -270,9 +276,9 @@ export interface ModelGatewayStreamingRepository {
     input: Readonly<{
       record: ModelGatewayInvocationRecord;
       ownerInstanceRef: string;
-      leaseExpiresAt: string;
+      leaseDurationMs: number;
     }>,
-  ): Promise<void>;
+  ): Promise<ModelGatewayInvocationRecord>;
   appendTerminalFrame(
     transaction: PlatformTransaction,
     record: ModelGatewayInvocationRecord,
@@ -502,8 +508,8 @@ export class ModelGatewayService {
         createdAt: now,
         updatedAt: now,
       });
-      await streaming.persistAccepted(transaction, record, input.request);
-      return Object.freeze({ kind: "created" as const, record, preparedProvider });
+      const persisted = await streaming.persistAccepted(transaction, record, input.request);
+      return Object.freeze({ kind: "created" as const, record: persisted, preparedProvider });
     });
     observeAttachment?.(Object.freeze({
       attachedToExistingInvocation: prepared.kind === "existing",
@@ -528,7 +534,7 @@ export class ModelGatewayService {
         return streaming.claimInvocation(transaction, {
           record,
           ownerInstanceRef: this.#instanceRef,
-          leaseExpiresAt: new Date(this.#now().getTime() + this.#dispatchRecoveryAfterMs).toISOString(),
+          leaseDurationMs: this.#dispatchRecoveryAfterMs,
         });
       });
       if (claimed !== null) {
@@ -631,8 +637,7 @@ export class ModelGatewayService {
       });
       if (record === null) return null;
       assertRecordAuthorization(record, authorization);
-      if (record.state === "dispatching" &&
-          Date.parse(record.dispatchLeaseExpiresAt ?? record.updatedAt) <= this.#now().getTime()) {
+      if (record.state === "dispatching") {
         return Object.freeze({ kind: "expired" as const, record });
       }
       if (record.state !== "queued") return null;
@@ -662,7 +667,7 @@ export class ModelGatewayService {
       return this.dependencies.streamingRepository.claimInvocation(transaction, {
         record: loaded.record,
         ownerInstanceRef: this.#instanceRef,
-        leaseExpiresAt: new Date(this.#now().getTime() + this.#dispatchRecoveryAfterMs).toISOString(),
+        leaseDurationMs: this.#dispatchRecoveryAfterMs,
       });
     });
     if (claimed !== null) this.#startDispatch(claimed, prepared);
@@ -814,21 +819,22 @@ export class ModelGatewayService {
 
   async #heartbeatLoop(record: ModelGatewayInvocationRecord, signal: AbortSignal): Promise<void> {
     const intervalMs = Math.max(100, Math.min(10_000, Math.floor(this.#dispatchRecoveryAfterMs / 3)));
+    let current = record;
     while (!signal.aborted) {
       try { await abortableDelay(intervalMs, signal); } catch {
         if (signal.aborted) return;
         throw new Error("MODEL_GATEWAY_HEARTBEAT_WAIT_FAILED");
       }
       if (signal.aborted) return;
-      await this.dependencies.unitOfWork.execute({
+      current = await this.dependencies.unitOfWork.execute({
         operation: "frame",
-        modelAuthorizationHandle: record.modelAuthorizationHandle,
+        modelAuthorizationHandle: current.modelAuthorizationHandle,
       }, async (transaction, authorization) => {
-        assertRecordAuthorization(record, authorization);
-        await this.dependencies.streamingRepository.heartbeat(transaction, {
-          record,
+        assertRecordAuthorization(current, authorization);
+        return this.dependencies.streamingRepository.heartbeat(transaction, {
+          record: current,
           ownerInstanceRef: this.#instanceRef,
-          leaseExpiresAt: new Date(this.#now().getTime() + this.#dispatchRecoveryAfterMs).toISOString(),
+          leaseDurationMs: this.#dispatchRecoveryAfterMs,
         });
       });
     }
@@ -899,6 +905,9 @@ export class ModelGatewayService {
     appendStreamTerminal = false,
   ): Promise<ModelGatewayInvocationResult> {
     validateTerminalProviderOutcome(outcome);
+    const ownedAuthority = expectedPriorState === "dispatching"
+      ? ownedDispatchAuthority(prepared, this.#instanceRef)
+      : null;
     return this.dependencies.unitOfWork.execute({
       operation: "finalize",
       modelAuthorizationHandle: prepared.modelAuthorizationHandle,
@@ -913,6 +922,9 @@ export class ModelGatewayService {
       }
       if (current.state !== expectedPriorState) {
         throw new Error("MODEL_GATEWAY_FINALIZE_STATE_CONFLICT");
+      }
+      if (ownedAuthority !== null) {
+        assertOwnedDispatchAuthority(current, ownedAuthority);
       }
       const evidenceRef = this.#reference("evidence");
       const evidenceBase = {
@@ -972,9 +984,14 @@ export class ModelGatewayService {
         evidenceRef,
         sourceDigest: outcome.sourceDigest,
         ownerEvidenceRef: null,
-        updatedAt: this.#now().toISOString(),
+        updatedAt: monotonicUpdatedAt(current.updatedAt, this.#now()),
       });
-      await this.dependencies.repository.persistTerminal(transaction, terminal, expectedPriorState);
+      await this.dependencies.repository.persistTerminal(
+        transaction,
+        terminal,
+        expectedPriorState,
+        ownedAuthority,
+      );
       if (appendStreamTerminal) {
         const streaming = this.dependencies.streamingRepository;
         if (streaming === undefined) throw new Error("MODEL_GATEWAY_STREAMING_NOT_CONFIGURED");
@@ -1027,7 +1044,7 @@ export class ModelGatewayService {
         state: "outcome_unknown",
         fenceEpoch: receipt.fenceEpoch,
         ownerEvidenceRef,
-        updatedAt: this.#now().toISOString(),
+        updatedAt: monotonicUpdatedAt(current.updatedAt, this.#now()),
       });
       await this.dependencies.repository.persistOutcomeUnknown(transaction, changed, authority);
       if (appendStreamTerminal) {
@@ -1173,6 +1190,12 @@ function digest(value: string, code: string): void {
   if (!/^[0-9a-f]{64}$/u.test(value)) throw new Error(code);
 }
 
+function monotonicUpdatedAt(currentUpdatedAt: string, now: Date): string {
+  const current = Date.parse(currentUpdatedAt);
+  if (!Number.isFinite(current)) throw new Error("MODEL_GATEWAY_CURRENT_UPDATED_AT_INVALID");
+  return new Date(Math.max(current + 1, now.getTime())).toISOString();
+}
+
 function commandDigest(kind: string, fields: Readonly<Record<string, string>>): string {
   const hash = createHash("sha256");
   hash.update(kind);
@@ -1208,6 +1231,30 @@ function ownedUnknownAuthority(
     ownerInstanceRef,
     dispatchFence: record.dispatchFence,
   });
+}
+
+function ownedDispatchAuthority(
+  record: ModelGatewayInvocationRecord,
+  ownerInstanceRef: string,
+): ModelGatewayOwnedDispatchAuthority {
+  if (record.dispatchOwnerRef !== ownerInstanceRef || record.dispatchFence === undefined ||
+      record.dispatchFence <= 0n) {
+    throw new Error("MODEL_GATEWAY_TERMINAL_AUTHORITY_INVALID");
+  }
+  return Object.freeze({ ownerInstanceRef, dispatchFence: record.dispatchFence });
+}
+
+function assertOwnedDispatchAuthority(
+  current: ModelGatewayInvocationRecord,
+  authority: ModelGatewayOwnedDispatchAuthority,
+): void {
+  const leaseExpiresAt = current.dispatchLeaseExpiresAt;
+  if (current.dispatchOwnerRef !== authority.ownerInstanceRef ||
+      current.dispatchFence !== authority.dispatchFence ||
+      leaseExpiresAt === undefined || leaseExpiresAt === null ||
+      !Number.isFinite(Date.parse(leaseExpiresAt))) {
+    throw new Error("MODEL_GATEWAY_TERMINAL_AUTHORITY_LOST");
+  }
 }
 
 function expiredUnknownAuthority(

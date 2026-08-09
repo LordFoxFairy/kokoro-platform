@@ -255,6 +255,131 @@ describe("ModelGatewayService provider terminalization", () => {
     }
   });
 
+  it("B: leaves live lease expiry to the PostgreSQL clock rather than a skewed app clock", async () => {
+    let appClockJumped = false;
+    const harness = createHarness({
+      clock: () => new Date(appClockJumped
+        ? "2029-01-01T00:00:10.000Z"
+        : "2029-01-01T00:00:00.000Z"),
+      afterExecute: (operation, call) => {
+        if (operation === "claim" && call === 1) appClockJumped = true;
+      },
+    });
+
+    try {
+      const frames = await collectWithDeadline(harness.service);
+
+      expect(frames.map(({ payload }) => payload.kind)).toEqual(["accepted", "completed"]);
+      expect(harness.stats.providerEffectCalls).toBe(1);
+      expect(harness.stats.finalizeAttemptCalls).toBe(1);
+      expect(harness.stats.markUnknownCalls).toBe(0);
+      expect(harness.repository.record?.state).toBe("succeeded");
+    } finally {
+      await harness.service.shutdown();
+    }
+  });
+
+  it("B: carries the PostgreSQL accepted timestamp into a claim when the app clock leads", async () => {
+    const repository = new TerminalizationMemoryRepository();
+    repository.acceptedDatabaseNow = "2029-01-01T00:00:00.123Z";
+    const harness = createHarness({
+      repository,
+      clock: () => new Date("2029-01-02T00:00:00.000Z"),
+    });
+
+    try {
+      const frames = await collectWithDeadline(harness.service);
+
+      expect(frames.map(({ payload }) => payload.kind)).toEqual(["accepted", "completed"]);
+      expect(repository.record?.createdAt).toBe(repository.acceptedDatabaseNow);
+      expect(harness.stats.providerEffectCalls).toBe(1);
+      expect(harness.stats.finalizeAttemptCalls).toBe(1);
+      expect(harness.stats.markUnknownCalls).toBe(0);
+    } finally {
+      await harness.service.shutdown();
+    }
+  });
+
+  it.each([
+    Object.freeze({
+      label: "known terminal",
+      outcome: succeededOutcome(),
+      expectedState: "succeeded",
+      expectedPayload: "completed",
+    }),
+    Object.freeze({
+      label: "outcome unknown",
+      outcome: unknownOutcome("8"),
+      expectedState: "outcome_unknown",
+      expectedPayload: "outcome_unknown",
+    }),
+  ] as const)("B: keeps a $label timestamp monotonic when the app clock trails PostgreSQL", async ({
+    outcome,
+    expectedState,
+    expectedPayload,
+  }) => {
+    const repository = new TerminalizationMemoryRepository();
+    const databaseUpdatedAt = "2029-01-01T00:00:05.123456Z";
+    const expectedUpdatedAt = "2029-01-01T00:00:05.124Z";
+    const harness = createHarness({
+      repository,
+      outcome,
+      clock: () => new Date("2029-01-01T00:00:00.000Z"),
+      afterExecute: (operation, call) => {
+        if (operation !== "claim" || call !== 1 || repository.record === null) return;
+        repository.record = Object.freeze({ ...repository.record, updatedAt: databaseUpdatedAt });
+      },
+    });
+
+    try {
+      const frames = await collectWithDeadline(harness.service);
+
+      expect(frames.map(({ payload }) => payload.kind)).toEqual(["accepted", expectedPayload]);
+      expect(repository.record?.state).toBe(expectedState);
+      expect(repository.record?.updatedAt).toBe(expectedUpdatedAt);
+      expect(harness.stats.providerEffectCalls).toBe(1);
+    } finally {
+      await harness.service.shutdown();
+    }
+  });
+
+  it.each([
+    ["owner", Object.freeze({ dispatchOwnerRef: "model-gateway:replacement-owner" })],
+    ["fence", Object.freeze({ dispatchFence: 2n })],
+  ] as const)("B: refuses a live terminal from a stale original %s authority", async (
+    _axis,
+    drift,
+  ) => {
+    const repository = new TerminalizationMemoryRepository();
+    const harness = createHarness({
+      repository,
+      instanceRef: "model-gateway:original-owner",
+      afterExecute: (operation, call) => {
+        if (operation !== "claim" || call !== 1 || repository.record === null) return;
+        repository.record = Object.freeze({ ...repository.record, ...drift });
+      },
+    });
+    const controller = new AbortController();
+    const iterator = harness.service.stream(invocation(controller.signal))[Symbol.asyncIterator]();
+
+    try {
+      expect((await iterator.next()).value?.payload.kind).toBe("accepted");
+      await waitFor(() => harness.stats.finalizeAttemptCalls > 0 ||
+        operationCount(harness.stats, "unknown") > 0);
+      await flushMicrotasks();
+
+      expect(harness.stats.providerEffectCalls).toBe(1);
+      expect(harness.stats.finalizeAttemptCalls).toBe(0);
+      expect(harness.stats.markUnknownCalls).toBe(0);
+      expect(repository.record?.state).toBe("dispatching");
+      expect(repository.terminalFrames()).toHaveLength(0);
+    } finally {
+      controller.abort("test-complete");
+      await iterator.return?.();
+      await harness.service.shutdown();
+    }
+  });
+
   it.each([
     ["same instance", "model-gateway:recovery-scanner"],
     ["independent instance", "model-gateway:active-owner"],
@@ -296,6 +421,36 @@ describe("ModelGatewayService provider terminalization", () => {
       expect(repository.record?.dispatchOwnerRef).toBe(activeOwnerRef);
       expect(repository.record?.dispatchLeaseExpiresAt).toBe("2029-01-01T00:00:10.000Z");
       expect(repository.terminalFrames()).toHaveLength(0);
+    } finally {
+      await scanner.service.shutdown();
+    }
+  });
+
+  it("B: trusts a PostgreSQL-expired recovery candidate when the app clock trails", async () => {
+    const repository = new TerminalizationMemoryRepository();
+    repository.record = dispatchingRecord({
+      ownerInstanceRef: "model-gateway:expired-owner",
+      leaseExpiresAt: "2029-01-01T00:00:01.000Z",
+    });
+    let scans = 0;
+    const scanner = createHarness({
+      repository,
+      instanceRef: "model-gateway:recovery-scanner",
+      clock: () => new Date("2028-01-01T00:00:00.000Z"),
+      scanDispatchCandidates: async () => scans++ === 0
+        ? [{ modelAuthorizationHandle: authorizationHandle, logicalCallRef: "logical-call-1" }]
+        : [],
+    });
+
+    try {
+      scanner.service.start();
+      await waitFor(() => repository.record?.state === "outcome_unknown");
+
+      expect(scanner.stats.localPrepareCalls).toBe(0);
+      expect(scanner.stats.providerEffectCalls).toBe(0);
+      expect(scanner.stats.markUnknownCalls).toBe(1);
+      expect(repository.terminalFrames().map(({ payload }) => payload.kind))
+        .toEqual(["outcome_unknown"]);
     } finally {
       await scanner.service.shutdown();
     }
@@ -462,6 +617,7 @@ class TerminalizationMemoryRepository implements ModelGatewayRepository,
   ModelGatewayStreamingRepository, ModelGatewayFrameWaiter {
   record: ModelGatewayInvocationRecord | null = null;
   request: ModelGatewayRequest | null = null;
+  acceptedDatabaseNow: string | null = null;
   readonly frames: ModelGatewayStreamFrame[] = [];
   heartbeatCalls = 0;
   readonly #waiters = new Set<() => void>();
@@ -477,9 +633,17 @@ class TerminalizationMemoryRepository implements ModelGatewayRepository,
     record: ModelGatewayInvocationRecord,
     request: ModelGatewayRequest,
   ) {
-    this.record = record;
+    const persisted = this.acceptedDatabaseNow === null
+      ? record
+      : Object.freeze({
+          ...record,
+          createdAt: this.acceptedDatabaseNow,
+          updatedAt: this.acceptedDatabaseNow,
+        });
+    this.record = persisted;
     this.request = request;
-    return this.append({ kind: "accepted" });
+    this.append({ kind: "accepted" });
+    return persisted;
   }
 
   async loadRequest() {
@@ -490,15 +654,17 @@ class TerminalizationMemoryRepository implements ModelGatewayRepository,
   async claimInvocation(_transaction: never, input: Readonly<{
     record: ModelGatewayInvocationRecord;
     ownerInstanceRef: string;
-    leaseExpiresAt: string;
+    leaseDurationMs: number;
   }>) {
     if (this.record?.state !== "queued") return null;
+    const databaseNow = Math.max(Date.now(), Date.parse(this.record.updatedAt));
     this.record = Object.freeze({
       ...input.record,
       state: "dispatching" as const,
       dispatchOwnerRef: input.ownerInstanceRef,
       dispatchFence: 1n,
-      dispatchLeaseExpiresAt: input.leaseExpiresAt,
+      dispatchLeaseExpiresAt: new Date(databaseNow + input.leaseDurationMs).toISOString(),
+      updatedAt: new Date(databaseNow).toISOString(),
     });
     return this.record;
   }
@@ -513,7 +679,7 @@ class TerminalizationMemoryRepository implements ModelGatewayRepository,
   async heartbeat(_transaction: never, input: Readonly<{
     record: ModelGatewayInvocationRecord;
     ownerInstanceRef: string;
-    leaseExpiresAt: string;
+    leaseDurationMs: number;
   }>) {
     if (this.record?.state !== "dispatching" ||
         this.record.dispatchOwnerRef !== input.ownerInstanceRef ||
@@ -522,10 +688,13 @@ class TerminalizationMemoryRepository implements ModelGatewayRepository,
       throw new Error("TEST_HEARTBEAT_FENCE_LOST");
     }
     this.heartbeatCalls += 1;
+    const databaseNow = Math.max(Date.now(), Date.parse(this.record.updatedAt));
     this.record = Object.freeze({
       ...this.record,
-      dispatchLeaseExpiresAt: input.leaseExpiresAt,
+      dispatchLeaseExpiresAt: new Date(databaseNow + input.leaseDurationMs).toISOString(),
+      updatedAt: new Date(databaseNow).toISOString(),
     });
+    return this.record;
   }
 
   async persistTerminal(_transaction: never, record: ModelGatewayInvocationRecord) {

@@ -210,7 +210,7 @@ class MemoryRepository implements ModelGatewayRepository, ModelGatewayStreamingR
     this.request = request;
     const accepted = this.frame({ kind: "accepted" });
     this.frames.push(accepted);
-    return accepted;
+    return record;
   }
   async loadRequest() {
     if (this.request === null) throw new Error("missing request");
@@ -219,11 +219,13 @@ class MemoryRepository implements ModelGatewayRepository, ModelGatewayStreamingR
   async claimInvocation(_transaction: never, input: Readonly<{
     record: ModelGatewayInvocationRecord;
     ownerInstanceRef: string;
-    leaseExpiresAt: string;
+    leaseDurationMs: number;
   }>) {
     if (this.record?.state !== "queued") return null;
+    const databaseNow = Date.parse(input.record.updatedAt);
     this.record = { ...input.record, state: "dispatching", dispatchOwnerRef: input.ownerInstanceRef,
-      dispatchFence: 1n, dispatchLeaseExpiresAt: input.leaseExpiresAt };
+      dispatchFence: 1n,
+      dispatchLeaseExpiresAt: new Date(databaseNow + input.leaseDurationMs).toISOString() };
     return this.record;
   }
   async appendFrame(_transaction: never, input: Readonly<{
@@ -236,7 +238,16 @@ class MemoryRepository implements ModelGatewayRepository, ModelGatewayStreamingR
     this.frames.push(frame);
     return frame;
   }
-  async heartbeat() {}
+  async heartbeat(_transaction: never, input: Readonly<{
+    record: ModelGatewayInvocationRecord;
+    leaseDurationMs: number;
+  }>) {
+    if (this.record === null) throw new Error("missing invocation");
+    this.record = { ...this.record, dispatchLeaseExpiresAt: new Date(
+      Date.parse(this.record.updatedAt) + input.leaseDurationMs,
+    ).toISOString() };
+    return this.record;
+  }
   async persistTerminal(_transaction: never, record: ModelGatewayInvocationRecord) { this.record = record; }
   async persistOutcomeUnknown(_transaction: never, record: ModelGatewayInvocationRecord) { this.record = record; }
   async appendTerminalFrame(_transaction: never, _record: ModelGatewayInvocationRecord,

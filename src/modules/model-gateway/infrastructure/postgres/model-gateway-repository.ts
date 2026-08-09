@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type {
   ModelGatewayInvocationRecord,
   ModelGatewayOutcomeUnknownAuthority,
+  ModelGatewayOwnedDispatchAuthority,
   ModelGatewayRepository,
   ModelGatewayRequest,
   ModelGatewayStreamFrame,
@@ -57,6 +58,7 @@ interface FrameRow extends Record<string, unknown> {
 interface StreamStateRow extends Record<string, unknown> {
   state: ModelGatewayInvocationRecord["state"];
   dispatchOwnerRef: string | null;
+  dispatchFence: bigint | string;
   dispatchLeaseExpiresAt: Date | string | null;
   lastFrameSequence: bigint | string;
   lastFrameDigest: string;
@@ -104,7 +106,7 @@ export class PostgresModelGatewayRepository implements ModelGatewayRepository, M
     transaction: PlatformTransaction,
     record: ModelGatewayInvocationRecord,
     request: ModelGatewayRequest,
-  ): Promise<ModelGatewayStreamFrame> {
+  ): Promise<ModelGatewayInvocationRecord> {
     if (record.state !== "queued" || record.responseBody !== null || record.usageEvidence !== null ||
         record.evidenceRef !== null || record.ownerEvidenceRef !== null) {
       throw new Error("MODEL_GATEWAY_ACCEPTED_RECORD_INVALID");
@@ -129,14 +131,16 @@ export class PostgresModelGatewayRepository implements ModelGatewayRepository, M
         dispatch_lease_expires_at,last_frame_sequence,last_frame_digest,frame_count,
         total_frame_bytes,created_at,updated_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13::jsonb,$14,$15,'queued',
-         NULL,NULL,NULL,NULL,NULL,0,NULL,1,$16,1,$17,$18::timestamptz,$19::timestamptz)`,
+         NULL,NULL,NULL,NULL,NULL,0,NULL,1,$16,1,$17,
+         date_trunc('milliseconds',statement_timestamp()),
+         date_trunc('milliseconds',statement_timestamp()))`,
       [record.siteId, record.invocationRef, record.modelAuthorizationHandle,
         record.executionManifestRef, record.authorizationSegmentRef, record.logicalCallRef,
         record.attemptRef, record.producerContext, record.producerGeneration.toString(),
         record.requestDigest, canonical(requestEnvelope), record.gatewayModel,
         canonical(record.maximumDimensions), record.attemptAuthorizationRef,
-        record.fenceEpoch.toString(), accepted.frameDigest, framePlaintext(accepted.payload).byteLength,
-        record.createdAt, record.updatedAt],
+        record.fenceEpoch.toString(), accepted.frameDigest,
+        framePlaintext(accepted.payload).byteLength],
     ), "MODEL_GATEWAY_ACCEPT_PERSIST_FAILED");
     await one(sql.execute(
       `INSERT INTO platform.model_gateway_dispatch_queue
@@ -144,9 +148,17 @@ export class PostgresModelGatewayRepository implements ModelGatewayRepository, M
        VALUES ($1,$2,$3,$4,'queued')`,
       [record.siteId, record.invocationRef, record.modelAuthorizationHandle, record.logicalCallRef],
     ), "MODEL_GATEWAY_DISPATCH_QUEUE_PERSIST_FAILED");
-    await insertFrame(sql, record, accepted, this.dependencies.responseProtector);
-    await this.#writeOutbox(sql, record, "model_gateway.invocation_prepared.v1");
-    return accepted;
+    const persisted = await this.lockInvocation(transaction, {
+      logicalCallRef: record.logicalCallRef,
+    });
+    if (persisted === null || persisted.state !== "queued" ||
+        persisted.invocationRef !== record.invocationRef ||
+        persisted.requestDigest !== record.requestDigest) {
+      throw new Error("MODEL_GATEWAY_ACCEPT_PERSISTED_RECORD_INVALID");
+    }
+    await insertFrame(sql, persisted, accepted, this.dependencies.responseProtector);
+    await this.#writeOutbox(sql, persisted, "model_gateway.invocation_prepared.v1");
+    return persisted;
   }
 
   async loadRequest(
@@ -172,9 +184,10 @@ export class PostgresModelGatewayRepository implements ModelGatewayRepository, M
     input: Readonly<{
       record: ModelGatewayInvocationRecord;
       ownerInstanceRef: string;
-      leaseExpiresAt: string;
+      leaseDurationMs: number;
     }>,
   ): Promise<ModelGatewayInvocationRecord | null> {
+    validateLeaseDuration(input.leaseDurationMs);
     const sql = resolvePlatformTransaction(transaction);
     const capacity = await sql.execute(
       `UPDATE platform.model_gateway_capacity
@@ -185,18 +198,23 @@ export class PostgresModelGatewayRepository implements ModelGatewayRepository, M
     await one(sql.execute(
       `UPDATE platform.model_gateway_invocation
        SET state='dispatching',dispatch_owner_ref=$1,dispatch_fence=dispatch_fence+1,
-           dispatch_lease_expires_at=$2::timestamptz,updated_at=now()
+           dispatch_lease_expires_at=date_trunc('milliseconds',clock_timestamp())+
+             ($2::bigint*interval '1 millisecond'),
+           updated_at=clock_timestamp()
        WHERE site_ref=$3 AND invocation_ref=$4 AND logical_call_ref=$5
          AND request_digest=$6 AND state='queued'`,
-      [input.ownerInstanceRef, input.leaseExpiresAt, input.record.siteId,
+      [input.ownerInstanceRef, input.leaseDurationMs.toString(), input.record.siteId,
         input.record.invocationRef, input.record.logicalCallRef, input.record.requestDigest],
     ), "MODEL_GATEWAY_DISPATCH_CLAIM_LOST");
     await one(sql.execute(
       `UPDATE platform.model_gateway_dispatch_queue
        SET state='dispatching',dispatch_owner_ref=$1,
-           dispatch_lease_expires_at=$2::timestamptz,updated_at=now()
+           dispatch_lease_expires_at=date_trunc('milliseconds',clock_timestamp())+
+             ($2::bigint*interval '1 millisecond'),
+           updated_at=clock_timestamp()
        WHERE site_ref=$3 AND invocation_ref=$4 AND state='queued'`,
-      [input.ownerInstanceRef, input.leaseExpiresAt, input.record.siteId, input.record.invocationRef],
+      [input.ownerInstanceRef, input.leaseDurationMs.toString(),
+        input.record.siteId, input.record.invocationRef],
     ), "MODEL_GATEWAY_DISPATCH_QUEUE_CLAIM_LOST");
     const claimed = await this.lockInvocation(transaction, { logicalCallRef: input.record.logicalCallRef });
     if (claimed === null || claimed.state !== "dispatching") {
@@ -217,12 +235,15 @@ export class PostgresModelGatewayRepository implements ModelGatewayRepository, M
     const sql = resolvePlatformTransaction(transaction);
     const state = await streamState(sql, input.record, true);
     if (state.state !== "dispatching" || state.dispatchOwnerRef !== input.ownerInstanceRef ||
-        state.dispatchLeaseExpiresAt === null || Date.parse(state.dispatchLeaseExpiresAt) <= Date.now()) {
+        state.dispatchFence !== input.record.dispatchFence || state.dispatchLeaseExpiresAt === null) {
       throw new Error("MODEL_GATEWAY_DISPATCH_FENCE_LOST");
     }
     const frame = createFrame(input.record, state.lastFrameSequence + 1n,
       state.lastFrameDigest, input.payload);
-    await advanceFrameState(sql, input.record, frame);
+    await advanceFrameState(sql, input.record, frame, {
+      ownerInstanceRef: input.ownerInstanceRef,
+      dispatchFence: state.dispatchFence,
+    });
     await insertFrame(sql, input.record, frame, this.dependencies.responseProtector);
     return frame;
   }
@@ -232,26 +253,42 @@ export class PostgresModelGatewayRepository implements ModelGatewayRepository, M
     input: Readonly<{
       record: ModelGatewayInvocationRecord;
       ownerInstanceRef: string;
-      leaseExpiresAt: string;
+      leaseDurationMs: number;
     }>,
-  ): Promise<void> {
-    await one(resolvePlatformTransaction(transaction).execute(
+  ): Promise<ModelGatewayInvocationRecord> {
+    validateLeaseDuration(input.leaseDurationMs);
+    const sql = resolvePlatformTransaction(transaction);
+    await one(sql.execute(
       `UPDATE platform.model_gateway_invocation
-       SET dispatch_lease_expires_at=$1::timestamptz,updated_at=clock_timestamp()
+       SET dispatch_lease_expires_at=date_trunc('milliseconds',clock_timestamp())+
+             ($1::bigint*interval '1 millisecond'),
+           updated_at=clock_timestamp()
        WHERE site_ref=$2 AND invocation_ref=$3 AND request_digest=$4
          AND state='dispatching' AND dispatch_owner_ref=$5
          AND dispatch_fence=$6::bigint
          AND dispatch_lease_expires_at>clock_timestamp()`,
-      [input.leaseExpiresAt, input.record.siteId, input.record.invocationRef,
+      [input.leaseDurationMs.toString(), input.record.siteId, input.record.invocationRef,
         input.record.requestDigest, input.ownerInstanceRef, (input.record.dispatchFence ?? 0n).toString()],
     ), "MODEL_GATEWAY_DISPATCH_HEARTBEAT_FENCE_LOST");
-    await one(resolvePlatformTransaction(transaction).execute(
+    await one(sql.execute(
       `UPDATE platform.model_gateway_dispatch_queue
-       SET dispatch_lease_expires_at=$1::timestamptz,updated_at=clock_timestamp()
+       SET dispatch_lease_expires_at=date_trunc('milliseconds',clock_timestamp())+
+             ($1::bigint*interval '1 millisecond'),
+           updated_at=clock_timestamp()
        WHERE site_ref=$2 AND invocation_ref=$3 AND state='dispatching'
          AND dispatch_owner_ref=$4 AND dispatch_lease_expires_at>clock_timestamp()`,
-      [input.leaseExpiresAt, input.record.siteId, input.record.invocationRef, input.ownerInstanceRef],
+      [input.leaseDurationMs.toString(), input.record.siteId,
+        input.record.invocationRef, input.ownerInstanceRef],
     ), "MODEL_GATEWAY_DISPATCH_QUEUE_HEARTBEAT_FENCE_LOST");
+    const current = await this.lockInvocation(transaction, {
+      logicalCallRef: input.record.logicalCallRef,
+    });
+    if (current === null || current.state !== "dispatching" ||
+        current.dispatchOwnerRef !== input.ownerInstanceRef ||
+        current.dispatchFence !== input.record.dispatchFence) {
+      throw new Error("MODEL_GATEWAY_DISPATCH_HEARTBEAT_INVALID");
+    }
+    return current;
   }
 
   async appendTerminalFrame(
@@ -293,11 +330,19 @@ export class PostgresModelGatewayRepository implements ModelGatewayRepository, M
     transaction: PlatformTransaction,
     record: ModelGatewayInvocationRecord,
     priorState: "dispatching" | "outcome_unknown",
+    authority: ModelGatewayOwnedDispatchAuthority | null,
   ): Promise<void> {
     if (!(["succeeded", "failed"] as const).includes(record.state as "succeeded" | "failed") ||
         record.responseBody === null || record.usageEvidence === null || record.evidenceRef === null ||
         record.sourceDigest === null || record.ownerEvidenceRef !== null || record.fenceEpoch < 2n) {
       throw new Error("MODEL_GATEWAY_TERMINAL_RECORD_INVALID");
+    }
+    if ((priorState === "dispatching") !== (authority !== null) ||
+        (authority !== null && (
+          authority.ownerInstanceRef.length < 1 || authority.ownerInstanceRef.length > 256 ||
+          /[\0\r\n]/u.test(authority.ownerInstanceRef) || authority.dispatchFence <= 0n
+        ))) {
+      throw new Error("MODEL_GATEWAY_TERMINAL_AUTHORITY_INVALID");
     }
     const sql = resolvePlatformTransaction(transaction);
     const envelope = this.dependencies.responseProtector.seal(record.responseBody, record);
@@ -314,8 +359,8 @@ export class PostgresModelGatewayRepository implements ModelGatewayRepository, M
          AND fence_epoch=($5::bigint-1)`,
       [record.state, canonical(envelope), record.evidenceRef, record.sourceDigest,
         record.fenceEpoch.toString(), record.updatedAt, record.siteId, record.invocationRef,
-        record.logicalCallRef, record.requestDigest, record.dispatchOwnerRef ?? "", priorState,
-        (record.dispatchFence ?? 0n).toString()],
+        record.logicalCallRef, record.requestDigest, authority?.ownerInstanceRef ?? "", priorState,
+        (authority?.dispatchFence ?? 0n).toString()],
     ), "MODEL_GATEWAY_TERMINAL_CAS_LOST");
     if (priorState === "dispatching") {
       await one(sql.execute(
@@ -464,6 +509,7 @@ async function streamState(
 ): Promise<Readonly<{
   state: ModelGatewayInvocationRecord["state"];
   dispatchOwnerRef: string | null;
+  dispatchFence: bigint;
   dispatchLeaseExpiresAt: string | null;
   lastFrameSequence: bigint;
   lastFrameDigest: string;
@@ -471,7 +517,7 @@ async function streamState(
   totalFrameBytes: bigint;
 }>> {
   const rows = await sql.query<StreamStateRow>(
-    `SELECT state,dispatch_owner_ref AS "dispatchOwnerRef",
+    `SELECT state,dispatch_owner_ref AS "dispatchOwnerRef",dispatch_fence AS "dispatchFence",
             dispatch_lease_expires_at AS "dispatchLeaseExpiresAt",
             last_frame_sequence AS "lastFrameSequence",last_frame_digest AS "lastFrameDigest",
             frame_count AS "frameCount",total_frame_bytes AS "totalFrameBytes"
@@ -486,6 +532,7 @@ async function streamState(
   return Object.freeze({
     state: row.state,
     dispatchOwnerRef: row.dispatchOwnerRef,
+    dispatchFence: BigInt(row.dispatchFence),
     dispatchLeaseExpiresAt: row.dispatchLeaseExpiresAt === null ? null : instant(row.dispatchLeaseExpiresAt),
     lastFrameSequence: BigInt(row.lastFrameSequence),
     lastFrameDigest: row.lastFrameDigest,
@@ -548,22 +595,27 @@ async function advanceFrameState(
   sql: ReturnType<typeof resolvePlatformTransaction>,
   record: ModelGatewayInvocationRecord,
   frame: ModelGatewayStreamFrame,
+  authority?: ModelGatewayOwnedDispatchAuthority,
 ): Promise<void> {
   const bytes = framePlaintext(frame.payload).byteLength;
+  const liveFence = authority === undefined
+    ? ""
+    : ` AND state='dispatching' AND dispatch_owner_ref=$9
+       AND dispatch_fence=$10::bigint AND dispatch_lease_expires_at>clock_timestamp()`;
   await one(sql.execute(
     `UPDATE platform.model_gateway_invocation
      SET last_frame_sequence=$1,last_frame_digest=$2,frame_count=frame_count+1,
          total_frame_bytes=total_frame_bytes+$3,
-         dispatch_lease_expires_at=CASE WHEN state='dispatching'
-           THEN GREATEST(dispatch_lease_expires_at,now()+interval '30 seconds')
-           ELSE dispatch_lease_expires_at END,
-         updated_at=GREATEST(updated_at,now())
+         updated_at=GREATEST(updated_at,clock_timestamp())
      WHERE site_ref=$4 AND invocation_ref=$5 AND request_digest=$6
        AND last_frame_sequence=$7 AND last_frame_digest=$8
-       AND frame_count<65536 AND total_frame_bytes+$3<=33554432`,
+       AND frame_count<65536 AND total_frame_bytes+$3<=33554432${liveFence}`,
     [frame.sequence.toString(), frame.frameDigest, bytes, record.siteId,
       record.invocationRef, record.requestDigest, (frame.sequence - 1n).toString(),
-      frame.previousFrameDigest],
+      frame.previousFrameDigest,
+      ...(authority === undefined
+        ? []
+        : [authority.ownerInstanceRef, authority.dispatchFence.toString()])],
   ), "MODEL_GATEWAY_FRAME_BOUNDS_OR_FENCE_LOST");
 }
 
@@ -712,6 +764,11 @@ function instant(value: Date | string): string {
   const result = value instanceof Date ? value.toISOString() : value;
   if (!Number.isFinite(Date.parse(result))) throw new Error("MODEL_GATEWAY_INVOCATION_ROW_INVALID");
   return result;
+}
+function validateLeaseDuration(value: number): void {
+  if (!Number.isInteger(value) || value < 1_000 || value > 600_000) {
+    throw new Error("MODEL_GATEWAY_DISPATCH_LEASE_DURATION_INVALID");
+  }
 }
 function digest(value: string): string { return createHash("sha256").update(value).digest("hex"); }
 async function one(change: Promise<number>, code: string): Promise<void> {

@@ -109,14 +109,7 @@ describe("Platform-owned Web Chat Credit runtime fixture", () => {
         gatewayAttemptPersist,
       ),
     });
-    const persistAccepted = vi.fn(async (_transaction, record) => ({
-      invocationRef: record.invocationRef,
-      attemptRef: record.attemptRef,
-      sequence: 1n,
-      previousFrameDigest: "0".repeat(64),
-      frameDigest: "1".repeat(64),
-      payload: { kind: "accepted" as const },
-    }));
+    const persistAccepted = vi.fn(async (_transaction, record) => record);
     const gateway = modelGatewayFixture({
       provider: adapter,
       usage: gatewayUsage,
