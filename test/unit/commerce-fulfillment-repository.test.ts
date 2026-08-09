@@ -71,6 +71,7 @@ describe("PostgresCommerceRepository fulfillment facts", () => {
         fulfillmentProgramDigest: claim.snapshot.fulfillmentProgramDigest },
       outputs: [output], committedAt: "2026-07-30T02:00:01.000Z",
     });
+    let storedTransactionDigest = fact.transactionDigest;
     const sql: PlatformSqlTransaction = {
       query: async (statement) => {
         if (statement.includes("pg_advisory_xact_lock")) return [{}] as never;
@@ -85,7 +86,7 @@ describe("PostgresCommerceRepository fulfillment facts", () => {
           fulfillmentProgramRevision: claim.snapshot.fulfillmentProgramRevision,
           fulfillmentProgramDigest: claim.snapshot.fulfillmentProgramDigest,
           pricingSnapshotRef: claim.snapshot.pricingSnapshotRef, outputSetDigest: fact.outputSetDigest,
-          transactionVersion: 1n, transactionDigest: fact.transactionDigest, committedAt: fact.committedAt,
+          transactionVersion: 1n, transactionDigest: storedTransactionDigest, committedAt: fact.committedAt,
         }] as never;
         if (statement.includes("FROM platform.commerce_fulfillment_actual_output")) return [{
           kind: output.kind, outputLineId: output.outputLineId, outputOrdinal: output.outputOrdinal,
@@ -99,7 +100,8 @@ describe("PostgresCommerceRepository fulfillment facts", () => {
     };
     const lease = issuePlatformTransaction(sql);
     try {
-      await expect(new PostgresCommerceRepository().claimFulfillment(lease.transaction, claim)).resolves.toEqual({
+      const repository = new PostgresCommerceRepository();
+      await expect(repository.claimFulfillment(lease.transaction, claim)).resolves.toEqual({
         disposition: "replay",
         receipt: { fulfillmentId: claim.fulfillmentId, transactionVersion: 1,
           transactionDigest: fact.transactionDigest, outputSetDigest: fact.outputSetDigest,
@@ -108,6 +110,9 @@ describe("PostgresCommerceRepository fulfillment facts", () => {
             templateRevisionRef: output.templateRevisionRef, outputVersion: output.outputVersion,
             outputDigest: output.outputDigest }] },
       });
+      storedTransactionDigest = "f".repeat(64);
+      await expect(repository.claimFulfillment(lease.transaction, claim))
+        .rejects.toThrow("FULFILLMENT_TRANSACTION_DIGEST_MISMATCH");
     } finally { revokePlatformTransaction(lease); }
   });
 });

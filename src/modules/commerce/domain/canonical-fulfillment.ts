@@ -1,7 +1,14 @@
 import { createHash } from "node:crypto";
+import { create, toBinary } from "@bufbuild/protobuf";
+import { timestampFromDate } from "@bufbuild/protobuf/wkt";
+import {
+  CanonicalFulfillmentTransactionV1Schema,
+  CommittedFulfillmentOutputKind,
+  FulfillmentAcquisitionSourceKind,
+  FulfillmentTransactionState,
+} from "../../../generated/proto/kokoro/platform/commerce/v1/fulfillment_pb.js";
 import { commerceCanonicalJson } from "./canonical-json.js";
 
-const TYPE_NAME = "kokoro.platform.commerce.v1.CanonicalFulfillmentTransactionV1";
 const SHA256 = /^[a-f0-9]{64}$/u;
 
 export type CommittedOutputKind = "subscription_term" | "entitlement_grant" | "credit_grant" |
@@ -56,40 +63,40 @@ export function canonicalFulfillmentTransaction(input: CanonicalFulfillmentInput
   const committedAt = instant(input.committedAt, "FULFILLMENT_COMMITTED_AT_INVALID");
   if (Date.parse(committedAt) < Date.parse(acquiredAt)) throw new Error("FULFILLMENT_COMMIT_BEFORE_ACQUISITION");
   const outputs = canonicalOutputs(input.outputs);
-  const transaction = {
-    version: 1,
+  const transaction = create(CanonicalFulfillmentTransactionV1Schema, {
     platformTransactionRef: input.platformTransactionRef,
     siteRef: input.siteRef,
     acquisition: {
-      sourceKind: input.acquisition.sourceKind,
+      sourceKind: sourceKind(input.acquisition.sourceKind),
       sourceRef: input.acquisition.sourceRef,
-      sourceVersion: input.acquisition.sourceVersion.toString(),
+      sourceVersion: input.acquisition.sourceVersion,
       sourceDigest: input.acquisition.sourceDigest,
-      acquiredAt,
+      acquiredAt: timestampFromDate(new Date(acquiredAt)),
     },
     program: {
       fulfillmentProgramRevisionRef: input.program.fulfillmentProgramRevisionRef,
-      fulfillmentProgramRevision: input.program.fulfillmentProgramRevision.toString(),
+      fulfillmentProgramRevision: input.program.fulfillmentProgramRevision,
       fulfillmentProgramDigest: input.program.fulfillmentProgramDigest,
     },
     outputs: outputs.map((output) => ({
-      kind: output.kind,
+      kind: outputKind(output.kind),
       outputLineId: output.outputLineId,
       outputOrdinal: output.outputOrdinal,
       occurrence: output.occurrence,
       outputRef: output.outputRef,
-      templateRevisionRef: output.templateRevisionRef,
-      outputVersion: output.outputVersion,
+      outputVersion: BigInt(output.outputVersion),
       outputDigest: output.outputDigest,
     })),
-    state: "committed",
-    transactionVersion: 1,
-    committedAt,
-  };
+    state: FulfillmentTransactionState.COMMITTED,
+    transactionVersion: 1n,
+    committedAt: timestampFromDate(new Date(committedAt)),
+  });
   const hash = createHash("sha256");
-  hash.update(TYPE_NAME, "utf8");
+  hash.update(CanonicalFulfillmentTransactionV1Schema.typeName, "utf8");
   hash.update(Buffer.from([0]));
-  hash.update(commerceCanonicalJson(transaction), "utf8");
+  hash.update(toBinary(CanonicalFulfillmentTransactionV1Schema, transaction, {
+    writeUnknownFields: false,
+  }));
   return Object.freeze({
     platformTransactionRef: input.platformTransactionRef,
     siteRef: input.siteRef,
@@ -173,6 +180,24 @@ function canonicalOutputs(input: readonly FulfillmentOutputCommitment[]): readon
     outputVersion: output.outputVersion,
     outputDigest: output.outputDigest,
   })));
+}
+
+function sourceKind(
+  kind: CanonicalFulfillmentInput["acquisition"]["sourceKind"],
+): FulfillmentAcquisitionSourceKind {
+  if (kind === "redemption") return FulfillmentAcquisitionSourceKind.REDEMPTION;
+  if (kind === "payment") return FulfillmentAcquisitionSourceKind.FUTURE_PAYMENT_RESERVED;
+  if (kind === "admin_grant") return FulfillmentAcquisitionSourceKind.ADMIN_GRANT;
+  return FulfillmentAcquisitionSourceKind.PROGRAM_WINDOW;
+}
+
+function outputKind(kind: CommittedOutputKind): CommittedFulfillmentOutputKind {
+  if (kind === "subscription_term") return CommittedFulfillmentOutputKind.SUBSCRIPTION_TERM;
+  if (kind === "entitlement_grant") return CommittedFulfillmentOutputKind.ENTITLEMENT_GRANT;
+  if (kind === "credit_program_enrollment") {
+    return CommittedFulfillmentOutputKind.CREDIT_PROGRAM_ENROLLMENT;
+  }
+  return CommittedFulfillmentOutputKind.CREDIT_GRANT;
 }
 
 function reference(value: string, maximum: number, code: string): void {
