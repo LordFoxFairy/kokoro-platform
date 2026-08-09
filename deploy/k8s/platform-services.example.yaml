@@ -627,7 +627,7 @@ items:
         spec:
           serviceAccountName: platform-hub-connect
           automountServiceAccountToken: false
-          terminationGracePeriodSeconds: 30
+          terminationGracePeriodSeconds: 70
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000

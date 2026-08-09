@@ -36,8 +36,9 @@ the HTTP server. Exact Platform and Agent SPIFFE identities are pinned independe
 invoke only the existing `HubRuntimeService`. Connect traffic uses 4252; a separate dependency-aware
 probe listener uses 4253 and is not service-discovered. A single skill artifact is capped at 32 MiB;
 one assembly is capped at 64 MiB compressed and 128 MiB unpacked. The Agent/Hub Connect contract has
-a fixed 30-second maximum request deadline that is not runtime-configurable; larger advertised
-timeouts fail before service dispatch.
+a fixed 30-second maximum request deadline that is not runtime-configurable; missing, zero, or larger
+advertised timeouts fail before service dispatch. The listener has fixed global and per-peer request
+caps, and cancellation reaches package reads and artifact chunking rather than leaving detached I/O.
 
 All official Hub Admin namespace resources (skill catalog, skill revision uploads, skill curation, and MCP servers) are explicitly platform-global (`siteScopeField: null`). The Platform Admin control plane therefore exposes them only to operators with wildcard Site scope; no finite Site scope is treated as an implicit namespace filter.
 

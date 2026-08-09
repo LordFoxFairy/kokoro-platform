@@ -34,6 +34,18 @@ describe("LocalPackageStore (semantics aligned with agent hub.py LocalPackageSto
     await expect(store.put("../escape.zip", Buffer.from("x"))).rejects.toThrowError(/unsafe/);
     await expect(store.get("/abs.zip")).rejects.toThrowError(/unsafe/);
   });
+
+  it("does not read an artifact after its request is canceled", async () => {
+    const store = makeStore();
+    const ref = "skills/ns/writer/abc.zip";
+    await store.put(ref, Buffer.from("payload"));
+    const controller = new AbortController();
+    controller.abort(new DOMException("request canceled", "AbortError"));
+
+    await expect(store.get(ref, controller.signal)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+  });
 });
 
 describe("makePackageStore", () => {

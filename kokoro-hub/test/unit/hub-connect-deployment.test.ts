@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -40,6 +40,31 @@ const productionEnvironment = Object.freeze({
 });
 
 describe("Hub Connect deployment preflight", () => {
+  it("leaves bounded cleanup time outside the 30-second request deadline", async () => {
+    const [composition, compose, kubernetes] = await Promise.all([
+      readFile(new URL("../../../src/process/hub-connect.ts", import.meta.url), "utf8"),
+      readFile(new URL("../../../deploy/docker-compose.services.yml", import.meta.url), "utf8"),
+      readFile(new URL("../../../deploy/k8s/platform-services.example.yaml", import.meta.url), "utf8"),
+    ]);
+    const composeService = compose.slice(
+      compose.indexOf("  platform-hub-connect:"),
+    );
+    const kubernetesDeployment = kubernetes.slice(
+      kubernetes.indexOf("metadata: { name: platform-hub-connect }", 1),
+      kubernetes.indexOf("kind: Service", kubernetes.indexOf(
+        "metadata: { name: platform-hub-connect }",
+        1,
+      )),
+    );
+
+    expect(composition).toContain("HUB_CONNECT_SHUTDOWN_DEADLINE_MS = 55_000");
+    expect(composition).toContain("shutdownDeadlineMs: HUB_CONNECT_SHUTDOWN_DEADLINE_MS");
+    expect(composition).toContain("shutdownSignal: shutdownController.signal");
+    expect(composition).toContain("shutdownController,");
+    expect(composeService).toContain("stop_grace_period: 70s");
+    expect(kubernetesDeployment).toContain("terminationGracePeriodSeconds: 70");
+  });
+
   it.each(HUB_CONNECT_PRODUCTION_REQUIRED_ENVIRONMENT)(
     "fails before I/O when production is missing %s",
     (name) => {

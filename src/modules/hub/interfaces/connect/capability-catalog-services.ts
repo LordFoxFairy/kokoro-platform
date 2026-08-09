@@ -100,7 +100,7 @@ export function createHubRuntimeConnectService(input: Readonly<{
   return {
     resolveExecutionAssembly: (request, context) => safeAssembly(async () => {
       authorize(context, input.caller, input.agentCallerIdentity);
-      const result = await input.assembly.resolve({
+      const result = await cancellationBound(context.signal, input.assembly.resolve({
         namespace: request.namespace,
         agentCatalogRef: request.agentCatalogRef,
         skills: request.skillGrants.map((grant) => ({
@@ -123,7 +123,7 @@ export function createHubRuntimeConnectService(input: Readonly<{
             configHash: grant.configHash,
           };
         }),
-      });
+      }, context.signal));
       return create(ResolveExecutionAssemblyResponseSchema, {
         agentCatalogRef: result.agentCatalogRef,
         assemblyDigest: result.assemblyDigest,
@@ -154,6 +154,7 @@ export function createHubRuntimeConnectService(input: Readonly<{
     fetchSkillArtifact: async function* (request, context) {
       authorize(context, input.caller, input.agentCallerIdentity);
       try {
+        throwIfCanceled(context.signal);
         if (request.grant === undefined) {
           throw new ExecutionAssemblyError("HUB_SKILL_ARTIFACT_REQUEST_INVALID");
         }
@@ -161,7 +162,7 @@ export function createHubRuntimeConnectService(input: Readonly<{
         if (!Number.isSafeInteger(expectedSize)) {
           throw new ExecutionAssemblyError("HUB_SKILL_ARTIFACT_REQUEST_INVALID");
         }
-        const data = await input.assembly.fetchArtifact({
+        const data = await cancellationBound(context.signal, input.assembly.fetchArtifact({
           namespace: request.namespace,
           agentCatalogRef: request.agentCatalogRef,
           grant: {
@@ -174,8 +175,9 @@ export function createHubRuntimeConnectService(input: Readonly<{
           artifactRef: request.artifactRef,
           expectedSize,
           expectedSha256: request.expectedSha256,
-        });
+        }, context.signal));
         for (let offset = 0; offset < data.byteLength; offset += 64 * 1024) {
+          throwIfCanceled(context.signal);
           yield create(FetchSkillArtifactResponseSchema, {
             artifactRef: request.artifactRef,
             offset: BigInt(offset),
@@ -187,6 +189,23 @@ export function createHubRuntimeConnectService(input: Readonly<{
       }
     },
   };
+}
+
+async function cancellationBound<Value>(signal: AbortSignal, work: Promise<Value>): Promise<Value> {
+  try {
+    const value = await work;
+    throwIfCanceled(signal);
+    return value;
+  } catch (error) {
+    throwIfCanceled(signal);
+    throw error;
+  }
+}
+
+function throwIfCanceled(signal: AbortSignal): void {
+  if (!signal.aborted) return;
+  if (signal.reason instanceof ConnectError) throw signal.reason;
+  throw new ConnectError("request canceled", Code.Canceled);
 }
 
 function mapSnapshot(snapshot: CapabilityCatalogSnapshot): object {

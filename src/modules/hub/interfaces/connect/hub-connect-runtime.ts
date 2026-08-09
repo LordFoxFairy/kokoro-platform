@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createSecureServer, type Http2SecureServer, type SecureServerOptions } from "node:http2";
 import type { Http2ServerRequest, Http2ServerResponse } from "node:http2";
 import { TLSSocket } from "node:tls";
+import { Code, ConnectError, type Interceptor } from "@connectrpc/connect";
 import { connectNodeAdapter } from "@connectrpc/connect-node";
 import { HubCatalogService, HubRuntimeService } from
   "../../../../generated/proto/kokoro/platform/capability/v1/capability_catalog_pb.js";
@@ -11,6 +12,8 @@ import type { HubCatalogConnectService, HubRuntimeConnectService } from
 export interface HubConnectCaller { readonly identity: string }
 
 const HUB_CONNECT_MAX_TIMEOUT_MS = 30_000;
+const HUB_CONNECT_MAX_IN_FLIGHT = 12;
+const HUB_CONNECT_MAX_IN_FLIGHT_PER_PEER = 8;
 
 export interface HubConnectRuntime {
   readonly handler: (request: Http2ServerRequest, response: Http2ServerResponse) => void;
@@ -25,8 +28,10 @@ export function createHubConnectRuntime(input: Readonly<{
   runtime: HubRuntimeConnectService;
   ready?: () => Promise<boolean>;
   isDraining?: () => boolean;
+  shutdownSignal: AbortSignal;
 }>): HubConnectRuntime {
   if (input.peers.length < 2 || input.peers.length > 16) throw new Error("HUB_CONNECT_PEERS_INVALID");
+  const capacity = requestCapacity();
   const connect = connectNodeAdapter({
     routes: (router) => {
       router.service(HubCatalogService, input.catalog);
@@ -39,6 +44,8 @@ export function createHubConnectRuntime(input: Readonly<{
     readMaxBytes: 2 * 1024 * 1024,
     writeMaxBytes: 2 * 1024 * 1024,
     maxTimeoutMs: HUB_CONNECT_MAX_TIMEOUT_MS,
+    shutdownSignal: input.shutdownSignal,
+    interceptors: [deadlineAndCapacityInterceptor(input.callers, capacity)],
   });
   const handler = (request: Http2ServerRequest, response: Http2ServerResponse): void => {
     response.setHeader("cache-control", "no-store");
@@ -94,6 +101,70 @@ export function createHubConnectRuntime(input: Readonly<{
     handler,
     createServer: () => createSecureServer(input.tls, handler),
   });
+}
+
+function deadlineAndCapacityInterceptor(
+  callers: AsyncLocalStorage<HubConnectCaller>,
+  capacity: ReturnType<typeof requestCapacity>,
+): Interceptor {
+  return (next) => async (request) => {
+    const deadline = request.header.get("connect-timeout-ms");
+    if (deadline === null || !/^[1-9][0-9]{0,4}$/u.test(deadline)) {
+      throw new ConnectError("request deadline required", Code.InvalidArgument);
+    }
+    const caller = callers.getStore();
+    if (caller === undefined) throw new ConnectError("caller unavailable", Code.Unauthenticated);
+    const release = capacity.acquire(caller.identity);
+    if (release === null) {
+      throw new ConnectError("hub runtime at capacity", Code.ResourceExhausted);
+    }
+    try {
+      const response = await next(request);
+      if (!response.stream) {
+        release();
+        return response;
+      }
+      return { ...response, message: releaseAfter(response.message, release) };
+    } catch (error) {
+      release();
+      throw error;
+    }
+  };
+}
+
+function requestCapacity(): Readonly<{ acquire(identity: string): (() => void) | null }> {
+  let total = 0;
+  const byPeer = new Map<string, number>();
+  return Object.freeze({
+    acquire(identity: string): (() => void) | null {
+      const peer = byPeer.get(identity) ?? 0;
+      if (total >= HUB_CONNECT_MAX_IN_FLIGHT || peer >= HUB_CONNECT_MAX_IN_FLIGHT_PER_PEER) {
+        return null;
+      }
+      total += 1;
+      byPeer.set(identity, peer + 1);
+      let active = true;
+      return () => {
+        if (!active) return;
+        active = false;
+        total -= 1;
+        const remaining = (byPeer.get(identity) ?? 1) - 1;
+        if (remaining === 0) byPeer.delete(identity);
+        else byPeer.set(identity, remaining);
+      };
+    },
+  });
+}
+
+async function* releaseAfter<Value>(
+  values: AsyncIterable<Value>,
+  release: () => void,
+): AsyncIterable<Value> {
+  try {
+    yield* values;
+  } finally {
+    release();
+  }
 }
 
 function authenticate(

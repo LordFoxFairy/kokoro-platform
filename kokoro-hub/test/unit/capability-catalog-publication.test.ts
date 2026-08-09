@@ -1,6 +1,6 @@
 import { generateKeyPairSync, verify } from "node:crypto";
 import { create } from "@bufbuild/protobuf";
-import { createRouterTransport } from "@connectrpc/connect";
+import { Code, ConnectError, createHandlerContext, createRouterTransport } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import { CapabilityCatalogPublicationService } from
   "../../src/application/capability-catalog-publication-service.js";
@@ -16,9 +16,11 @@ import {
 import {
   CapabilityCatalogSnapshotSchema,
   CatalogProjectionState,
+  FetchSkillArtifactRequestSchema,
   FreezeCatalogEffectSchema,
   HubCatalogService,
   HubRuntimeService,
+  SkillGrantSelectionSchema,
 } from "../../../src/generated/proto/kokoro/platform/capability/v1/capability_catalog_pb.js";
 import { CommandDigestAlgorithm } from
   "../../../src/generated/proto/kokoro/common/v1/receipt_pb.js";
@@ -178,7 +180,45 @@ describe("signed capability catalog publication", () => {
       agentCatalogRef: record.publication.agentCatalogRef,
       skills: [],
       mcpServers: [],
+    }, expect.any(AbortSignal));
+  });
+
+  it("passes request cancellation through artifact fetch and stops chunking", async () => {
+    const controller = new AbortController();
+    const fetchArtifact = vi.fn().mockResolvedValue(Buffer.alloc(128 * 1024, 1));
+    const runtime = createHubRuntimeConnectService({
+      assembly: { resolve: vi.fn(), fetchArtifact },
+      caller: { resolve: () => ({ identity: "spiffe://kokoro/agent" }) },
+      agentCallerIdentity: "spiffe://kokoro/agent",
     });
+    const context = createHandlerContext({
+      service: HubRuntimeService,
+      method: HubRuntimeService.method.fetchSkillArtifact,
+      protocolName: "connect",
+      requestMethod: "POST",
+      url: "/kokoro.platform.capability.v1.HubRuntimeService/FetchSkillArtifact",
+      requestSignal: controller.signal,
+    });
+    const stream = runtime.fetchSkillArtifact(create(FetchSkillArtifactRequestSchema, {
+      namespace: "opaque-ns",
+      agentCatalogRef: `agent-catalog:sha256:${"a".repeat(64)}`,
+      grant: create(SkillGrantSelectionSchema, {
+        optionRef: "skill:research",
+        scope: "opaque-ns",
+        name: "research",
+        contentHash: "b".repeat(64),
+        description: "Research",
+      }),
+      artifactRef: "skills/opaque-ns/research/package.zip",
+      expectedSize: 128n * 1024n,
+      expectedSha256: "c".repeat(64),
+    }), context)[Symbol.asyncIterator]();
+
+    await expect(stream.next()).resolves.toMatchObject({ done: false });
+    controller.abort(new ConnectError("request canceled", Code.Canceled));
+    await expect(stream.next()).rejects.toSatisfy((error: unknown) =>
+      ConnectError.from(error).code === Code.Canceled);
+    expect(fetchArtifact).toHaveBeenCalledWith(expect.any(Object), context.signal);
   });
 });
 

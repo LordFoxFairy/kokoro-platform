@@ -45,10 +45,11 @@ export class S3PackageStore implements PackageStore {
     await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: ref, Body: data }));
   }
 
-  async get(ref: string): Promise<Buffer> {
+  async get(ref: string, signal?: AbortSignal): Promise<Buffer> {
     try {
       const response = await this.client.send(
         new GetObjectCommand({ Bucket: this.bucket, Key: ref }),
+        signal === undefined ? {} : { abortSignal: signal },
       );
       if (response.Body === undefined) {
         throw new PackageStoreError(`package '${ref}' has empty body in s3 store`);

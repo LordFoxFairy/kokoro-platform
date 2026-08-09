@@ -75,11 +75,13 @@ export class ExecutionAssemblyService {
     agentCatalogRef: string;
     skills: readonly SkillGrantSelection[];
     mcpServers: readonly McpGrantSelection[];
-  }>): Promise<ExecutionAssembly> {
+  }>, signal?: AbortSignal): Promise<ExecutionAssembly> {
+    throwIfAborted(signal);
     this.#assertRequest(input);
     const publication = await this.dependencies.publications.findByAgentCatalogRef(
       input.agentCatalogRef,
     );
+    throwIfAborted(signal);
     if (publication === null || publication.publication.agentCatalogRef !== input.agentCatalogRef ||
         publication.projectionState !== "committed") {
       throw new ExecutionAssemblyError("HUB_EXECUTION_ASSEMBLY_CATALOG_NOT_FOUND");
@@ -92,6 +94,7 @@ export class ExecutionAssemblyService {
     let unpackedBytes = 0;
     const skills: SkillArtifactManifest[] = [];
     for (const grant of input.skills) {
+      throwIfAborted(signal);
       const option = skillOptions.get(grant.optionRef);
       if (option === undefined || option.scope !== grant.scope || option.name !== grant.name ||
           option.contentHash !== grant.contentHash || option.description !== grant.description ||
@@ -101,8 +104,9 @@ export class ExecutionAssemblyService {
       if (await this.dependencies.skills.findActive(grant.scope, grant.name) === null) {
         throw new ExecutionAssemblyError("HUB_EXECUTION_ASSEMBLY_CAPABILITY_REVOKED");
       }
+      throwIfAborted(signal);
       const artifactRef = packageRef(grant.scope, grant.name, grant.contentHash);
-      const artifact = await this.#artifact(artifactRef, grant);
+      const artifact = await this.#artifact(artifactRef, grant, signal);
       artifactBytes += artifact.data.byteLength;
       unpackedBytes += artifact.unpackedBytes;
       if (artifactBytes > MAX_ASSEMBLY_ARTIFACT_BYTES ||
@@ -126,6 +130,7 @@ export class ExecutionAssemblyService {
     }>> = [];
     const handles: string[] = [];
     for (const grant of input.mcpServers) {
+      throwIfAborted(signal);
       const option = mcpOptions.get(grant.optionRef);
       if (option === undefined || option.scope !== grant.scope || option.name !== grant.name ||
           option.revision !== grant.revision || option.configHash !== grant.configHash ||
@@ -137,6 +142,7 @@ export class ExecutionAssemblyService {
         grant.name,
         grant.revision,
       );
+      throwIfAborted(signal);
       const snapshotConfig = resolution?.snapshot;
       if (resolution === null || snapshotConfig === undefined || !resolution.live.enabled ||
           resolution.live.deleted || snapshotConfig.config_hash !== grant.configHash ||
@@ -172,6 +178,7 @@ export class ExecutionAssemblyService {
     const resolvedSecrets = uniqueHandles.length === 0
       ? {}
       : await this.dependencies.secrets.resolve(input.namespace, uniqueHandles);
+    throwIfAborted(signal);
     const mcpServers = pendingMcp.map((entry): McpAssemblyConfig => {
       const authorizationValue = entry.handle === undefined
         ? undefined
@@ -211,7 +218,8 @@ export class ExecutionAssemblyService {
     artifactRef: string;
     expectedSize: number;
     expectedSha256: string;
-  }>): Promise<Buffer> {
+  }>, signal?: AbortSignal): Promise<Buffer> {
+    throwIfAborted(signal);
     this.#assertRequest({
       namespace: input.namespace,
       agentCatalogRef: input.agentCatalogRef,
@@ -225,6 +233,7 @@ export class ExecutionAssemblyService {
     const publication = await this.dependencies.publications.findByAgentCatalogRef(
       input.agentCatalogRef,
     );
+    throwIfAborted(signal);
     const option = publication?.publication.snapshot.skillOptions.find(
       (candidate) => candidate.optionRef === input.grant.optionRef,
     );
@@ -235,11 +244,12 @@ export class ExecutionAssemblyService {
         await this.dependencies.skills.findActive(input.grant.scope, input.grant.name) === null) {
       throw new ExecutionAssemblyError("HUB_SKILL_ARTIFACT_NOT_AUTHORIZED");
     }
+    throwIfAborted(signal);
     const expectedRef = packageRef(input.grant.scope, input.grant.name, input.grant.contentHash);
     if (input.artifactRef !== expectedRef) {
       throw new ExecutionAssemblyError("HUB_SKILL_ARTIFACT_REQUEST_INVALID");
     }
-    const artifact = await this.#artifact(expectedRef, input.grant);
+    const artifact = await this.#artifact(expectedRef, input.grant, signal);
     if (artifact.data.byteLength !== input.expectedSize || artifact.sha256 !== input.expectedSha256) {
       throw new ExecutionAssemblyError("HUB_SKILL_ARTIFACT_CHANGED");
     }
@@ -249,8 +259,11 @@ export class ExecutionAssemblyService {
   async #artifact(
     artifactRef: string,
     grant: SkillGrantSelection,
+    signal?: AbortSignal,
   ): Promise<Readonly<{ data: Buffer; sha256: string; unpackedBytes: number }>> {
-    const data = await this.dependencies.packages.get(artifactRef);
+    throwIfAborted(signal);
+    const data = await this.dependencies.packages.get(artifactRef, signal);
+    throwIfAborted(signal);
     if (data.byteLength < 1 || data.byteLength > MAX_ARTIFACT_BYTES) {
       throw new ExecutionAssemblyError("HUB_SKILL_ARTIFACT_INVALID");
     }
@@ -258,6 +271,7 @@ export class ExecutionAssemblyService {
     try {
       files = unzipTextFiles(data);
       const validated = validatePackage(grant.name, files);
+      throwIfAborted(signal);
       if (validated.description !== grant.description || contentHashOf(files) !== grant.contentHash) {
         throw new Error("mismatch");
       }
@@ -267,6 +281,7 @@ export class ExecutionAssemblyService {
         unpackedBytes: validated.packageSize,
       });
     } catch {
+      throwIfAborted(signal);
       throw new ExecutionAssemblyError("HUB_SKILL_ARTIFACT_INVALID");
     }
   }
@@ -286,6 +301,10 @@ export class ExecutionAssemblyService {
       throw new ExecutionAssemblyError("HUB_EXECUTION_ASSEMBLY_REQUEST_INVALID");
     }
   }
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted === true) throw signal.reason;
 }
 
 export function executionAssemblyDigest(input: Readonly<{

@@ -1,4 +1,5 @@
 import type { ServerHttp2Session } from "node:http2";
+import { Code, ConnectError } from "@connectrpc/connect";
 
 interface EventServer {
   once(event: "error", listener: (error: Error) => void): unknown;
@@ -31,11 +32,12 @@ export function createHubConnectProcess(input: Readonly<{
   host?: string;
   pollIntervalMs?: number;
   shutdownDeadlineMs?: number;
+  shutdownController?: AbortController;
   onFatal?: (error: unknown) => void;
 }>): HubConnectProcess {
   const pollIntervalMs = boundedMilliseconds(input.pollIntervalMs ?? 250, 1, 60_000);
   const shutdownDeadlineMs = boundedMilliseconds(input.shutdownDeadlineMs ?? 10_000, 10, 60_000);
-  const controller = new AbortController();
+  const controller = input.shutdownController ?? new AbortController();
   const sessions = new Set<ConnectSession>();
   const sessionDrainWaiters = new Set<() => void>();
   const sessionCloseListeners = new Map<ConnectSession, () => void>();
@@ -123,7 +125,7 @@ export function createHubConnectProcess(input: Readonly<{
     let shutdownUnconfirmed = true;
     try {
       draining = true;
-      controller.abort(new Error("HUB_SHUTDOWN"));
+      controller.abort(new ConnectError("hub runtime draining", Code.Unavailable));
       if (timer !== undefined) clearTimeout(timer);
       for (const session of sessions) {
         closeSession(session);

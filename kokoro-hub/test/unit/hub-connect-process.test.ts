@@ -1,8 +1,40 @@
 import { EventEmitter } from "node:events";
+import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import { createHubConnectProcess } from "../../src/interfaces/connect/hub-connect-process.js";
 
 describe("Hub Connect process lifecycle", () => {
+  it("aborts the supplied shared signal before waiting for in-flight work", async () => {
+    const server = new FakeServer();
+    const healthServer = new FakeServer();
+    const shutdownController = new AbortController();
+    const tick = vi.fn(async () => {
+      if (shutdownController.signal.aborted) return;
+      await new Promise<void>((resolveWait) => {
+        shutdownController.signal.addEventListener("abort", () => resolveWait(), { once: true });
+      });
+    });
+    const input = {
+      server,
+      healthServer,
+      worker: { tick },
+      closeMongo: vi.fn().mockResolvedValue(undefined),
+      port: 4252,
+      healthPort: 4253,
+      pollIntervalMs: 1,
+      shutdownDeadlineMs: 100,
+      shutdownController,
+    };
+    const process = createHubConnectProcess(input);
+    await process.start();
+    await vi.waitFor(() => expect(tick).toHaveBeenCalledOnce());
+
+    await expect(process.shutdown()).resolves.toBeUndefined();
+
+    expect(shutdownController.signal.aborted).toBe(true);
+    expect(ConnectError.from(shutdownController.signal.reason).code).toBe(Code.Unavailable);
+  });
+
   it("force destroys a tracked session even when the server close callback returns early", async () => {
     const server = new FakeServer();
     const healthServer = new FakeServer();

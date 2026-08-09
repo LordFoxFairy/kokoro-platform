@@ -26,11 +26,11 @@ export class LocalPackageStore implements PackageStore {
     await writeFile(target, data);
   }
 
-  async get(ref: string): Promise<Buffer> {
+  async get(ref: string, signal?: AbortSignal): Promise<Buffer> {
     const target = this.resolve(ref);
     if (!existsSync(target)) {
       throw new PackageStoreError(`package '${ref}' not found in local store`);
     }
-    return readFile(target);
+    return readFile(target, { signal });
   }
 }

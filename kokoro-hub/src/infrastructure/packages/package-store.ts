@@ -8,7 +8,7 @@ import { S3PackageStore, type S3StoreCredentials } from "./s3-package-store.js";
 
 export interface PackageStore {
   put(ref: string, data: Buffer): Promise<void>;
-  get(ref: string): Promise<Buffer>;
+  get(ref: string, signal?: AbortSignal): Promise<Buffer>;
 }
 
 export function makePackageStore(

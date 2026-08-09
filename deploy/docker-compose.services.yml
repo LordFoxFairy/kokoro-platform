@@ -425,4 +425,4 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    stop_grace_period: 30s
+    stop_grace_period: 70s

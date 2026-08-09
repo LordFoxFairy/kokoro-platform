@@ -15,7 +15,10 @@ Adapt the repository's single Root-generated Hub protobuf tree to Hub-owned cata
 
 `interfaces/connect` contains the generated-service providers and runtime registration. Its inbound
 Agent/Hub deadline is a fixed 30-second maximum and is not runtime-configurable; an advertised
-30,001 ms deadline is rejected before dispatch. `infrastructure/connect` contains the outbound
+30,001 ms deadline or a request without an explicit positive deadline is rejected before dispatch.
+The listener admits at most twelve concurrent RPCs and eight per pinned peer. Handler cancellation
+is passed through assembly resolution, package-store reads and every artifact chunk.
+`infrastructure/connect` contains the outbound
 Platform projection client. `src/process/hub-connect.ts` is the only production composition and
 process entrypoint.
 

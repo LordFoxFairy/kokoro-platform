@@ -89,8 +89,10 @@ must be mode 0400/0600 or mode 0440 for a dedicated workload group. Startup perm
 Kubernetes AtomicWriter symlink chain whose final regular file remains inside its resolved trust
 root, and opens the target with `O_NOFOLLOW` plus inode and post-read snapshot checks. The storage
 YAML named by `KOKORO_WORKSPACE_CONFIG_FILE` must have a production `hub` object-store entry. The
-private Agent/Hub RPC deadline is a fixed 30-second maximum aligned with the Agent client contract;
-it is not runtime-configurable, and the deployable inventory records the same 30,000 ms boundary.
+private Agent/Hub RPC deadline is required and has a fixed 30-second maximum aligned with the Agent
+client contract; it is not runtime-configurable, and the deployable inventory records the same
+30,000 ms boundary. The listener rejects missing deadlines and caps admission at twelve requests
+globally and eight for either pinned peer. Cancellation reaches assembly package reads and chunks.
 
 ```bash
 docker compose -f deploy/docker-compose.services.yml config
@@ -143,6 +145,10 @@ readiness reads `/health/ready`, which turns unavailable before claims are drain
 Pod grace period exceeds the bounded 10-second worker shutdown budget.
 Authorization maintenance is a run-to-completion CronJob with `concurrencyPolicy: Forbid`, a bounded
 active deadline and a PostgreSQL advisory lock; it never runs inside a polling worker.
+
+Hub Connect is not a polling worker: its 70-second Pod/Compose grace encloses a fixed 55-second
+internal shutdown budget. The first 33 seconds cover the maximum 30-second RPC plus margin; the
+remaining 22 seconds close sessions and Mongo, leaving 15 seconds before the orchestrator kill.
 
 ## Multi-Pod rules
 

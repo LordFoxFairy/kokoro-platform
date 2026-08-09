@@ -30,7 +30,8 @@ const AUTHORIZATION = "Bearer secret-marker-not-real";
 describe("execution assembly service", () => {
   it("binds exact frozen selections, live revisions, artifacts and secret material", async () => {
     const fixture = build();
-    const result = await fixture.service.resolve(request());
+    const signal = new AbortController().signal;
+    const result = await fixture.service.resolve(request(), signal);
 
     expect(result.agentCatalogRef).toBe(fixture.publication.publication.agentCatalogRef);
     expect(result.skills).toEqual([expect.objectContaining({
@@ -56,6 +57,10 @@ describe("execution assembly service", () => {
       mcpServers: result.mcpServers,
     }));
     expect(fixture.resolveSecrets).toHaveBeenCalledWith(NAMESPACE, [SECRET_HANDLE]);
+    expect(fixture.getArtifact).toHaveBeenCalledWith(
+      packageRef(NAMESPACE, SKILL_NAME, SKILL_HASH),
+      signal,
+    );
     expect(result.assemblyDigest).not.toContain(AUTHORIZATION);
   });
 
@@ -176,10 +181,12 @@ function build(options: Readonly<{ mcpEnabled?: boolean }> = {}) {
   const findPublication = vi.fn().mockResolvedValue(publication);
   const resolveSecrets = vi.fn().mockResolvedValue({ [SECRET_HANDLE]: AUTHORIZATION });
   const artifact = zipTextFiles(SKILL_FILES);
+  const getArtifact = vi.fn().mockResolvedValue(artifact);
   return {
     publication,
     findPublication,
     resolveSecrets,
+    getArtifact,
     service: new ExecutionAssemblyService({
       publications: { findByAgentCatalogRef: findPublication },
       skills: { findActive: vi.fn().mockResolvedValue({
@@ -201,7 +208,7 @@ function build(options: Readonly<{ mcpEnabled?: boolean }> = {}) {
         live: { enabled: options.mcpEnabled ?? true, deleted: false },
       }) },
       secrets: { resolve: resolveSecrets },
-      packages: { get: vi.fn().mockResolvedValue(artifact) },
+      packages: { get: getArtifact },
     }),
   };
 }

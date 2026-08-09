@@ -37,6 +37,8 @@ import { createHubConnectRuntime, type HubConnectCaller } from
 
 export { readBoundedHubConnectFile } from "@kokoro/hub";
 
+export const HUB_CONNECT_SHUTDOWN_DEADLINE_MS = 55_000;
+
 export const HUB_CONNECT_PRODUCTION_REQUIRED_ENVIRONMENT = Object.freeze([
   "KOKORO_HUB_CONNECT_PORT",
   "KOKORO_HUB_CONNECT_HEALTH_PORT",
@@ -187,6 +189,7 @@ export async function runHubConnectMain(
       packages,
     });
     const callers = new AsyncLocalStorage<HubConnectCaller>();
+    const shutdownController = new AbortController();
     const caller = {
       resolve: () => {
         const current = callers.getStore();
@@ -210,6 +213,7 @@ export async function runHubConnectMain(
       }),
       ready,
       isDraining: () => lifecycle?.isDraining() ?? false,
+      shutdownSignal: shutdownController.signal,
     });
     const worker = new CapabilityProjectionWorker({
       repository,
@@ -231,6 +235,8 @@ export async function runHubConnectMain(
       closeMongo,
       port: config.port,
       healthPort: config.healthPort,
+      shutdownDeadlineMs: HUB_CONNECT_SHUTDOWN_DEADLINE_MS,
+      shutdownController,
       onFatal: (error) => {
         process.exitCode = 1;
         console.error("kokoro-hub Connect runtime failure", error);
