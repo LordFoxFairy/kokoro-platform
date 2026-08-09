@@ -4,9 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
-import type { HandlerContext } from "@connectrpc/connect";
+import { Code, ConnectError, type HandlerContext } from "@connectrpc/connect";
 import { Client } from "pg";
 import { describe, expect, it } from "vitest";
+import { KokoroErrorDetailSchema } from
+  "../../src/generated/proto/kokoro/common/v1/error_pb.js";
 import {
   CommandDigestAlgorithmV2,
   CommandIdentityV2Schema,
@@ -288,9 +290,10 @@ describe("AdminCommerce PostgreSQL authority", () => {
       setDigest(makerApproval.context, approveCodeBatchRequestDigest(
         makerApproval.context, makerApprovalEffect, makerApproval.axes,
       ));
-      await expect(provider.approveCodeBatch(create(ApproveCodeBatchRequestSchema, {
+      await expectStableFailure(provider.approveCodeBatch(create(ApproveCodeBatchRequestSchema, {
         context: makerApproval.context, effect: makerApprovalEffect,
-      }), transport)).rejects.toThrow("COMMERCE_BATCH_MAKER_CHECKER_REQUIRED");
+      }), transport), Code.FailedPrecondition, "commerce.admin.precondition_failed",
+      "Commerce admin precondition failed");
 
       const approval = signedCommand(siteId, checker, timing, commandIds);
       setDigest(approval.context, approveCodeBatchRequestDigest(
@@ -378,31 +381,36 @@ describe("AdminCommerce PostgreSQL authority", () => {
 
       const token = firstOfferPage.nextPageToken!;
       const tampered = `${token[0] === "A" ? "B" : "A"}${token.slice(1)}`;
-      await expect(provider.listOfferRevisions(create(ListOfferRevisionsRequestSchema, {
+      await expectStableFailure(provider.listOfferRevisions(create(ListOfferRevisionsRequestSchema, {
         context: query, page: create(CommercePageRequestSchema, { pageSize: 1, pageToken: tampered }),
-      }), transport)).rejects.toThrow("ADMIN_PAGE_TOKEN_INVALID");
-      await expect(provider.listRedemptionProgramRevisions(
+      }), transport), Code.InvalidArgument, "commerce.admin.invalid_request",
+      "Invalid Commerce admin request");
+      await expectStableFailure(provider.listRedemptionProgramRevisions(
         create(ListRedemptionProgramRevisionsRequestSchema, { context: query,
           page: create(CommercePageRequestSchema, { pageSize: 1, pageToken: token }) }), transport,
-      )).rejects.toThrow("COMMERCE_ADMIN_PAGE_TOKEN_INVALID");
-      await expect(provider.listOfferRevisions(create(ListOfferRevisionsRequestSchema, {
+      ), Code.InvalidArgument, "commerce.admin.invalid_request", "Invalid Commerce admin request");
+      await expectStableFailure(provider.listOfferRevisions(create(ListOfferRevisionsRequestSchema, {
         context: queryContext(foreignSiteId, maker, timing),
         page: create(CommercePageRequestSchema, { pageSize: 1, pageToken: token }),
-      }), transport)).rejects.toThrow("COMMERCE_ADMIN_PAGE_TOKEN_INVALID");
+      }), transport), Code.InvalidArgument, "commerce.admin.invalid_request",
+      "Invalid Commerce admin request");
       authority.setBinding("b");
-      await expect(provider.listOfferRevisions(create(ListOfferRevisionsRequestSchema, {
+      await expectStableFailure(provider.listOfferRevisions(create(ListOfferRevisionsRequestSchema, {
         context: query, page: create(CommercePageRequestSchema, { pageSize: 1, pageToken: token }),
-      }), transport)).rejects.toThrow("COMMERCE_ADMIN_PAGE_TOKEN_INVALID");
+      }), transport), Code.InvalidArgument, "commerce.admin.invalid_request",
+      "Invalid Commerce admin request");
       authority.setBinding("a");
       authority.setScopeSite(foreignSiteId);
-      await expect(provider.getCreditProgramRevision(create(GetCreditProgramRevisionRequestSchema, {
+      await expectStableFailure(provider.getCreditProgramRevision(create(GetCreditProgramRevisionRequestSchema, {
         context: query, creditProgramRevisionRef: references.creditProgramRevisionRef,
-      }), transport)).rejects.toThrow("ADMIN_SITE_SCOPE_DENIED");
+      }), transport), Code.PermissionDenied, "admin.permission_denied",
+      "Admin operation is not permitted");
       authority.setScopeSite(null);
-      await expect(provider.getCreditProgramRevision(create(GetCreditProgramRevisionRequestSchema, {
+      await expectStableFailure(provider.getCreditProgramRevision(create(GetCreditProgramRevisionRequestSchema, {
         context: queryContext(foreignSiteId, maker, timing),
         creditProgramRevisionRef: references.creditProgramRevisionRef,
-      }), transport)).rejects.toThrow("COMMERCE_ADMIN_CREDIT_PROGRAM_NOT_FOUND");
+      }), transport), Code.NotFound, "commerce.admin.resource_not_found",
+      "Commerce admin resource was not found");
 
       const persisted = await bootstrap.query<{
         receipt_result: string; export_digest: string; fingerprints: string[]; raw_column_count: number;
@@ -442,6 +450,18 @@ type OperatorFixture = Readonly<{ actorRef: string; generation: bigint; sessionR
   managedDeviceRef: string; attestationRef: string; attestationDigest: string }>;
 type Timing = Readonly<{ now: string; issuedAt: string; expiresAt: string;
   authenticatedAt: ReturnType<typeof timestampFromDate>; stepUpAt: ReturnType<typeof timestampFromDate> }>;
+
+async function expectStableFailure(
+  effect: unknown | PromiseLike<unknown>,
+  code: Code,
+  domainCode: string,
+  safeMessage: string,
+): Promise<void> {
+  const error = ConnectError.from(await Promise.resolve(effect)
+    .catch((failure: unknown) => failure));
+  expect(error).toMatchObject({ code, rawMessage: safeMessage });
+  expect(error.findDetails(KokoroErrorDetailSchema)).toMatchObject([{ domainCode, safeMessage }]);
+}
 
 function operator(actorRef: string, generation: bigint): OperatorFixture {
   return Object.freeze({ actorRef, generation, sessionRef: `session:${randomUUID()}`,
