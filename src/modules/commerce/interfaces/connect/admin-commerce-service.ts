@@ -1,7 +1,11 @@
 import { create, type DescMessage, type MessageShape } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { createValidator } from "@bufbuild/protovalidate";
-import type { HandlerContext, ServiceImpl } from "@connectrpc/connect";
+import { Code, ConnectError, type HandlerContext, type ServiceImpl } from "@connectrpc/connect";
+import {
+  KokoroErrorDetailSchema,
+  RetryClass,
+} from "../../../../generated/proto/kokoro/common/v1/error_pb.js";
 import {
   CommandDigestAlgorithmV2,
   CommandIdentityV2Schema,
@@ -92,12 +96,16 @@ import {
   type VerifiedCommerceSiteAxes,
 } from "../../../../generated/contracts/platform-admin-commerce@v1/digest.js";
 import type { VerifiedRequestSecurityContext } from "../../../../shared/security-context/index.js";
+import { withCommandReceiptConflictMapping } from
+  "../../../../interfaces/connect/command-receipt-conflict.js";
 import {
   scopedBinding,
   type AdminPageCursorCodec,
   type AdminQueryPermit,
   type AdminQueryResolver,
 } from "../../../admin/interfaces/connect/admin-query-service.js";
+import { stableAdminConnectError } from
+  "../../../admin/interfaces/connect/admin-connect-error-policy.js";
 import type { CommerceAdministrationService } from "../../application/services/commerce-administration.js";
 import type {
   CodeBatchRecord,
@@ -153,26 +161,27 @@ export function createAdminCommerceConnectService(input: Readonly<{
   reader: CommerceAdministrationReader;
   cursors: AdminPageCursorCodec;
 }>): AdminCommerceConnectService {
-  return {
+  const implementation: AdminCommerceConnectService = {
     async publishCreditProgramRevision(request, transport) {
       validate(PublishCreditProgramRevisionRequestSchema, request, "COMMERCE_ADMIN_REQUEST_INVALID");
       const context = required(request.context); const effect = required(request.effect);
       const command = await resolveCommand(input, context, effect.creditProgramRevisionRef,
         "commerce.credit-program.publish", transport, (verified) =>
           verifyPublishCreditProgramRevisionCommand(context, effect, verified));
-      const result = await input.owner.publishCreditProgramRevision({ ...command,
-        creditProgramRevisionRef: effect.creditProgramRevisionRef, programRef: effect.programRef,
-        revision: effect.revision.toString(), uxBucketClass: bucketFromWire(effect.uxBucketClass),
-        unit: effect.unit, amount: effect.amount, burnPriority: effect.burnPriority,
-        scopePolicy: { surfaceRefs: [...required(effect.scopePolicy).surfaceRefs],
-          capabilityKeys: [...required(effect.scopePolicy).capabilityKeys],
-          agentRefs: [...required(effect.scopePolicy).agentRefs],
-          allowUnattributedAgent: required(effect.scopePolicy).allowUnattributedAgent },
-        liabilityMerchantAccountRef: effect.liabilityMerchantAccountRef,
-        rolloverPolicy: rolloverFromWire(effect.rolloverPolicy),
-        calendarZone: effect.calendarZone ?? null, windowAnchor: effect.windowAnchor ?? null,
-        expiresAfterSeconds: effect.expiresAfterSeconds?.toString() ?? null,
-      });
+      const result = await withCommandReceiptConflictMapping(() =>
+        input.owner.publishCreditProgramRevision({ ...command,
+          creditProgramRevisionRef: effect.creditProgramRevisionRef, programRef: effect.programRef,
+          revision: effect.revision.toString(), uxBucketClass: bucketFromWire(effect.uxBucketClass),
+          unit: effect.unit, amount: effect.amount, burnPriority: effect.burnPriority,
+          scopePolicy: { surfaceRefs: [...required(effect.scopePolicy).surfaceRefs],
+            capabilityKeys: [...required(effect.scopePolicy).capabilityKeys],
+            agentRefs: [...required(effect.scopePolicy).agentRefs],
+            allowUnattributedAgent: required(effect.scopePolicy).allowUnattributedAgent },
+          liabilityMerchantAccountRef: effect.liabilityMerchantAccountRef,
+          rolloverPolicy: rolloverFromWire(effect.rolloverPolicy),
+          calendarZone: effect.calendarZone ?? null, windowAnchor: effect.windowAnchor ?? null,
+          expiresAfterSeconds: effect.expiresAfterSeconds?.toString() ?? null,
+        }));
       return validated(PublishCreditProgramRevisionResponseSchema, {
         receipt: receipt(result.command, result.recordedAt), disposition: disposition(result.kind),
         result: { creditProgramRevisionRef: result.creditProgramRevisionRef,
@@ -208,12 +217,13 @@ export function createAdminCommerceConnectService(input: Readonly<{
       const command = await resolveCommand(input, context, effect.entitlementTemplateRevisionRef,
         "commerce.entitlement-template.publish", transport, (verified) =>
           verifyPublishEntitlementTemplateRevisionCommand(context, effect, verified));
-      const result = await input.owner.publishEntitlementTemplateRevision({ ...command,
-        entitlementTemplateRevisionRef: effect.entitlementTemplateRevisionRef,
-        templateRef: effect.templateRef, revision: effect.revision.toString(),
-        capabilityKey: effect.capabilityKey, safeLabel: effect.safeLabel,
-        expiresAfterSeconds: effect.expiresAfterSeconds?.toString() ?? null,
-      });
+      const result = await withCommandReceiptConflictMapping(() =>
+        input.owner.publishEntitlementTemplateRevision({ ...command,
+          entitlementTemplateRevisionRef: effect.entitlementTemplateRevisionRef,
+          templateRef: effect.templateRef, revision: effect.revision.toString(),
+          capabilityKey: effect.capabilityKey, safeLabel: effect.safeLabel,
+          expiresAfterSeconds: effect.expiresAfterSeconds?.toString() ?? null,
+        }));
       return validated(PublishEntitlementTemplateRevisionResponseSchema, {
         receipt: receipt(result.command, result.recordedAt), disposition: disposition(result.kind),
         result: { entitlementTemplateRevisionRef: result.entitlementTemplateRevisionRef,
@@ -249,7 +259,7 @@ export function createAdminCommerceConnectService(input: Readonly<{
       const command = await resolveCommand(input, context, effect.productVersionRef,
         "commerce.offer.publish", transport, (verified) =>
           verifyPublishOfferRevisionCommand(context, effect, verified));
-      const result = await input.owner.publishOffer({ ...command,
+      const result = await withCommandReceiptConflictMapping(() => input.owner.publishOffer({ ...command,
         productRef: effect.productRef, productKind: productKindFromWire(effect.productKind),
         productVersionRef: effect.productVersionRef, productRevision: effect.productRevision.toString(),
         safeLabel: effect.safeLabel,
@@ -268,7 +278,7 @@ export function createAdminCommerceConnectService(input: Readonly<{
           outputKind: outputKindFromWire(output.outputKind),
           targetRevisionRef: output.targetRevisionRef })),
         legalTermRefs: [...effect.legalTermRefs],
-      });
+      }));
       return validated(PublishOfferRevisionResponseSchema, {
         receipt: receipt(result.command, result.recordedAt), disposition: disposition(result.kind),
         result: { productVersionRef: result.productVersionRef, publishedAt: timestamp(result.publishedAt) },
@@ -300,13 +310,13 @@ export function createAdminCommerceConnectService(input: Readonly<{
       const command = await resolveCommand(input, context, effect.redemptionProgramRevisionRef,
         "commerce.redemption-program.publish", transport, (verified) =>
           verifyPublishRedemptionProgramRevisionCommand(context, effect, verified));
-      const result = await input.owner.publishProgram({ ...command,
+      const result = await withCommandReceiptConflictMapping(() => input.owner.publishProgram({ ...command,
         redemptionProgramRevisionRef: effect.redemptionProgramRevisionRef,
         programRef: effect.programRef, revision: effect.revision.toString(),
         productVersionRef: effect.productVersionRef,
         fulfillmentProgramRevisionRef: effect.fulfillmentProgramRevisionRef,
         maxRedemptionsPerAccount: effect.maxRedemptionsPerAccount,
-      });
+      }));
       return validated(PublishRedemptionProgramRevisionResponseSchema, {
         receipt: receipt(result.command, result.recordedAt), disposition: disposition(result.kind),
         result: { redemptionProgramRevisionRef: result.redemptionProgramRevisionRef,
@@ -344,9 +354,10 @@ export function createAdminCommerceConnectService(input: Readonly<{
       const command = await resolveCommand(input, context, effect.batchRef, "commerce.code-batch.issue",
         transport, (verified) => verifyIssueCodeBatchCommand(context, effect, verified),
         [effect.redemptionProgramRevisionRef]);
-      const result = await input.owner.issueBatch({ ...command, batchRef: effect.batchRef,
+      const result = await withCommandReceiptConflictMapping(() => input.owner.issueBatch({
+        ...command, batchRef: effect.batchRef,
         redemptionProgramRevisionRef: effect.redemptionProgramRevisionRef, count: effect.count,
-        startsAt: optionalTimestamp(effect.startsAt), endsAt: optionalTimestamp(effect.endsAt) });
+        startsAt: optionalTimestamp(effect.startsAt), endsAt: optionalTimestamp(effect.endsAt) }));
       return validated(IssueCodeBatchResponseSchema, {
         receipt: receipt(result.command, result.recordedAt),
         disposition: result.kind === "secret_export" ? CommerceCommandDisposition.COMMITTED
@@ -370,7 +381,8 @@ export function createAdminCommerceConnectService(input: Readonly<{
       const context = required(request.context); const effect = required(request.effect);
       const command = await resolveCommand(input, context, effect.batchRef, "commerce.code-batch.approve",
         transport, (verified) => verifyApproveCodeBatchCommand(context, effect, verified));
-      const result = await input.owner.approveBatch({ ...command, batchRef: effect.batchRef });
+      const result = await withCommandReceiptConflictMapping(() =>
+        input.owner.approveBatch({ ...command, batchRef: effect.batchRef }));
       return validated(ApproveCodeBatchResponseSchema, mutationResponse(result));
     },
 
@@ -379,7 +391,8 @@ export function createAdminCommerceConnectService(input: Readonly<{
       const context = required(request.context); const effect = required(request.effect);
       const command = await resolveCommand(input, context, effect.batchRef, "commerce.code-batch.activate",
         transport, (verified) => verifyActivateCodeBatchCommand(context, effect, verified));
-      const result = await input.owner.activateBatch({ ...command, batchRef: effect.batchRef });
+      const result = await withCommandReceiptConflictMapping(() =>
+        input.owner.activateBatch({ ...command, batchRef: effect.batchRef }));
       return validated(ActivateCodeBatchResponseSchema, mutationResponse(result));
     },
 
@@ -388,8 +401,8 @@ export function createAdminCommerceConnectService(input: Readonly<{
       const context = required(request.context); const effect = required(request.effect);
       const command = await resolveCommand(input, context, effect.batchRef, "commerce.code-batch.abandon",
         transport, (verified) => verifyAbandonCodeBatchCommand(context, effect, verified));
-      const result = await input.owner.abandonBatch({ ...command, batchRef: effect.batchRef,
-        reason: effect.reason });
+      const result = await withCommandReceiptConflictMapping(() =>
+        input.owner.abandonBatch({ ...command, batchRef: effect.batchRef, reason: effect.reason }));
       return validated(AbandonCodeBatchResponseSchema, mutationResponse(result));
     },
 
@@ -398,8 +411,8 @@ export function createAdminCommerceConnectService(input: Readonly<{
       const context = required(request.context); const effect = required(request.effect);
       const command = await resolveCommand(input, context, effect.batchRef, "commerce.code-batch.suspend",
         transport, (verified) => verifySuspendCodeBatchCommand(context, effect, verified));
-      const result = await input.owner.suspendBatch({ ...command, batchRef: effect.batchRef,
-        reason: effect.reason });
+      const result = await withCommandReceiptConflictMapping(() =>
+        input.owner.suspendBatch({ ...command, batchRef: effect.batchRef, reason: effect.reason }));
       return validated(SuspendCodeBatchResponseSchema, mutationResponse(result));
     },
 
@@ -408,8 +421,8 @@ export function createAdminCommerceConnectService(input: Readonly<{
       const context = required(request.context); const effect = required(request.effect);
       const command = await resolveCommand(input, context, effect.batchRef, "commerce.code-batch.revoke",
         transport, (verified) => verifyRevokeCodeBatchCommand(context, effect, verified));
-      const result = await input.owner.revokeBatch({ ...command, batchRef: effect.batchRef,
-        reason: effect.reason });
+      const result = await withCommandReceiptConflictMapping(() =>
+        input.owner.revokeBatch({ ...command, batchRef: effect.batchRef, reason: effect.reason }));
       return validated(RevokeCodeBatchResponseSchema, mutationResponse(result));
     },
 
@@ -432,6 +445,173 @@ export function createAdminCommerceConnectService(input: Readonly<{
       return validated(GetCodeBatchResponseSchema, { batch: codeBatchMessage(row) });
     },
   };
+  return withAdminCommerceErrorBoundary(implementation);
+}
+
+function withAdminCommerceErrorBoundary(
+  service: AdminCommerceConnectService,
+): AdminCommerceConnectService {
+  return {
+    publishCreditProgramRevision: commerceHandler(service.publishCreditProgramRevision),
+    listCreditProgramRevisions: commerceHandler(service.listCreditProgramRevisions),
+    getCreditProgramRevision: commerceHandler(service.getCreditProgramRevision),
+    publishEntitlementTemplateRevision: commerceHandler(service.publishEntitlementTemplateRevision),
+    listEntitlementTemplateRevisions: commerceHandler(service.listEntitlementTemplateRevisions),
+    getEntitlementTemplateRevision: commerceHandler(service.getEntitlementTemplateRevision),
+    publishOfferRevision: commerceHandler(service.publishOfferRevision),
+    listOfferRevisions: commerceHandler(service.listOfferRevisions),
+    getOfferRevision: commerceHandler(service.getOfferRevision),
+    publishRedemptionProgramRevision: commerceHandler(service.publishRedemptionProgramRevision),
+    listRedemptionProgramRevisions: commerceHandler(service.listRedemptionProgramRevisions),
+    getRedemptionProgramRevision: commerceHandler(service.getRedemptionProgramRevision),
+    issueCodeBatch: commerceHandler(service.issueCodeBatch),
+    approveCodeBatch: commerceHandler(service.approveCodeBatch),
+    activateCodeBatch: commerceHandler(service.activateCodeBatch),
+    abandonCodeBatch: commerceHandler(service.abandonCodeBatch),
+    suspendCodeBatch: commerceHandler(service.suspendCodeBatch),
+    revokeCodeBatch: commerceHandler(service.revokeCodeBatch),
+    listCodeBatches: commerceHandler(service.listCodeBatches),
+    getCodeBatch: commerceHandler(service.getCodeBatch),
+  };
+}
+
+function commerceHandler<Request, Response>(handler: (
+  request: Request,
+  context: HandlerContext,
+) => Response | Promise<Response>): (
+  request: Request,
+  context: HandlerContext,
+) => Promise<Response> {
+  return async (request, context) => {
+    try {
+      return await handler(request, context);
+    } catch (error) {
+      throw adminCommerceConnectError(error);
+    }
+  };
+}
+
+const COMMERCE_ADMIN_MISSING_CODES = new Set([
+  "COMMERCE_ADMIN_CREDIT_PROGRAM_NOT_FOUND",
+  "COMMERCE_ADMIN_ENTITLEMENT_TEMPLATE_NOT_FOUND",
+  "COMMERCE_ADMIN_OFFER_NOT_FOUND",
+  "COMMERCE_ADMIN_REDEMPTION_PROGRAM_NOT_FOUND",
+  "COMMERCE_ADMIN_CODE_BATCH_NOT_FOUND",
+]);
+
+const COMMERCE_ADMIN_PRECONDITION_CODES = new Set([
+  "COMMERCE_ADMIN_COMMAND_TERMINAL",
+  "COMMERCE_BATCH_APPROVAL_REQUIRED",
+  "COMMERCE_BATCH_MAKER_CHECKER_REQUIRED",
+  "COMMERCE_BATCH_TRANSITION_REJECTED",
+  "COMMERCE_CREDIT_OUTPUT_KIND_MISMATCH",
+  "COMMERCE_OUTPUT_OWNER_TARGET_MISMATCH",
+  "COMMERCE_PLAN_NOT_ACTIVE",
+  "COMMERCE_PRODUCT_KIND_CONFLICT",
+]);
+
+const COMMERCE_ADMIN_INVALID_CODES = new Set([
+  "ADMIN_PAGE_TOKEN_INVALID",
+  "CODE_BATCH_WINDOW_INVALID",
+  "COMMERCE_ADMIN_COLLECTION_INVALID",
+  "COMMERCE_ADMIN_COUNT_INVALID",
+  "COMMERCE_ADMIN_DIGEST_ALGORITHM_INVALID",
+  "COMMERCE_ADMIN_DIGEST_INVALID",
+  "COMMERCE_ADMIN_INPUT_INVALID",
+  "COMMERCE_ADMIN_LABEL_INVALID",
+  "COMMERCE_ADMIN_PAGE_TOKEN_INVALID",
+  "COMMERCE_ADMIN_REASON_INVALID",
+  "COMMERCE_ADMIN_REQUEST_DIGEST_MISMATCH",
+  "COMMERCE_ADMIN_REQUEST_INVALID",
+  "COMMERCE_ADMIN_REVISION_INVALID",
+  "COMMERCE_ADMIN_SITE_INVALID",
+  "COMMERCE_ADMIN_TIME_INVALID",
+  "COMMERCE_ADMIN_UUID_INVALID",
+  "COMMERCE_CREDIT_AMOUNT_INVALID",
+  "COMMERCE_CREDIT_BURN_PRIORITY_INVALID",
+  "COMMERCE_CREDIT_CALENDAR_ZONE_INVALID",
+  "COMMERCE_CREDIT_PACK_OUTPUT_REQUIRED",
+  "COMMERCE_CREDIT_SCOPE_POLICY_INVALID",
+  "COMMERCE_CREDIT_UNIT_INVALID",
+  "COMMERCE_CREDIT_WINDOW_INVALID",
+  "COMMERCE_ENTITLEMENT_CAPABILITY_INVALID",
+  "COMMERCE_OFFER_OUTPUTS_INVALID",
+  "COMMERCE_OFFER_OUTPUT_INVALID",
+  "COMMERCE_OFFER_PLAN_OUTPUT_MISMATCH",
+  "COMMERCE_OFFER_PLAN_OUTPUT_REQUIRED",
+  "COMMERCE_PLAN_TERM_INVALID",
+  "COMMERCE_RECURRING_CREDIT_PLAN_REQUIRED",
+  "COMMERCE_SUBSCRIPTION_PLAN_REQUIRED",
+]);
+
+function adminCommerceConnectError(error: unknown): ConnectError {
+  if (error instanceof ConnectError && error.code === Code.Canceled) {
+    return safeCommerceError(Code.Canceled, "commerce.admin.canceled",
+      "Commerce admin request was canceled", error);
+  }
+  if (error instanceof ConnectError && error.code === Code.DeadlineExceeded) {
+    return safeCommerceError(Code.DeadlineExceeded, "commerce.admin.deadline_exceeded",
+      "Commerce admin deadline exceeded", error, RetryClass.RECONCILE_RECEIPT);
+  }
+  const message = error instanceof ConnectError ? error.rawMessage
+    : error instanceof Error ? error.message : "";
+  const stableAdmin = stableAdminConnectError(error) ??
+    stableAdminConnectError(new Error(message));
+  if (stableAdmin !== null) {
+    return safeCommerceError(stableAdmin.code, stableAdmin.domainCode,
+      stableAdmin.safeMessage, error);
+  }
+  if (error instanceof ConnectError && error.code === Code.Unauthenticated) {
+    return stableAdminStatus("ADMIN_SESSION_UNAUTHENTICATED", error);
+  }
+  if (error instanceof ConnectError && error.code === Code.PermissionDenied) {
+    return stableAdminStatus("ADMIN_PERMISSION_DENIED", error);
+  }
+  if (message === "COMMERCE_ADMIN_NOT_AUTHORIZED") {
+    return stableAdminStatus("ADMIN_PERMISSION_DENIED", error);
+  }
+  if (COMMERCE_ADMIN_MISSING_CODES.has(message) ||
+      (error instanceof ConnectError && error.code === Code.NotFound)) {
+    return safeCommerceError(Code.NotFound, "commerce.admin.resource_not_found",
+      "Commerce admin resource was not found", error);
+  }
+  if (COMMERCE_ADMIN_PRECONDITION_CODES.has(message) ||
+      (error instanceof ConnectError && error.code === Code.FailedPrecondition)) {
+    return safeCommerceError(Code.FailedPrecondition, "commerce.admin.precondition_failed",
+      "Commerce admin precondition failed", error);
+  }
+  if (error instanceof ConnectError && error.code === Code.AlreadyExists) {
+    return safeCommerceError(Code.AlreadyExists, "commerce.admin.command_conflict",
+      "Commerce admin command conflicts with an existing receipt", error);
+  }
+  if (COMMERCE_ADMIN_INVALID_CODES.has(message) || message.startsWith("command_envelope_") ||
+      message.startsWith("commerce_site_") ||
+      (error instanceof ConnectError && error.code === Code.InvalidArgument)) {
+    return safeCommerceError(Code.InvalidArgument, "commerce.admin.invalid_request",
+      "Invalid Commerce admin request", error);
+  }
+  return safeCommerceError(Code.Internal, "commerce.admin.internal",
+    "Commerce admin request failed", error);
+}
+
+function stableAdminStatus(code: "ADMIN_SESSION_UNAUTHENTICATED" | "ADMIN_PERMISSION_DENIED",
+  cause: unknown): ConnectError {
+  const stable = stableAdminConnectError(new Error(code));
+  if (stable === null) throw new Error("COMMERCE_ADMIN_ERROR_POLICY_INVALID");
+  return safeCommerceError(stable.code, stable.domainCode, stable.safeMessage, cause);
+}
+
+function safeCommerceError(
+  code: Code,
+  domainCode: string,
+  safeMessage: string,
+  cause: unknown,
+  retryClass = RetryClass.NEVER,
+): ConnectError {
+  return new ConnectError(safeMessage, code, undefined, [{
+    desc: KokoroErrorDetailSchema,
+    value: create(KokoroErrorDetailSchema, { domainCode, safeMessage, retryClass }),
+  }], cause);
 }
 
 type ReadOperation = Extract<AdminQueryPermit["operation"], `commerce.${string}`>;

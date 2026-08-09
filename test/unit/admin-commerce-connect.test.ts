@@ -1,7 +1,17 @@
 import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
-import type { HandlerContext } from "@connectrpc/connect";
+import {
+  Code,
+  ConnectError,
+  createClient,
+  createRouterTransport,
+  type HandlerContext,
+} from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
+import {
+  KokoroErrorDetailSchema,
+  RetryClass,
+} from "../../src/generated/proto/kokoro/common/v1/error_pb.js";
 import {
   CommandDigestAlgorithmV2,
   CommandIdentityV2Schema,
@@ -14,18 +24,24 @@ import {
   SecurityEpochsSchema,
   SiteScopeSchema,
 } from "../../src/generated/proto/kokoro/platform/admin/v2/admin_shared_pb.js";
+import { AdminCommerceService } from
+  "../../src/generated/proto/kokoro/platform/commerce/v1/admin_commerce_pb.js";
 import {
   CommercePageRequestSchema,
   CommerceSiteCommandContextSchema,
   CommerceSiteQueryContextSchema,
+  GetOfferRevisionRequestSchema,
   ListOfferRevisionsRequestSchema,
   ListRedemptionProgramRevisionsRequestSchema,
 } from "../../src/generated/proto/kokoro/platform/commerce/v1/commerce_catalog_pb.js";
 import {
+  ActivateCodeBatchEffectSchema,
+  ActivateCodeBatchRequestSchema,
   IssueCodeBatchEffectSchema,
   IssueCodeBatchRequestSchema,
 } from "../../src/generated/proto/kokoro/platform/commerce/v1/commerce_control_pb.js";
 import {
+  activateCodeBatchRequestDigest,
   issueCodeBatchRequestDigest,
   type VerifiedCommerceSiteAxes,
 } from "../../src/generated/contracts/platform-admin-commerce@v1/digest.js";
@@ -35,6 +51,8 @@ import { createAdminCommerceConnectService } from
   "../../src/modules/commerce/interfaces/connect/admin-commerce-service.js";
 import type { VerifiedRequestSecurityContext } from
   "../../src/shared/security-context/request-security-context.js";
+import { CommandReceiptConflictError } from
+  "../../src/shared/outbox-inbox/receipt.js";
 
 const transport = {} as HandlerContext;
 const observedAt = "2026-07-30T12:00:00.000Z";
@@ -57,10 +75,96 @@ describe("AdminCommerce Connect provider", () => {
 
   it("Protovalidates a request before resolving any authority", async () => {
     const setup = harness();
-    await expect(setup.service.issueCodeBatch(create(IssueCodeBatchRequestSchema), transport))
-      .rejects.toThrow("COMMERCE_ADMIN_REQUEST_INVALID");
+    const error = await connectFailure(client(setup).issueCodeBatch({}));
+
+    expectStable(error, Code.InvalidArgument, "commerce.admin.invalid_request",
+      "Invalid Commerce admin request");
     expect(setup.resolver.resolveCommerceCommand).not.toHaveBeenCalled();
     expect(setup.owner.issueBatch).not.toHaveBeenCalled();
+  });
+
+  it("maps digest drift to a stable InvalidArgument transport response", async () => {
+    const setup = harness();
+    const request = issueRequest();
+    request.context!.operator!.command!.requestDigest = "f".repeat(64);
+
+    const error = await connectFailure(client(setup).issueCodeBatch(request));
+
+    expectStable(error, Code.InvalidArgument, "commerce.admin.invalid_request",
+      "Invalid Commerce admin request", ["COMMERCE_ADMIN_REQUEST_DIGEST_MISMATCH"]);
+    expect(setup.owner.issueBatch).not.toHaveBeenCalled();
+  });
+
+  it("reuses the stable Admin permission policy at the transport boundary", async () => {
+    const setup = harness();
+    setup.resolver.resolveCommerceCommand.mockRejectedValueOnce(new Error("ADMIN_PERMISSION_DENIED"));
+
+    const error = await connectFailure(client(setup).issueCodeBatch(issueRequest()));
+
+    expectStable(error, Code.PermissionDenied, "admin.permission_denied",
+      "Admin operation is not permitted", ["ADMIN_PERMISSION_DENIED"]);
+    expect(setup.owner.issueBatch).not.toHaveBeenCalled();
+  });
+
+  it("maps a missing Commerce view to a stable NotFound transport response", async () => {
+    const setup = harness();
+    setup.reader.getOffer.mockResolvedValueOnce(null);
+
+    const error = await connectFailure(client(setup).getOfferRevision(create(
+      GetOfferRevisionRequestSchema,
+      { context: queryContext(siteId), productVersionRef: "offer:v404" },
+    )));
+
+    expectStable(error, Code.NotFound, "commerce.admin.resource_not_found",
+      "Commerce admin resource was not found", ["COMMERCE_ADMIN_OFFER_NOT_FOUND"]);
+  });
+
+  it.each(["identity", "digest"] as const)(
+    "maps a command receipt %s conflict to stable AlreadyExists",
+    async (kind) => {
+      const setup = harness();
+      setup.owner.issueBatch.mockRejectedValueOnce(new CommandReceiptConflictError(kind));
+
+      const error = await connectFailure(client(setup).issueCodeBatch(issueRequest()));
+
+      expectStable(error, Code.AlreadyExists, "commerce.admin.command_conflict",
+        "Commerce admin command conflicts with an existing receipt",
+        ["COMMAND_IDENTITY_CONFLICT", "COMMAND_DIGEST_CONFLICT", "command identity conflict",
+          "command digest conflict"]);
+    },
+  );
+
+  it("maps an invalid owner transition to a stable FailedPrecondition", async () => {
+    const setup = harness();
+    setup.owner.activateBatch.mockRejectedValueOnce(new Error("COMMERCE_BATCH_TRANSITION_REJECTED"));
+
+    const error = await connectFailure(client(setup).activateCodeBatch(activateRequest()));
+
+    expectStable(error, Code.FailedPrecondition, "commerce.admin.precondition_failed",
+      "Commerce admin precondition failed", ["COMMERCE_BATCH_TRANSITION_REJECTED"]);
+  });
+
+  it("masks unknown owner errors and any secret material at the transport boundary", async () => {
+    const setup = harness();
+    const privateCause = `database password=private ${rawCode}`;
+    setup.owner.issueBatch.mockRejectedValueOnce(new Error(privateCause));
+
+    const error = await connectFailure(client(setup).issueCodeBatch(issueRequest()));
+
+    expectStable(error, Code.Internal, "commerce.admin.internal",
+      "Commerce admin request failed", [privateCause, rawCode, "password=private"]);
+  });
+
+  it.each([
+    [Code.Canceled, "commerce.admin.canceled", "Commerce admin request was canceled"],
+    [Code.DeadlineExceeded, "commerce.admin.deadline_exceeded", "Commerce admin deadline exceeded"],
+  ] as const)("preserves stable Connect status %s", async (code, domainCode, safeMessage) => {
+    const setup = harness();
+    setup.owner.issueBatch.mockRejectedValueOnce(new ConnectError("private upstream detail", code));
+
+    const error = await connectFailure(client(setup).issueCodeBatch(issueRequest()));
+
+    expectStable(error, code, domainCode, safeMessage, ["private upstream detail"]);
   });
 
   it("verifies the generated digest against server-resolved Site axes and exports codes only once", async () => {
@@ -119,7 +223,7 @@ describe("AdminCommerce Connect provider", () => {
 
     await expect(setup.service.issueCodeBatch(create(IssueCodeBatchRequestSchema, {
       context, effect,
-    }), transport)).rejects.toThrow("command_envelope_axis_mismatch:siteId");
+    }), transport)).rejects.toMatchObject({ code: Code.InvalidArgument });
     expect(setup.owner.issueBatch).not.toHaveBeenCalled();
   });
 
@@ -158,26 +262,26 @@ describe("AdminCommerce Connect provider", () => {
       context: queryContext(siteId), page: create(CommercePageRequestSchema, {
         pageSize: 1, pageToken: tampered,
       }),
-    }), transport)).rejects.toThrow("ADMIN_PAGE_TOKEN_INVALID");
+    }), transport)).rejects.toMatchObject({ code: Code.InvalidArgument });
     await expect(setup.service.listRedemptionProgramRevisions(
       create(ListRedemptionProgramRevisionsRequestSchema, {
         context: queryContext(siteId), page: create(CommercePageRequestSchema, {
           pageSize: 1, pageToken: first.nextPageToken,
         }),
       }), transport,
-    )).rejects.toThrow("COMMERCE_ADMIN_PAGE_TOKEN_INVALID");
+    )).rejects.toMatchObject({ code: Code.InvalidArgument });
     await expect(setup.service.listOfferRevisions(create(ListOfferRevisionsRequestSchema, {
       context: queryContext("site:other"), page: create(CommercePageRequestSchema, {
         pageSize: 1, pageToken: first.nextPageToken,
       }),
-    }), transport)).rejects.toThrow("COMMERCE_ADMIN_PAGE_TOKEN_INVALID");
+    }), transport)).rejects.toMatchObject({ code: Code.InvalidArgument });
 
     setup.resolver.resolve.mockResolvedValueOnce(permit("commerce.offer.read", siteId, "b"));
     await expect(setup.service.listOfferRevisions(create(ListOfferRevisionsRequestSchema, {
       context: queryContext(siteId), page: create(CommercePageRequestSchema, {
         pageSize: 1, pageToken: first.nextPageToken,
       }),
-    }), transport)).rejects.toThrow("COMMERCE_ADMIN_PAGE_TOKEN_INVALID");
+    }), transport)).rejects.toMatchObject({ code: Code.InvalidArgument });
     expect(setup.reader.listOffers).toHaveBeenCalledTimes(2);
   });
 });
@@ -260,6 +364,50 @@ function ownerCommand(operation: string) {
     environment: axes.environment, region: axes.region,
     callerIdentity: `${axes.workloadIdentityRef}:${axes.actorRef}`, operation,
     idempotencyKey: "idempotency:commerce:1", requestDigest: "b".repeat(64) });
+}
+
+function issueRequest() {
+  const effect = create(IssueCodeBatchEffectSchema, {
+    batchRef,
+    redemptionProgramRevisionRef: "redemption-program-revision:3",
+    count: 1,
+  });
+  const context = commandContext("0".repeat(64));
+  context.operator!.command!.requestDigest = issueCodeBatchRequestDigest(context, effect, axes);
+  return create(IssueCodeBatchRequestSchema, { context, effect });
+}
+
+function activateRequest() {
+  const effect = create(ActivateCodeBatchEffectSchema, { batchRef });
+  const context = commandContext("0".repeat(64));
+  context.operator!.command!.requestDigest = activateCodeBatchRequestDigest(context, effect, axes);
+  return create(ActivateCodeBatchRequestSchema, { context, effect });
+}
+
+function client(setup: ReturnType<typeof harness>) {
+  return createClient(AdminCommerceService, createRouterTransport((router) => {
+    router.service(AdminCommerceService, setup.service);
+  }));
+}
+
+async function connectFailure(effect: Promise<unknown>): Promise<ConnectError> {
+  return ConnectError.from(await effect.catch((error: unknown) => error));
+}
+
+function expectStable(
+  error: ConnectError,
+  code: Code,
+  domainCode: string,
+  safeMessage: string,
+  forbidden: readonly string[] = [],
+): void {
+  expect(error).toMatchObject({ code, rawMessage: safeMessage });
+  const details = error.findDetails(KokoroErrorDetailSchema);
+  expect(details).toMatchObject([{ domainCode, safeMessage }]);
+  expect(details[0]?.retryClass).toBe(code === Code.DeadlineExceeded
+    ? RetryClass.RECONCILE_RECEIPT : RetryClass.NEVER);
+  const publicResponse = `${error.rawMessage}\n${JSON.stringify(details)}`;
+  for (const value of forbidden) expect(publicResponse).not.toContain(value);
 }
 
 function harness() {
