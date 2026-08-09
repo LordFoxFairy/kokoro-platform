@@ -49,6 +49,7 @@ type HarnessInput = Readonly<{
   clock?: () => Date;
   terminalizationRetryInitialMs?: number;
   terminalizationRetryMaximumMs?: number;
+  instanceRef?: string;
 }>;
 
 describe("ModelGatewayService provider terminalization", () => {
@@ -146,6 +147,70 @@ describe("ModelGatewayService provider terminalization", () => {
     } finally {
       controller.abort("test-complete");
       await harness.service.shutdown();
+    }
+  });
+
+  it("B: renews the durable owner lease past its original expiry while terminalization retries", async () => {
+    vi.useFakeTimers({ now: new Date("2029-01-01T00:00:00.000Z") });
+    const repository = new TerminalizationMemoryRepository();
+    let expiredRecoveryAttempts = 0;
+    let terminalUnknownAttempts = 0;
+    const harness = createHarness({
+      repository,
+      instanceRef: "model-gateway:terminalization-owner",
+      outcome: unknownOutcome("c"),
+      clock: () => new Date(Date.now()),
+      terminalizationRetryInitialMs: 250,
+      terminalizationRetryMaximumMs: 1_000,
+      markUnknown: async () => {
+        terminalUnknownAttempts += 1;
+        if (terminalUnknownAttempts < 4) throw new Error("TRANSIENT_TERMINALIZATION_FAILURE");
+        return unknownReceipt();
+      },
+    });
+    const scanner = createHarness({
+      repository,
+      instanceRef: "model-gateway:independent-scanner",
+      clock: () => new Date(Date.now()),
+      scanDispatchCandidates: async () => {
+        const leaseExpiresAt = Date.parse(repository.record?.dispatchLeaseExpiresAt ?? "");
+        if (repository.record?.state === "dispatching" && leaseExpiresAt <= Date.now()) {
+          expiredRecoveryAttempts += 1;
+          return [{
+            modelAuthorizationHandle: authorizationHandle,
+            logicalCallRef: "logical-call-1",
+          }];
+        }
+        return [];
+      },
+    });
+    const controller = new AbortController();
+    scanner.service.start();
+    const collected = collect(harness.service.stream(invocation(controller.signal)));
+
+    try {
+      await vi.advanceTimersByTimeAsync(1_400);
+      await flushMicrotasks();
+
+      expect(repository.heartbeatCalls).toBeGreaterThanOrEqual(1);
+      expect(Date.parse(repository.record?.dispatchLeaseExpiresAt ?? "")).toBeGreaterThan(Date.now());
+      expect(expiredRecoveryAttempts).toBe(0);
+      expect(scanner.stats.markUnknownCalls).toBe(0);
+      expect(harness.service.activeDispatchCount()).toBe(1);
+      expect(harness.stats.providerEffectCalls).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(350);
+      await flushMicrotasks();
+      expect((await collected).map(({ payload }) => payload.kind)).toEqual([
+        "accepted", "outcome_unknown",
+      ]);
+      expect(repository.record?.ownerEvidenceRef)
+        .toBe(`provider-outcome:sha256:${"c".repeat(64)}`);
+      expect(harness.service.activeDispatchCount()).toBe(0);
+      expect(harness.stats.providerEffectCalls).toBe(1);
+    } finally {
+      controller.abort("test-complete");
+      await Promise.all([harness.service.shutdown(), scanner.service.shutdown()]);
     }
   });
 
@@ -260,6 +325,7 @@ class TerminalizationMemoryRepository implements ModelGatewayRepository,
   record: ModelGatewayInvocationRecord | null = null;
   request: ModelGatewayRequest | null = null;
   readonly frames: ModelGatewayStreamFrame[] = [];
+  heartbeatCalls = 0;
   readonly #waiters = new Set<() => void>();
 
   async lockInvocation(_transaction: never, input: Readonly<{ logicalCallRef: string }>) {
@@ -306,7 +372,20 @@ class TerminalizationMemoryRepository implements ModelGatewayRepository,
     return this.append(input.payload);
   }
 
-  async heartbeat() {}
+  async heartbeat(_transaction: never, input: Readonly<{
+    ownerInstanceRef: string;
+    leaseExpiresAt: string;
+  }>) {
+    if (this.record?.state !== "dispatching" ||
+        this.record.dispatchOwnerRef !== input.ownerInstanceRef) {
+      throw new Error("TEST_HEARTBEAT_FENCE_LOST");
+    }
+    this.heartbeatCalls += 1;
+    this.record = Object.freeze({
+      ...this.record,
+      dispatchLeaseExpiresAt: input.leaseExpiresAt,
+    });
+  }
 
   async persistTerminal(_transaction: never, record: ModelGatewayInvocationRecord) {
     this.record = record;
@@ -453,7 +532,7 @@ function createHarness(input: HarnessInput = {}) {
     reference: (kind: "invocation" | "evidence" | "outbox") =>
       kind === "invocation" ? "invocation-1" : "evidence-1",
     clock: input.clock ?? (() => new Date("2029-01-01T00:00:00.000Z")),
-    instanceRef: "model-gateway:terminalization-test",
+    instanceRef: input.instanceRef ?? "model-gateway:terminalization-test",
     dispatchRecoveryAfterMs: 1_000,
     providerHardTimeoutMs: 1_000,
     terminalizationRetryInitialMs: input.terminalizationRetryInitialMs ?? 10,

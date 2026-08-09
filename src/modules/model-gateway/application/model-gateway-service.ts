@@ -721,37 +721,39 @@ export class ModelGatewayService {
     });
     let terminal: ModelGatewayProviderOutcome | null = null;
     try {
-      const source = prepared.stream({ signal, providerOperationKey: record.invocationRef });
-      for await (const event of coalesceProviderStream(source, signal)) {
-        if (event.kind === "terminal") {
-          terminal = event.outcome;
-          break;
+      try {
+        const source = prepared.stream({ signal, providerOperationKey: record.invocationRef });
+        for await (const event of coalesceProviderStream(source, signal)) {
+          if (event.kind === "terminal") {
+            terminal = event.outcome;
+            break;
+          }
+          await this.#appendProviderFrame(record, event);
         }
-        await this.#appendProviderFrame(record, event);
+      } catch (cause) {
+        terminal = Object.freeze({
+          kind: "outcome_unknown",
+          ownerEvidenceRef: `provider-outcome:sha256:${errorDigest(cause)}`,
+        });
       }
-    } catch (cause) {
-      terminal = Object.freeze({
+      if (heartbeatFailure !== undefined) {
+        terminal = Object.freeze({
+          kind: "outcome_unknown",
+          ownerEvidenceRef: `provider-owner:sha256:${errorDigest(heartbeatFailure)}`,
+        });
+      }
+      terminal ??= Object.freeze({
         kind: "outcome_unknown",
-        ownerEvidenceRef: `provider-outcome:sha256:${errorDigest(cause)}`,
+        ownerEvidenceRef: `provider-outcome:sha256:${commandDigest("terminal-missing", {
+          invocationRef: record.invocationRef,
+        })}`,
       });
+      if (this.#shutdownController.signal.aborted) return;
+      await this.#terminalizeProviderOutcome(record, terminal);
     } finally {
       heartbeatController.abort("dispatch-complete");
       await heartbeat;
     }
-    if (heartbeatFailure !== undefined) {
-      terminal = Object.freeze({
-        kind: "outcome_unknown",
-        ownerEvidenceRef: `provider-owner:sha256:${errorDigest(heartbeatFailure)}`,
-      });
-    }
-    terminal ??= Object.freeze({
-      kind: "outcome_unknown",
-      ownerEvidenceRef: `provider-outcome:sha256:${commandDigest("terminal-missing", {
-        invocationRef: record.invocationRef,
-      })}`,
-    });
-    if (this.#shutdownController.signal.aborted) return;
-    await this.#terminalizeProviderOutcome(record, terminal);
   }
 
   async #terminalizeProviderOutcome(
