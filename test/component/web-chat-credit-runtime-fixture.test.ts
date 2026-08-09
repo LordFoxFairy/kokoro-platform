@@ -133,6 +133,7 @@ describe("Platform-owned Web Chat Credit runtime fixture", () => {
       platformApiTrustRoot: "/private/runtime",
       platformPublicTlsCertificateAuthorityFile: "/private/runtime/platform-public-ca.crt",
       browserAuthFile: "/private/runtime/browser-auth.json",
+      redemptionCodeFile: "/private/runtime/redemption-code",
       siteBffClientCertificateFile: "/private/runtime/site-bff-client.crt",
       siteBffWorkloadCredentialFile: "/private/runtime/site-bff.credential",
       ...platformApiRuntimeFiles,
@@ -162,6 +163,7 @@ describe("Platform-owned Web Chat Credit runtime fixture", () => {
       platformApiTrustRoot: "/private/runtime",
       platformPublicTlsCertificateAuthorityFile: "/private/runtime/platform-public-ca.crt",
       browserAuthFile: "/private/runtime/browser-auth.json",
+      redemptionCodeFile: "/private/runtime/redemption-code",
       siteBffClientCertificateFile: "/private/runtime/site-bff-client.crt",
       siteBffWorkloadCredentialFile: "/private/runtime/site-bff.credential",
       ...platformApiRuntimeFiles,
@@ -201,17 +203,29 @@ describe("Platform-owned Web Chat Credit runtime fixture", () => {
       finalizedEvidenceCount: 1,
       segmentSettlementCount: 1,
       captureJournalCount: 1,
+      claimedRedemptionCodeCount: 1,
+      redemptionCount: 1,
+      redemptionFulfillmentCount: 1,
+      redemptionGrantCount: 1,
       providerEffectOnce: true,
       evidenceChainFinalized: true,
       creditSettledOnce: true,
       replayStable: true,
       availableConsumedDeltaEqual: true,
+      redemptionFulfilledOnce: true,
+      redemptionReplayStable: true,
+      redemptionProductSourceVerified: true,
+      redemptionGrantSourceVerified: true,
     });
     expect(result).toEqual({ schemaVersion: 1, kind: "platform-web-chat-credit-runtime-observation",
       providerInvocationCount: 1, providerAttemptCount: 1, finalizedEvidenceCount: 1,
       segmentSettlementCount: 1, captureJournalCount: 1, providerEffectOnce: true,
+      claimedRedemptionCodeCount: 1, redemptionCount: 1, redemptionFulfillmentCount: 1,
+      redemptionGrantCount: 1,
       evidenceChainFinalized: true, creditSettledOnce: true, replayStable: true,
-      availableConsumedDeltaEqual: true });
+      availableConsumedDeltaEqual: true, redemptionFulfilledOnce: true,
+      redemptionReplayStable: true, redemptionProductSourceVerified: true,
+      redemptionGrantSourceVerified: true });
     expect(Object.keys(result).some((key) =>
       ["ref", "payload", "content", "amount", "balance", "credential", "token", "secret"]
         .includes(key.toLowerCase()))).toBe(false);
@@ -244,6 +258,13 @@ describe("Platform-owned Web Chat Credit runtime fixture", () => {
     expect(fixtureSource).toContain("IdentityApplicationService");
     expect(fixtureSource).toContain("PostgresCreditGrantIssuer");
     expect(fixtureSource).toContain("RatingPolicyPublicationService");
+    expect(fixtureSource).toContain("createCommerceAdministrationComposition");
+    expect(fixtureSource).toContain("production.commerce.publishCreditProgramRevision");
+    expect(fixtureSource).toContain("production.commerce.publishOffer");
+    expect(fixtureSource).toContain("production.commerce.publishProgram");
+    expect(fixtureSource).toContain("production.commerce.issueBatch");
+    expect(fixtureSource).toContain("production.commerce.approveBatch");
+    expect(fixtureSource).toContain("production.commerce.activateBatch");
     expect(fixtureSource).toContain("AdmissionLaunchProfilePublicationService");
     expect(fixtureSource).toContain("createProductModelOptionAdministrationComposition");
     expect(fixtureSource).not.toContain("PostgresCapabilityCatalogProjectionRepository");
@@ -338,6 +359,11 @@ describe("Platform-owned Web Chat Credit runtime fixture", () => {
         allowedOperations: [
           "createIdentitySession",
           "exchangeProductContext",
+          "previewRedemption",
+          "confirmRedemption",
+          "recoverRedemptionCommand",
+          "getRedemptionReceipt",
+          "getCreditGrant",
           "listIdentitySessions",
           "listAccountProducts",
           "getCreditSummary",

@@ -122,6 +122,8 @@ import {
 } from "../../src/modules/admission/infrastructure/crypto/capability-publication-verifier.js";
 import { PLATFORM_API_RUNTIME_CONTRACT } from
   "../../src/process/platform-api-runtime-contract.js";
+import { createCommerceAdministrationComposition } from
+  "../../src/process/commerce-admin-composition.js";
 
 export type PlatformFixtureCommand = "prepare" | "finalize" | "observe";
 
@@ -157,6 +159,7 @@ export type PlatformFixtureSetupResult = Readonly<{
   platformApiTrustRoot: string;
   platformPublicTlsCertificateAuthorityFile: string;
   browserAuthFile: string;
+  redemptionCodeFile: string;
   siteBffClientCertificateFile: string;
   siteBffWorkloadCredentialFile: string;
   productWorkloadRegistryFile: string;
@@ -192,11 +195,19 @@ export type PlatformFixtureObservation = Readonly<{
   finalizedEvidenceCount: number;
   segmentSettlementCount: number;
   captureJournalCount: number;
+  claimedRedemptionCodeCount: number;
+  redemptionCount: number;
+  redemptionFulfillmentCount: number;
+  redemptionGrantCount: number;
   providerEffectOnce: boolean;
   evidenceChainFinalized: boolean;
   creditSettledOnce: boolean;
   replayStable: boolean;
   availableConsumedDeltaEqual: boolean;
+  redemptionFulfilledOnce: boolean;
+  redemptionReplayStable: boolean;
+  redemptionProductSourceVerified: boolean;
+  redemptionGrantSourceVerified: boolean;
 }>;
 
 type SetupFields = Omit<PlatformFixtureSetupResult, "schemaVersion" | "kind">;
@@ -233,6 +244,7 @@ const PLATFORM_FIXTURE_SETUP_PATH_FIELDS = Object.freeze([
   "platformApiTrustRoot",
   "platformPublicTlsCertificateAuthorityFile",
   "browserAuthFile",
+  "redemptionCodeFile",
   "siteBffClientCertificateFile",
   "siteBffWorkloadCredentialFile",
   ...PLATFORM_FIXTURE_API_RUNTIME_FILE_FIELDS,
@@ -249,6 +261,9 @@ const OBSERVER_RELATIONS = Object.freeze([
   "credit_journal_transaction",
   "credit_journal_entry",
   "credit_grant",
+  "commerce_redeem_code",
+  "commerce_redemption",
+  "commerce_fulfillment_transaction",
 ] as const);
 const UNIT = "credit_micros";
 const LIABILITY_MERCHANT = "merchant:platform-runtime";
@@ -309,9 +324,13 @@ export function createPlatformFixtureSetupResult(input: SetupFields): PlatformFi
 
 export function createPlatformFixtureObservation(input: ObservationFields): PlatformFixtureObservation {
   const counts = [input.providerInvocationCount, input.providerAttemptCount,
-    input.finalizedEvidenceCount, input.segmentSettlementCount, input.captureJournalCount];
+    input.finalizedEvidenceCount, input.segmentSettlementCount, input.captureJournalCount,
+    input.claimedRedemptionCodeCount, input.redemptionCount,
+    input.redemptionFulfillmentCount, input.redemptionGrantCount];
   const flags = [input.providerEffectOnce, input.evidenceChainFinalized, input.creditSettledOnce,
-    input.replayStable, input.availableConsumedDeltaEqual];
+    input.replayStable, input.availableConsumedDeltaEqual, input.redemptionFulfilledOnce,
+    input.redemptionReplayStable, input.redemptionProductSourceVerified,
+    input.redemptionGrantSourceVerified];
   if (counts.some((value) => !Number.isSafeInteger(value) || value < 0 || value > 1_000_000) ||
       flags.some((value) => typeof value !== "boolean")) {
     throw new Error("PLATFORM_FIXTURE_OBSERVATION_INVALID");
@@ -437,6 +456,11 @@ export async function createPlatformFixtureApiRuntimeAuthority(input: Readonly<{
     allowedOperations: Object.freeze([
       "createIdentitySession",
       "exchangeProductContext",
+      "previewRedemption",
+      "confirmRedemption",
+      "recoverRedemptionCommand",
+      "getRedemptionReceipt",
+      "getCreditGrant",
       "listIdentitySessions",
       "listAccountProducts",
       "getCreditSummary",
@@ -791,6 +815,11 @@ export async function finalizePlatformFixture(
       billingAccountRef: identity.billingAccountRef,
       ratingPolicyRevisionRef,
     });
+    const redemptionCodeFile = await setupRedemptionCommerce(admin, {
+      siteId: configuration.siteId,
+      privateDirectory: configuration.privateDirectory,
+      keyRingFile: runtimeAuthority.runtimeFiles.commerceRedemptionKeyRingFile,
+    });
     const access = await setupSessionAccessGrant(api, configuration.privateDirectory, site, identity,
       sessionAccessAuthority.signer, authorizationEventAuthority.signer);
     return createPlatformFixtureSetupResult({
@@ -811,6 +840,7 @@ export async function finalizePlatformFixture(
       platformPublicTlsCertificateAuthorityFile:
         runtimeAuthority.platformPublicTlsCertificateAuthorityFile,
       browserAuthFile: identity.browserAuthFile,
+      redemptionCodeFile,
       siteBffClientCertificateFile: runtimeAuthority.siteBffClientCertificateFile,
       siteBffWorkloadCredentialFile: runtimeAuthority.siteBffWorkloadCredentialFile,
       ...runtimeAuthority.runtimeFiles,
@@ -852,13 +882,25 @@ export async function observePlatformFixture(
       finalizedEvidenceCount: integer(row.finalizedEvidenceCount),
       segmentSettlementCount: integer(row.segmentSettlementCount),
       captureJournalCount: integer(row.captureJournalCount),
+      claimedRedemptionCodeCount: integer(row.claimedRedemptionCodeCount),
+      redemptionCount: integer(row.redemptionCount),
+      redemptionFulfillmentCount: integer(row.redemptionFulfillmentCount),
+      redemptionGrantCount: integer(row.redemptionGrantCount),
     };
+    const redemptionCounts = [counts.claimedRedemptionCodeCount, counts.redemptionCount,
+      counts.redemptionFulfillmentCount, counts.redemptionGrantCount];
     return createPlatformFixtureObservation({ ...counts,
       providerEffectOnce: counts.providerInvocationCount === 1,
       evidenceChainFinalized: counts.providerAttemptCount === 1 && counts.finalizedEvidenceCount === 1,
       creditSettledOnce: counts.segmentSettlementCount === 1 && counts.captureJournalCount === 1,
-      replayStable: Object.values(counts).every((value) => value <= 1),
+      replayStable: [counts.providerInvocationCount, counts.providerAttemptCount,
+        counts.finalizedEvidenceCount, counts.segmentSettlementCount,
+        counts.captureJournalCount].every((value) => value <= 1),
       availableConsumedDeltaEqual: row.availableConsumedDeltaEqual === true,
+      redemptionFulfilledOnce: redemptionCounts.every((value) => value === 1),
+      redemptionReplayStable: redemptionCounts.every((value) => value <= 1),
+      redemptionProductSourceVerified: row.redemptionProductSourceVerified === true,
+      redemptionGrantSourceVerified: row.redemptionGrantSourceVerified === true,
     });
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
@@ -1013,7 +1055,7 @@ async function prepareSite(
     modelOptionCatalogRef: fixture.modelCatalog.modelOptionCatalogRef,
     agentCatalogRef: fixture.agentCatalogRef, identityIssuerLabel: "Kokoro",
     identityAuthStrengthPolicyRevision: "identity-policy-web-chat-credit-v1",
-    enabledSurfaceIds: ["account", "chat"],
+    enabledSurfaceIds: ["account", "chat", "redemption"],
     localePolicy: { defaultLocale: "en-US", allowedLocales: ["en-US"] },
     certificationProof: { signingKeyRef: "fixture-signing-key", issuedAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + 60 * 60_000).toISOString(), signature: new Uint8Array(64) },
@@ -1256,6 +1298,105 @@ async function setupCredit(
     "credit.rating-policy.publish", input.siteId));
 }
 
+type FixtureCommerceAdminOperation =
+  | "commerce.credit-program.publish"
+  | "commerce.offer.publish"
+  | "commerce.redemption-program.publish"
+  | "commerce.code-batch.issue"
+  | "commerce.code-batch.approve"
+  | "commerce.code-batch.activate";
+
+async function setupRedemptionCommerce(
+  admin: PlatformTransactionalDatabaseClient,
+  input: Readonly<{ siteId: string; privateDirectory: string; keyRingFile: string }>,
+): Promise<string> {
+  const production = await createCommerceAdministrationComposition({
+    database: admin,
+    environment: { PLATFORM_COMMERCE_REDEMPTION_KEY_RING_FILE: input.keyRingFile },
+  });
+  const maker = "operator:fixture:commerce-maker";
+  const checker = "operator:fixture:commerce-checker";
+  const command = async (actorRef: string, subjectGeneration: string,
+    operation: FixtureCommerceAdminOperation) => {
+    const commandId = randomUUID();
+    return Object.freeze({
+      context: await adminCommerceContext(operation, input.siteId, actorRef, subjectGeneration),
+      siteId: input.siteId,
+      commandId,
+      idempotencyKey: `web-chat-credit-commerce:${commandId}`,
+    });
+  };
+  const creditProgramRevisionRef = `${input.siteId}:redemption-credit-program:1`;
+  const productVersionRef = `${input.siteId}:redemption-credit-pack:1`;
+  const fulfillmentProgramRevisionRef = `${input.siteId}:redemption-fulfillment:1`;
+  const redemptionProgramRevisionRef = `${input.siteId}:redemption-program:1`;
+  const batchRef = randomUUID();
+
+  await production.commerce.publishCreditProgramRevision({
+    ...await command(maker, "11", "commerce.credit-program.publish"),
+    creditProgramRevisionRef,
+    programRef: `${input.siteId}:redemption-credit-program`,
+    revision: "1",
+    uxBucketClass: "permanent",
+    unit: UNIT,
+    amount: "250000",
+    burnPriority: 90,
+    scopePolicy: { surfaceRefs: ["chat"], capabilityKeys: ["model.chat"],
+      agentRefs: [], allowUnattributedAgent: true },
+    liabilityMerchantAccountRef: LIABILITY_MERCHANT,
+    rolloverPolicy: "none",
+    calendarZone: null,
+    windowAnchor: null,
+    expiresAfterSeconds: null,
+  });
+  await production.commerce.publishOffer({
+    ...await command(maker, "11", "commerce.offer.publish"),
+    productRef: `${input.siteId}:redemption-credit-pack`,
+    productKind: "credit_pack",
+    productVersionRef,
+    productRevision: "1",
+    safeLabel: "Runtime redemption credits",
+    planVersion: null,
+    fulfillmentProgramRevisionRef,
+    fulfillmentProgramRef: `${input.siteId}:redemption-fulfillment`,
+    fulfillmentProgramRevision: "1",
+    outputs: [{ outputLineId: "credits", ordinal: 1, cardinality: 1,
+      outputKind: "credit_grant", targetRevisionRef: creditProgramRevisionRef }],
+    legalTermRefs: [],
+  });
+  await production.commerce.publishProgram({
+    ...await command(maker, "11", "commerce.redemption-program.publish"),
+    redemptionProgramRevisionRef,
+    programRef: `${input.siteId}:redemption-program`,
+    revision: "1",
+    productVersionRef,
+    fulfillmentProgramRevisionRef,
+    maxRedemptionsPerAccount: 1,
+  });
+  const delivery = await production.commerce.issueBatch({
+    ...await command(maker, "11", "commerce.code-batch.issue"),
+    batchRef,
+    redemptionProgramRevisionRef,
+    count: 1,
+    startsAt: null,
+    endsAt: null,
+  });
+  if (delivery.kind !== "secret_export" || delivery.codes.length !== 1) {
+    throw new Error("PLATFORM_FIXTURE_REDEMPTION_CODE_EXPORT_INVALID");
+  }
+  await production.commerce.approveBatch({
+    ...await command(checker, "7", "commerce.code-batch.approve"),
+    batchRef,
+  });
+  await production.commerce.activateBatch({
+    ...await command(checker, "7", "commerce.code-batch.activate"),
+    batchRef,
+  });
+  const redemptionCodeFile = resolve(input.privateDirectory, "redemption-code");
+  await writePrivateFile(redemptionCodeFile, delivery.codes[0]!);
+  return redemptionCodeFile;
+}
+
 async function setupSessionAccessGrant(
   api: PlatformTransactionalDatabaseClient,
   privateDirectory: string,
@@ -1350,6 +1491,7 @@ async function securityContext(
   siteId: string | null,
   site?: Readonly<{ siteReleaseRef: string; workloadIdentityId: string }>,
   targetOverride?: Readonly<{ purpose: string; scopes: readonly string[] }>,
+  actorOverride?: Readonly<{ subjectId: string; subjectGeneration: string }>,
 ) {
   if (kind === "site_product" && siteId === null) {
     throw new Error("PLATFORM_FIXTURE_SITE_CONTEXT_REQUIRED");
@@ -1368,7 +1510,8 @@ async function securityContext(
     trustedCaller: { kind, workloadIdentityId, environment: ENVIRONMENT, region: REGION, audience,
       allowedOperations: [operation], bindingEpoch: kind === "site_product" ? "2" : "1",
       issuedAt, expiresAt, ...siteCaller },
-    actor: { kind: actorKind, subjectId: `${actorKind}:fixture`, subjectGeneration: "1" },
+    actor: { kind: actorKind, subjectId: actorOverride?.subjectId ?? `${actorKind}:fixture`,
+      subjectGeneration: actorOverride?.subjectGeneration ?? "1" },
     delegatedGrant: null,
     target: { siteId, workspaceId: null, projectId: null,
       purpose: targetOverride?.purpose ?? operation,
@@ -1395,6 +1538,17 @@ function adminContext(
 ) {
   return securityContext("admin_workload", "operator", operation, siteId, undefined,
     { purpose, scopes });
+}
+
+function adminCommerceContext(
+  operation: FixtureCommerceAdminOperation,
+  siteId: string,
+  subjectId: string,
+  subjectGeneration: string,
+) {
+  return securityContext("admin_workload", "operator", operation, siteId, undefined,
+    { purpose: operation, scopes: ["admin:site", operation] },
+    { subjectId, subjectGeneration });
 }
 
 function runtimeDatabase(
@@ -1538,7 +1692,13 @@ interface ObservationRow extends Record<string, unknown> {
   finalizedEvidenceCount: number;
   segmentSettlementCount: number;
   captureJournalCount: number;
+  claimedRedemptionCodeCount: number;
+  redemptionCount: number;
+  redemptionFulfillmentCount: number;
+  redemptionGrantCount: number;
   availableConsumedDeltaEqual: boolean;
+  redemptionProductSourceVerified: boolean;
+  redemptionGrantSourceVerified: boolean;
 }
 
 const OBSERVATION_SQL = `WITH ledger AS (
@@ -1557,6 +1717,20 @@ SELECT
   (SELECT count(*)::int FROM platform.credit_usage_settlement WHERE site_ref=$1) AS "segmentSettlementCount",
   (SELECT count(*)::int FROM platform.credit_journal_transaction
     WHERE site_ref=$1 AND operation_kind='hold_capture') AS "captureJournalCount",
+  (SELECT count(*)::int FROM platform.commerce_redeem_code
+    WHERE site_ref=$1 AND state='claimed') AS "claimedRedemptionCodeCount",
+  (SELECT count(*)::int FROM platform.commerce_redemption
+    WHERE site_ref=$1 AND state='fulfilled') AS "redemptionCount",
+  (SELECT count(*)::int FROM platform.commerce_fulfillment_transaction
+    WHERE site_ref=$1 AND source_type='redemption' AND state='committed')
+    AS "redemptionFulfillmentCount",
+  (SELECT count(*)::int FROM platform.credit_grant
+    WHERE site_ref=$1 AND source_type='redemption') AS "redemptionGrantCount",
+  (SELECT count(*)=1 FROM platform.commerce_fulfillment_transaction
+    WHERE site_ref=$1 AND source_type='redemption' AND state='committed')
+    AS "redemptionProductSourceVerified",
+  (SELECT count(*)=1 FROM platform.credit_grant
+    WHERE site_ref=$1 AND source_type='redemption') AS "redemptionGrantSourceVerified",
   (SELECT issued.total-ledger.available=ledger.consumed FROM issued CROSS JOIN ledger)
     AS "availableConsumedDeltaEqual"`;
 
