@@ -88,7 +88,9 @@ three independent read-only secret mounts: `KOKORO_HUB_CONNECT_INBOUND_SECRETS_D
 must be mode 0400/0600 or mode 0440 for a dedicated workload group. Startup permits only a bounded
 Kubernetes AtomicWriter symlink chain whose final regular file remains inside its resolved trust
 root, and opens the target with `O_NOFOLLOW` plus inode and post-read snapshot checks. The storage
-YAML named by `KOKORO_WORKSPACE_CONFIG_FILE` must have a production `hub` object-store entry.
+YAML named by `KOKORO_WORKSPACE_CONFIG_FILE` must have a production `hub` object-store entry. The
+private Agent/Hub RPC deadline is a fixed 30-second maximum aligned with the Agent client contract;
+it is not runtime-configurable, and the deployable inventory records the same 30,000 ms boundary.
 
 ```bash
 docker compose -f deploy/docker-compose.services.yml config

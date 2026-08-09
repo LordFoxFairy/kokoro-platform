@@ -61,6 +61,8 @@ ConnectRPC。根层进程只做组合与 Root 生成契约适配，业务权威�
 生命周期仍由 `@kokoro/hub` 导出；本包不保留第二套 Connect main。4253 只提供 Mongo-aware
 health/readiness，不进入 Service discovery。Connect 进程在打开 listener 前强制校验 Mongo、
 package store、secret keyring、签名 key、入站 peer registry 与出站 Platform projection mTLS。
+私有 RPC 使用与 Agent client 唯一契约一致的 fixed 30-second request deadline；该上限 is
+not runtime-configurable，超过 30,000 ms 的 Connect timeout 在进入业务 handler 前被拒绝。
 
 ## 测试
 

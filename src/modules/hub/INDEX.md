@@ -13,7 +13,11 @@ Adapt the repository's single Root-generated Hub protobuf tree to Hub-owned cata
 
 ## Public boundary
 
-`interfaces/connect` contains the generated-service providers and runtime registration. `infrastructure/connect` contains the outbound Platform projection client. `src/process/hub-connect.ts` is the only production composition and process entrypoint.
+`interfaces/connect` contains the generated-service providers and runtime registration. Its inbound
+Agent/Hub deadline is a fixed 30-second maximum and is not runtime-configurable; an advertised
+30,001 ms deadline is rejected before dispatch. `infrastructure/connect` contains the outbound
+Platform projection client. `src/process/hub-connect.ts` is the only production composition and
+process entrypoint.
 
 ## Ownership boundary
 

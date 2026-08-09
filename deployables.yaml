@@ -575,6 +575,7 @@ deployables:
       ]
     audience: platform-hub-connect
     scalingKey: connect-request-concurrency
+    requestTimeoutMilliseconds: 30000
     readiness: /health/ready
     drain: http2-graceful
     sloOwner: platform-hub

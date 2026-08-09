@@ -10,6 +10,8 @@ import type { HubCatalogConnectService, HubRuntimeConnectService } from
 
 export interface HubConnectCaller { readonly identity: string }
 
+const HUB_CONNECT_MAX_TIMEOUT_MS = 30_000;
+
 export interface HubConnectRuntime {
   readonly handler: (request: Http2ServerRequest, response: Http2ServerResponse) => void;
   createServer(): Http2SecureServer;
@@ -36,7 +38,7 @@ export function createHubConnectRuntime(input: Readonly<{
     acceptCompression: [],
     readMaxBytes: 2 * 1024 * 1024,
     writeMaxBytes: 2 * 1024 * 1024,
-    maxTimeoutMs: 5_000,
+    maxTimeoutMs: HUB_CONNECT_MAX_TIMEOUT_MS,
   });
   const handler = (request: Http2ServerRequest, response: Http2ServerResponse): void => {
     response.setHeader("cache-control", "no-store");

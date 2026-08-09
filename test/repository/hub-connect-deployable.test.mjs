@@ -8,6 +8,7 @@ const root = resolve(import.meta.dirname, "../..");
 const selector = "platform-hub-connect";
 const connectPort = 4252;
 const healthPort = 4253;
+const requestTimeoutMilliseconds = 30_000;
 
 const requiredRuntimeEnvironment = Object.freeze([
   "KOKORO_HUB_MONGO_URL",
@@ -76,6 +77,7 @@ test("deployable inventory declares the Hub Connect contract and dependency boun
     ],
     audience: selector,
     scalingKey: "connect-request-concurrency",
+    requestTimeoutMilliseconds,
     readiness: "/health/ready",
     drain: "http2-graceful",
     sloOwner: "platform-hub",
@@ -257,4 +259,27 @@ test("operator examples document the three non-overlapping Hub trust roots", asy
     assert.ok(topology.includes(`\`${name}\``), `topology missing ${name}`);
   }
   assert.match(topology, /three independent read-only secret mounts/u);
+});
+
+test("deployment fixes the Hub request deadline to the Agent client contract", async () => {
+  const [runtime, compose, kubernetes, environment, readme, hubIndex, adapterIndex, topology] =
+    await Promise.all([
+      readFile(resolve(root, "src/modules/hub/interfaces/connect/hub-connect-runtime.ts"), "utf8"),
+      readFile(resolve(root, "deploy/docker-compose.services.yml"), "utf8"),
+      readFile(resolve(root, "deploy/k8s/platform-services.example.yaml"), "utf8"),
+      readFile(resolve(root, ".env.example"), "utf8"),
+      readFile(resolve(root, "kokoro-hub/README.md"), "utf8"),
+      readFile(resolve(root, "kokoro-hub/INDEX.md"), "utf8"),
+      readFile(resolve(root, "src/modules/hub/INDEX.md"), "utf8"),
+      readFile(resolve(root, "docs/platform/deployment-topology.md"), "utf8"),
+    ]);
+  assert.match(runtime, /const HUB_CONNECT_MAX_TIMEOUT_MS = 30_000;/u);
+  assert.match(runtime, /maxTimeoutMs: HUB_CONNECT_MAX_TIMEOUT_MS/u);
+  for (const document of [compose, kubernetes, environment]) {
+    assert.doesNotMatch(document, /KOKORO_HUB_(?:CONNECT_MAX|RPC)_TIMEOUT_MS/u);
+  }
+  for (const document of [readme, hubIndex, adapterIndex, topology]) {
+    assert.match(document, /30-second/u);
+    assert.match(document, /not runtime-configurable/u);
+  }
 });
