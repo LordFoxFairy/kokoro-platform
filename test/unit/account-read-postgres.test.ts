@@ -25,6 +25,9 @@ describe("PostgresAccountReadRepository", () => {
       expect(query).toMatch(/actual\.output_kind='credit_grant'[\s\S]+grant_fact\.credit_grant_id::text=actual\.output_ref/u);
       expect(query).toMatch(/actual\.output_kind='entitlement_grant'[\s\S]+entitlement\.entitlement_grant_ref::text=actual\.output_ref/u);
       expect(query).toMatch(/actual\.output_kind='subscription_term'[\s\S]+term\.subscription_term_ref::text=actual\.output_ref/u);
+      expect(query).toMatch(/LEFT JOIN platform\.commerce_redemption redemption[\s\S]+redemption\.code_ref::text=fulfillment\.source_id[\s\S]+redemption\.fulfillment_ref=fulfillment\.fulfillment_id/u);
+      expect(query).toContain("redemption.product_version_ref=fulfillment.product_version_ref");
+      expect(query).not.toContain("redemption.redemption_id::text=fulfillment.source_id");
       expect(query).not.toMatch(/\bgrant\./u);
       expect(query).not.toMatch(/grant_fact\.source_ref=fulfillment\.source_id/u);
       expect(query).not.toMatch(/entitlement\.source_ref=fulfillment\.source_id/u);

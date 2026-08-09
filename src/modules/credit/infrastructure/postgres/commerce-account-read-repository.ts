@@ -155,7 +155,11 @@ export class PostgresAccountReadRepository implements AccountReadRepository {
        LEFT JOIN platform.commerce_subscription_term term
          ON actual.output_kind='subscription_term' AND term.site_ref=fulfillment.site_ref
         AND term.subscription_term_ref::text=actual.output_ref
-       LEFT JOIN platform.commerce_redemption redemption ON fulfillment.source_type='redemption' AND redemption.site_ref=fulfillment.site_ref AND redemption.redemption_id::text=fulfillment.source_id
+       LEFT JOIN platform.commerce_redemption redemption
+        ON fulfillment.source_type='redemption' AND redemption.site_ref=fulfillment.site_ref
+        AND redemption.code_ref::text=fulfillment.source_id
+        AND redemption.product_version_ref=fulfillment.product_version_ref
+        AND redemption.fulfillment_ref=fulfillment.fulfillment_id
        WHERE fulfillment.site_ref=$1 AND fulfillment.state='committed'
        GROUP BY fulfillment.fulfillment_id,version.product_ref,version.product_version_ref,version.safe_label,product.kind,
                 version.plan_version_ref,plan.plan_ref,plan.safe_label,redemption.state

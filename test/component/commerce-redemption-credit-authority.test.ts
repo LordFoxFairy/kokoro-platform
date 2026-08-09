@@ -235,6 +235,20 @@ describe("Commerce redemption-to-credit PostgreSQL authority", () => {
         ...committedFacts,
         previewCount: 2,
       });
+      await bootstrap.query(
+        `UPDATE platform.commerce_redemption
+         SET state='reversed',state_observed_at=clock_timestamp()
+         WHERE redemption_id=$1::uuid AND site_ref=$2`,
+        [confirmation.redemption.redemptionId, fixture.siteId],
+      );
+      await expect(production.accountQueries.listAccountProducts({
+        context: await commercePublicContext(fixture, "listAccountProducts"),
+      })).resolves.toMatchObject({ products: [{
+        productVersionRef: fixture.productVersionRef,
+        kind: "credit_pack",
+        state: "revoked",
+        source: { kind: "redemption" },
+      }] });
     } finally {
       await Promise.allSettled([wrongRole.end(), admin.disconnect(), api.disconnect()]);
       try {
