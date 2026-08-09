@@ -58,6 +58,11 @@ evidence. A commit-ambiguous finalize/unknown retry first observes the durable i
 append a second terminal frame. If shutdown wins while storage remains unavailable, restart maintenance marks the expired dispatch
 `outcome_unknown` without preparing or invoking any provider.
 
+Lease renewal and terminal CAS use PostgreSQL's statement clock rather than a transaction-start timestamp. Live-owner
+terminalization must retain the same instance reference and dispatch fence under an unexpired lease; expired-owner recovery must
+retain the exact owner, fence, and expired lease observed by the scanner. If an attachment's stale expiry observation loses to an
+owner renewal, the attachment continues consuming durable frames instead of failing or redispatching the provider.
+
 The production listener is private HTTP/2 ConnectRPC over TLS 1.3 mutual authentication and an exact certificate
 fingerprint/SPIFFE allowlist. Only the configured GA SPIFFE identity may invoke the RPC. Trusted provider reconciliation remains an
 internal application/worker path; it is deliberately not caller-accessible. It can finalize only an existing `outcome_unknown`

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ModelGatewayInvocationRecord } from
+import type { ModelGatewayInvocationRecord, ModelGatewayOutcomeUnknownAuthority } from
   "../../src/modules/model-gateway/application/model-gateway-service.js";
 import { PostgresModelGatewayRepository } from
   "../../src/modules/model-gateway/infrastructure/postgres/model-gateway-repository.js";
@@ -22,7 +22,7 @@ describe("PostgresModelGatewayRepository", () => {
 
     expect(sql.writes).toHaveLength(2);
     expect(sql.writes[0]?.statement).toMatch(
-      /UPDATE platform\.model_gateway_invocation[\s\S]+state='dispatching'[\s\S]+dispatch_owner_ref=\$5[\s\S]+dispatch_lease_expires_at>now\(\)/u,
+      /UPDATE platform\.model_gateway_invocation[\s\S]+state='dispatching'[\s\S]+dispatch_owner_ref=\$5[\s\S]+dispatch_fence=\$6::bigint[\s\S]+dispatch_lease_expires_at>clock_timestamp\(\)/u,
     );
     expect(sql.writes[0]?.values).toEqual([
       "2029-01-01T00:00:30.000Z",
@@ -30,9 +30,10 @@ describe("PostgresModelGatewayRepository", () => {
       "invocation-1",
       "a".repeat(64),
       "model-gateway:instance-1",
+      "1",
     ]);
     expect(sql.writes[1]?.statement).toMatch(
-      /UPDATE platform\.model_gateway_dispatch_queue[\s\S]+state='dispatching'[\s\S]+dispatch_owner_ref=\$4[\s\S]+dispatch_lease_expires_at>now\(\)/u,
+      /UPDATE platform\.model_gateway_dispatch_queue[\s\S]+state='dispatching'[\s\S]+dispatch_owner_ref=\$4[\s\S]+dispatch_lease_expires_at>clock_timestamp\(\)/u,
     );
     expect(sql.writeSql()).not.toMatch(/state='terminal'|INSERT|DELETE/u);
   });
@@ -50,6 +51,73 @@ describe("PostgresModelGatewayRepository", () => {
       revokePlatformTransaction(lease);
     }
     expect(sql.writes).toHaveLength(1);
+  });
+
+  it("requires an expired observation to retain the same owner, fence, and lease at unknown CAS", async () => {
+    const sql = new RecordingSql([1, 1, 1, 1]);
+    const lease = issuePlatformTransaction(sql);
+    const instance = repository();
+    const changed: ModelGatewayInvocationRecord = Object.freeze({
+      ...invocation(),
+      state: "outcome_unknown",
+      fenceEpoch: 2n,
+      ownerEvidenceRef: `model-gateway-owner-expired:sha256:${"c".repeat(64)}`,
+      updatedAt: "2029-01-01T00:00:20.000Z",
+    });
+    try {
+      await instance.persistOutcomeUnknown(lease.transaction, changed, {
+        kind: "expired",
+        observedOwnerInstanceRef: "model-gateway:instance-1",
+        observedDispatchFence: 1n,
+        observedLeaseExpiresAt: "2029-01-01T00:00:10.000Z",
+      } satisfies ModelGatewayOutcomeUnknownAuthority);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+
+    expect(sql.writes[0]?.statement).toMatch(
+      /dispatch_owner_ref=\$8[\s\S]+dispatch_fence=\$9::bigint[\s\S]+\$10='expired'[\s\S]+dispatch_lease_expires_at=\$11::timestamptz[\s\S]+dispatch_lease_expires_at<=clock_timestamp\(\)/u,
+    );
+    expect(sql.writes[0]?.values?.slice(7)).toEqual([
+      "model-gateway:instance-1",
+      "1",
+      "expired",
+      "2029-01-01T00:00:10.000Z",
+    ]);
+  });
+
+  it("finalizes a live dispatch only for its matching owner fence and unexpired lease", async () => {
+    const sql = new RecordingSql([1, 1, 1, 1, 1]);
+    const lease = issuePlatformTransaction(sql);
+    const terminal: ModelGatewayInvocationRecord = Object.freeze({
+      ...invocation(),
+      state: "succeeded",
+      responseBody: new Uint8Array([1]),
+      fenceEpoch: 2n,
+      usageEvidence: Object.freeze({
+        evidenceKind: "measured",
+        dimensions: Object.freeze([]),
+        attemptOutcome: "succeeded",
+        occurredAt: "2029-01-01T00:00:20.000Z",
+      }),
+      evidenceRef: "evidence-1",
+      sourceDigest: "b".repeat(64),
+      updatedAt: "2029-01-01T00:00:20.000Z",
+    });
+    try {
+      await repository().persistTerminal(lease.transaction, terminal, "dispatching");
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+
+    expect(sql.writes[0]?.statement).toMatch(
+      /dispatch_owner_ref=\$11[\s\S]+dispatch_fence=\$13::bigint[\s\S]+dispatch_lease_expires_at>clock_timestamp\(\)/u,
+    );
+    expect(sql.writes[0]?.values?.slice(10)).toEqual([
+      "model-gateway:instance-1",
+      "dispatching",
+      "1",
+    ]);
   });
 
   it("preserves an app-authored terminal timestamp while appending the terminal frame", async () => {

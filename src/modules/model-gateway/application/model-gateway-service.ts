@@ -182,8 +182,22 @@ export interface ModelGatewayRepository {
   persistOutcomeUnknown(
     transaction: PlatformTransaction,
     record: ModelGatewayInvocationRecord,
+    authority: ModelGatewayOutcomeUnknownAuthority,
   ): Promise<void>;
 }
+
+export type ModelGatewayOutcomeUnknownAuthority =
+  | Readonly<{
+      kind: "owned";
+      ownerInstanceRef: string;
+      dispatchFence: bigint;
+    }>
+  | Readonly<{
+      kind: "expired";
+      observedOwnerInstanceRef: string;
+      observedDispatchFence: bigint;
+      observedLeaseExpiresAt: string;
+    }>;
 
 export interface ModelGatewayUnitOfWork {
   scanDispatchCandidates(limit: number): Promise<readonly Readonly<{
@@ -497,10 +511,14 @@ export class ModelGatewayService {
 
     let record = prepared.record;
     if (record.state === "dispatching" &&
-        Date.parse(record.updatedAt) <= this.#now().getTime() - this.#dispatchRecoveryAfterMs) {
-      await this.#markOutcomeUnknown(record, `model-gateway-owner-expired:sha256:${commandDigest(
-        "expired-owner", { invocationRef: record.invocationRef, requestDigest: record.requestDigest },
-      )}`, true);
+        Date.parse(record.dispatchLeaseExpiresAt ?? record.updatedAt) <= this.#now().getTime()) {
+      try {
+        await this.#markOutcomeUnknown(record, `model-gateway-owner-expired:sha256:${commandDigest(
+          "expired-owner", { invocationRef: record.invocationRef, requestDigest: record.requestDigest },
+        )}`, expiredUnknownAuthority(record), true);
+      } catch (cause) {
+        if (!expiredObservationLost(cause)) throw cause;
+      }
     } else if (record.state === "queued") {
       const claimed = await this.dependencies.unitOfWork.execute({
         operation: "claim",
@@ -628,7 +646,7 @@ export class ModelGatewayService {
           invocationRef: loaded.record.invocationRef,
           requestDigest: loaded.record.requestDigest,
         },
-      )}`, true);
+      )}`, expiredUnknownAuthority(loaded.record), true);
       return;
     }
     const prepared = this.dependencies.provider.prepare(loaded.request, loaded.authorization);
@@ -765,7 +783,12 @@ export class ModelGatewayService {
     while (!this.#shutdownController.signal.aborted) {
       try {
         if (terminal.kind === "outcome_unknown") {
-          await this.#markOutcomeUnknown(record, terminal.ownerEvidenceRef, true);
+          await this.#markOutcomeUnknown(
+            record,
+            terminal.ownerEvidenceRef,
+            ownedUnknownAuthority(record, this.#instanceRef),
+            true,
+          );
         } else {
           await this.#finalize(record, terminal, "dispatching", true);
         }
@@ -790,7 +813,7 @@ export class ModelGatewayService {
   }
 
   async #heartbeatLoop(record: ModelGatewayInvocationRecord, signal: AbortSignal): Promise<void> {
-    const intervalMs = Math.max(1_000, Math.min(10_000, Math.floor(this.#dispatchRecoveryAfterMs / 3)));
+    const intervalMs = Math.max(100, Math.min(10_000, Math.floor(this.#dispatchRecoveryAfterMs / 3)));
     while (!signal.aborted) {
       try { await abortableDelay(intervalMs, signal); } catch {
         if (signal.aborted) return;
@@ -967,9 +990,11 @@ export class ModelGatewayService {
   async #markOutcomeUnknown(
     prepared: ModelGatewayInvocationRecord,
     ownerEvidenceRef: string,
+    authority: ModelGatewayOutcomeUnknownAuthority,
     appendStreamTerminal = false,
   ): Promise<ModelGatewayInvocationResult> {
     reference(ownerEvidenceRef, "MODEL_GATEWAY_PROVIDER_EVIDENCE_REF_INVALID");
+    validateUnknownAuthority(authority);
     return this.dependencies.unitOfWork.execute({
       operation: "unknown",
       modelAuthorizationHandle: prepared.modelAuthorizationHandle,
@@ -980,6 +1005,7 @@ export class ModelGatewayService {
       });
       if (current === null) throw new Error("MODEL_GATEWAY_INVOCATION_NOT_FOUND");
       if (current.state !== "dispatching") return replay(current, prepared.requestDigest).result;
+      assertUnknownAuthority(current, authority);
       const unknown = await this.dependencies.usageOwner.markAttemptOutcomeUnknown(transaction, {
         siteId: current.siteId,
         attemptAuthorizationRef: current.attemptAuthorizationRef,
@@ -1003,7 +1029,7 @@ export class ModelGatewayService {
         ownerEvidenceRef,
         updatedAt: this.#now().toISOString(),
       });
-      await this.dependencies.repository.persistOutcomeUnknown(transaction, changed);
+      await this.dependencies.repository.persistOutcomeUnknown(transaction, changed, authority);
       if (appendStreamTerminal) {
         const streaming = this.dependencies.streamingRepository;
         if (streaming === undefined) throw new Error("MODEL_GATEWAY_STREAMING_NOT_CONFIGURED");
@@ -1160,6 +1186,81 @@ function commandDigest(kind: string, fields: Readonly<Record<string, string>>): 
 function errorDigest(error: unknown): string {
   const safe = error instanceof Error ? error.name : typeof error;
   return createHash("sha256").update(safe).digest("hex");
+}
+
+function expiredObservationLost(error: unknown): boolean {
+  return error instanceof Error && (
+    error.message === "MODEL_GATEWAY_UNKNOWN_AUTHORITY_LOST" ||
+    error.message === "MODEL_GATEWAY_UNKNOWN_CAS_LOST"
+  );
+}
+
+function ownedUnknownAuthority(
+  record: ModelGatewayInvocationRecord,
+  ownerInstanceRef: string,
+): ModelGatewayOutcomeUnknownAuthority {
+  if (record.dispatchOwnerRef !== ownerInstanceRef || record.dispatchFence === undefined ||
+      record.dispatchFence <= 0n) {
+    throw new Error("MODEL_GATEWAY_UNKNOWN_AUTHORITY_INVALID");
+  }
+  return Object.freeze({
+    kind: "owned",
+    ownerInstanceRef,
+    dispatchFence: record.dispatchFence,
+  });
+}
+
+function expiredUnknownAuthority(
+  record: ModelGatewayInvocationRecord,
+): ModelGatewayOutcomeUnknownAuthority {
+  if (record.dispatchOwnerRef === undefined || record.dispatchOwnerRef === null ||
+      record.dispatchFence === undefined || record.dispatchFence <= 0n ||
+      record.dispatchLeaseExpiresAt === undefined || record.dispatchLeaseExpiresAt === null ||
+      !Number.isFinite(Date.parse(record.dispatchLeaseExpiresAt))) {
+    throw new Error("MODEL_GATEWAY_UNKNOWN_AUTHORITY_INVALID");
+  }
+  return Object.freeze({
+    kind: "expired",
+    observedOwnerInstanceRef: record.dispatchOwnerRef,
+    observedDispatchFence: record.dispatchFence,
+    observedLeaseExpiresAt: record.dispatchLeaseExpiresAt,
+  });
+}
+
+function validateUnknownAuthority(authority: ModelGatewayOutcomeUnknownAuthority): void {
+  if (authority.kind === "owned") {
+    reference(authority.ownerInstanceRef, "MODEL_GATEWAY_UNKNOWN_AUTHORITY_INVALID");
+    if (authority.dispatchFence <= 0n) throw new Error("MODEL_GATEWAY_UNKNOWN_AUTHORITY_INVALID");
+    return;
+  }
+  reference(authority.observedOwnerInstanceRef, "MODEL_GATEWAY_UNKNOWN_AUTHORITY_INVALID");
+  if (authority.observedDispatchFence <= 0n ||
+      !Number.isFinite(Date.parse(authority.observedLeaseExpiresAt))) {
+    throw new Error("MODEL_GATEWAY_UNKNOWN_AUTHORITY_INVALID");
+  }
+}
+
+function assertUnknownAuthority(
+  current: ModelGatewayInvocationRecord,
+  authority: ModelGatewayOutcomeUnknownAuthority,
+): void {
+  const leaseExpiresAt = current.dispatchLeaseExpiresAt;
+  if (current.dispatchFence === undefined || leaseExpiresAt === undefined || leaseExpiresAt === null ||
+      !Number.isFinite(Date.parse(leaseExpiresAt))) {
+    throw new Error("MODEL_GATEWAY_UNKNOWN_AUTHORITY_LOST");
+  }
+  if (authority.kind === "owned") {
+    if (current.dispatchOwnerRef !== authority.ownerInstanceRef ||
+        current.dispatchFence !== authority.dispatchFence) {
+      throw new Error("MODEL_GATEWAY_UNKNOWN_AUTHORITY_LOST");
+    }
+    return;
+  }
+  if (current.dispatchOwnerRef !== authority.observedOwnerInstanceRef ||
+      current.dispatchFence !== authority.observedDispatchFence ||
+      leaseExpiresAt !== authority.observedLeaseExpiresAt) {
+    throw new Error("MODEL_GATEWAY_UNKNOWN_AUTHORITY_LOST");
+  }
 }
 
 function terminalizationFailureEvidence(

@@ -4,6 +4,7 @@ import {
   ModelGatewayService,
   type ModelGatewayFrameWaiter,
   type ModelGatewayInvocationRecord,
+  type ModelGatewayOutcomeUnknownAuthority,
   type ModelGatewayProviderOutcome,
   type ModelGatewayProviderPort,
   type ModelGatewayRepository,
@@ -50,6 +51,7 @@ type HarnessInput = Readonly<{
   terminalizationRetryInitialMs?: number;
   terminalizationRetryMaximumMs?: number;
   instanceRef?: string;
+  dispatchRecoveryAfterMs?: number;
 }>;
 
 describe("ModelGatewayService provider terminalization", () => {
@@ -160,11 +162,12 @@ describe("ModelGatewayService provider terminalization", () => {
       instanceRef: "model-gateway:terminalization-owner",
       outcome: unknownOutcome("c"),
       clock: () => new Date(Date.now()),
-      terminalizationRetryInitialMs: 250,
+      dispatchRecoveryAfterMs: 3_000,
+      terminalizationRetryInitialMs: 500,
       terminalizationRetryMaximumMs: 1_000,
       markUnknown: async () => {
         terminalUnknownAttempts += 1;
-        if (terminalUnknownAttempts < 4) throw new Error("TRANSIENT_TERMINALIZATION_FAILURE");
+        if (terminalUnknownAttempts < 5) throw new Error("TRANSIENT_TERMINALIZATION_FAILURE");
         return unknownReceipt();
       },
     });
@@ -189,7 +192,7 @@ describe("ModelGatewayService provider terminalization", () => {
     const collected = collect(harness.service.stream(invocation(controller.signal)));
 
     try {
-      await vi.advanceTimersByTimeAsync(1_400);
+      await vi.advanceTimersByTimeAsync(3_250);
       await flushMicrotasks();
 
       expect(repository.heartbeatCalls).toBeGreaterThanOrEqual(1);
@@ -199,7 +202,7 @@ describe("ModelGatewayService provider terminalization", () => {
       expect(harness.service.activeDispatchCount()).toBe(1);
       expect(harness.stats.providerEffectCalls).toBe(1);
 
-      await vi.advanceTimersByTimeAsync(350);
+      await vi.advanceTimersByTimeAsync(500);
       await flushMicrotasks();
       expect((await collected).map(({ payload }) => payload.kind)).toEqual([
         "accepted", "outcome_unknown",
@@ -211,6 +214,141 @@ describe("ModelGatewayService provider terminalization", () => {
     } finally {
       controller.abort("test-complete");
       await Promise.all([harness.service.shutdown(), scanner.service.shutdown()]);
+    }
+  });
+
+  it("B: renews before every supported one-second lease can expire", async () => {
+    vi.useFakeTimers({ now: new Date("2029-01-01T00:00:00.000Z") });
+    const harness = createHarness({
+      outcome: unknownOutcome("f"),
+      clock: () => new Date(Date.now()),
+      dispatchRecoveryAfterMs: 1_000,
+      terminalizationRetryInitialMs: 500,
+      terminalizationRetryMaximumMs: 500,
+      markUnknown: async (call) => {
+        if (call < 4) throw new Error("TRANSIENT_TERMINALIZATION_FAILURE");
+        return unknownReceipt();
+      },
+    });
+    const controller = new AbortController();
+    const collected = collect(harness.service.stream(invocation(controller.signal)));
+
+    try {
+      await vi.advanceTimersByTimeAsync(1_250);
+      await flushMicrotasks();
+
+      expect(harness.repository.heartbeatCalls).toBeGreaterThanOrEqual(2);
+      expect(Date.parse(harness.repository.record?.dispatchLeaseExpiresAt ?? ""))
+        .toBeGreaterThan(Date.now());
+      expect(harness.repository.record?.state).toBe("dispatching");
+      expect(harness.service.activeDispatchCount()).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(300);
+      await flushMicrotasks();
+      expect((await collected).map(({ payload }) => payload.kind)).toEqual([
+        "accepted", "outcome_unknown",
+      ]);
+      expect(harness.stats.providerEffectCalls).toBe(1);
+    } finally {
+      controller.abort("test-complete");
+      await harness.service.shutdown();
+    }
+  });
+
+  it.each([
+    ["same instance", "model-gateway:recovery-scanner"],
+    ["independent instance", "model-gateway:active-owner"],
+  ])("B: %s recovery rechecks an expired observation after the active owner renews", async (
+    _label,
+    activeOwnerRef,
+  ) => {
+    const repository = new TerminalizationMemoryRepository();
+    repository.record = dispatchingRecord({
+      ownerInstanceRef: activeOwnerRef,
+      leaseExpiresAt: "2029-01-01T00:00:01.000Z",
+    });
+    let scans = 0;
+    const scanner = createHarness({
+      repository,
+      instanceRef: "model-gateway:recovery-scanner",
+      clock: () => new Date("2029-01-01T00:00:02.000Z"),
+      scanDispatchCandidates: async () => scans++ === 0
+        ? [{ modelAuthorizationHandle: authorizationHandle, logicalCallRef: "logical-call-1" }]
+        : [],
+      afterExecute: (operation, call) => {
+        if (operation !== "attach" || call !== 1 || repository.record === null) return;
+        repository.record = Object.freeze({
+          ...repository.record,
+          dispatchLeaseExpiresAt: "2029-01-01T00:00:10.000Z",
+          updatedAt: "2029-01-01T00:00:02.000Z",
+        });
+      },
+    });
+
+    try {
+      scanner.service.start();
+      await waitFor(() => operationCount(scanner.stats, "unknown") >= 1);
+
+      expect(scanner.stats.localPrepareCalls).toBe(0);
+      expect(scanner.stats.providerEffectCalls).toBe(0);
+      expect(scanner.stats.markUnknownCalls).toBe(0);
+      expect(repository.record?.state).toBe("dispatching");
+      expect(repository.record?.dispatchOwnerRef).toBe(activeOwnerRef);
+      expect(repository.record?.dispatchLeaseExpiresAt).toBe("2029-01-01T00:00:10.000Z");
+      expect(repository.terminalFrames()).toHaveLength(0);
+    } finally {
+      await scanner.service.shutdown();
+    }
+  });
+
+  it("B: keeps a caller attached when its expired observation loses to an owner renewal", async () => {
+    const repository = new TerminalizationMemoryRepository();
+    const expired = dispatchingRecord({
+      ownerInstanceRef: "model-gateway:active-owner",
+      leaseExpiresAt: "2029-01-01T00:00:01.000Z",
+    });
+    repository.record = expired;
+    repository.seedFrame({ kind: "accepted" });
+    const harness = createHarness({
+      repository,
+      instanceRef: "model-gateway:attaching-caller",
+      clock: () => new Date("2029-01-01T00:00:02.000Z"),
+      afterExecute: (operation, call) => {
+        if (operation !== "prepare" || call !== 1 || repository.record === null) return;
+        repository.record = Object.freeze({
+          ...repository.record,
+          dispatchLeaseExpiresAt: "2029-01-01T00:00:10.000Z",
+          updatedAt: "2029-01-01T00:00:02.000Z",
+        });
+      },
+    });
+    const controller = new AbortController();
+    const completion = collect(harness.service.stream(invocation(controller.signal)));
+    const terminal = setTimeout(() => {
+      if (repository.record === null) return;
+      repository.record = Object.freeze({
+        ...repository.record,
+        state: "outcome_unknown",
+        fenceEpoch: 2n,
+        ownerEvidenceRef: `provider-outcome:sha256:${"9".repeat(64)}`,
+        updatedAt: "2029-01-01T00:00:03.000Z",
+      });
+      repository.seedFrame({ kind: "outcome_unknown" });
+    }, 10);
+
+    try {
+      await expect(completion).resolves.toMatchObject([
+        { payload: { kind: "accepted" } },
+        { payload: { kind: "outcome_unknown" } },
+      ]);
+      expect(harness.stats.markUnknownCalls).toBe(0);
+      expect(harness.stats.localPrepareCalls).toBe(1);
+      expect(harness.stats.providerEffectCalls).toBe(0);
+      expect(repository.terminalFrames()).toHaveLength(1);
+    } finally {
+      clearTimeout(terminal);
+      controller.abort("test-complete");
+      await harness.service.shutdown();
     }
   });
 
@@ -373,11 +511,14 @@ class TerminalizationMemoryRepository implements ModelGatewayRepository,
   }
 
   async heartbeat(_transaction: never, input: Readonly<{
+    record: ModelGatewayInvocationRecord;
     ownerInstanceRef: string;
     leaseExpiresAt: string;
   }>) {
     if (this.record?.state !== "dispatching" ||
-        this.record.dispatchOwnerRef !== input.ownerInstanceRef) {
+        this.record.dispatchOwnerRef !== input.ownerInstanceRef ||
+        this.record.dispatchFence !== input.record.dispatchFence ||
+        Date.parse(this.record.dispatchLeaseExpiresAt ?? "") <= Date.now()) {
       throw new Error("TEST_HEARTBEAT_FENCE_LOST");
     }
     this.heartbeatCalls += 1;
@@ -391,7 +532,21 @@ class TerminalizationMemoryRepository implements ModelGatewayRepository,
     this.record = record;
   }
 
-  async persistOutcomeUnknown(_transaction: never, record: ModelGatewayInvocationRecord) {
+  async persistOutcomeUnknown(
+    _transaction: never,
+    record: ModelGatewayInvocationRecord,
+    authority: ModelGatewayOutcomeUnknownAuthority,
+  ) {
+    const current = this.record;
+    const authorized = current?.state === "dispatching" && (
+      authority.kind === "owned"
+        ? current.dispatchOwnerRef === authority.ownerInstanceRef &&
+          current.dispatchFence === authority.dispatchFence
+        : current.dispatchOwnerRef === authority.observedOwnerInstanceRef &&
+          current.dispatchFence === authority.observedDispatchFence &&
+          current.dispatchLeaseExpiresAt === authority.observedLeaseExpiresAt
+    );
+    if (!authorized) throw new Error("TEST_UNKNOWN_AUTHORITY_LOST");
     this.record = record;
   }
 
@@ -438,6 +593,10 @@ class TerminalizationMemoryRepository implements ModelGatewayRepository,
     return this.frames.filter(({ payload }) =>
       payload.kind === "completed" || payload.kind === "failed" ||
       payload.kind === "outcome_unknown");
+  }
+
+  seedFrame(payload: ModelGatewayStreamPayload): ModelGatewayStreamFrame {
+    return this.append(payload);
   }
 
   private append(payload: ModelGatewayStreamPayload): ModelGatewayStreamFrame {
@@ -533,7 +692,7 @@ function createHarness(input: HarnessInput = {}) {
       kind === "invocation" ? "invocation-1" : "evidence-1",
     clock: input.clock ?? (() => new Date("2029-01-01T00:00:00.000Z")),
     instanceRef: input.instanceRef ?? "model-gateway:terminalization-test",
-    dispatchRecoveryAfterMs: 1_000,
+    dispatchRecoveryAfterMs: input.dispatchRecoveryAfterMs ?? 1_000,
     providerHardTimeoutMs: 1_000,
     terminalizationRetryInitialMs: input.terminalizationRetryInitialMs ?? 10,
     terminalizationRetryMaximumMs: input.terminalizationRetryMaximumMs ?? 40,
@@ -582,6 +741,41 @@ function unknownReceipt() {
     state: "outcome_unknown" as const,
     fenceEpoch: 2n,
     attemptAuthorizationRef: "attempt-authorization-1",
+  });
+}
+
+function dispatchingRecord(input: Readonly<{
+  ownerInstanceRef: string;
+  leaseExpiresAt: string;
+}>): ModelGatewayInvocationRecord {
+  return Object.freeze({
+    siteId: "site-a",
+    invocationRef: "invocation-1",
+    modelAuthorizationHandle: authorizationHandle,
+    executionManifestRef: "manifest-a",
+    authorizationSegmentRef: "segment-a",
+    logicalCallRef: "logical-call-1",
+    attemptRef: "attempt-1",
+    producerContext: "ga-run-1",
+    producerGeneration: 1n,
+    requestDigest: "a".repeat(64),
+    gatewayModel: "chat-primary",
+    maximumDimensions: Object.freeze([
+      Object.freeze({ dimensionKey: "output_tokens", sourceUnit: "token", quantity: 16n }),
+    ]),
+    attemptAuthorizationRef: "attempt-authorization-1",
+    fenceEpoch: 1n,
+    state: "dispatching",
+    responseBody: null,
+    usageEvidence: null,
+    evidenceRef: null,
+    sourceDigest: null,
+    ownerEvidenceRef: null,
+    dispatchOwnerRef: input.ownerInstanceRef,
+    dispatchFence: 1n,
+    dispatchLeaseExpiresAt: input.leaseExpiresAt,
+    createdAt: "2029-01-01T00:00:00.000Z",
+    updatedAt: "2029-01-01T00:00:00.000Z",
   });
 }
 

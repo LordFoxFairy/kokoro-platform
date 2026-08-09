@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type {
   ModelGatewayInvocationRecord,
+  ModelGatewayOutcomeUnknownAuthority,
   ModelGatewayRepository,
   ModelGatewayRequest,
   ModelGatewayStreamFrame,
@@ -236,18 +237,19 @@ export class PostgresModelGatewayRepository implements ModelGatewayRepository, M
   ): Promise<void> {
     await one(resolvePlatformTransaction(transaction).execute(
       `UPDATE platform.model_gateway_invocation
-       SET dispatch_lease_expires_at=$1::timestamptz,updated_at=now()
+       SET dispatch_lease_expires_at=$1::timestamptz,updated_at=clock_timestamp()
        WHERE site_ref=$2 AND invocation_ref=$3 AND request_digest=$4
          AND state='dispatching' AND dispatch_owner_ref=$5
-         AND dispatch_lease_expires_at>now()`,
+         AND dispatch_fence=$6::bigint
+         AND dispatch_lease_expires_at>clock_timestamp()`,
       [input.leaseExpiresAt, input.record.siteId, input.record.invocationRef,
-        input.record.requestDigest, input.ownerInstanceRef],
+        input.record.requestDigest, input.ownerInstanceRef, (input.record.dispatchFence ?? 0n).toString()],
     ), "MODEL_GATEWAY_DISPATCH_HEARTBEAT_FENCE_LOST");
     await one(resolvePlatformTransaction(transaction).execute(
       `UPDATE platform.model_gateway_dispatch_queue
-       SET dispatch_lease_expires_at=$1::timestamptz,updated_at=now()
+       SET dispatch_lease_expires_at=$1::timestamptz,updated_at=clock_timestamp()
        WHERE site_ref=$2 AND invocation_ref=$3 AND state='dispatching'
-         AND dispatch_owner_ref=$4 AND dispatch_lease_expires_at>now()`,
+         AND dispatch_owner_ref=$4 AND dispatch_lease_expires_at>clock_timestamp()`,
       [input.leaseExpiresAt, input.record.siteId, input.record.invocationRef, input.ownerInstanceRef],
     ), "MODEL_GATEWAY_DISPATCH_QUEUE_HEARTBEAT_FENCE_LOST");
   }
@@ -307,11 +309,13 @@ export class PostgresModelGatewayRepository implements ModelGatewayRepository, M
          AND request_digest=$10
          AND state=$12
          AND ($12='outcome_unknown' OR
-           (dispatch_owner_ref=$11 AND dispatch_lease_expires_at>now()))
+           (dispatch_owner_ref=$11 AND dispatch_fence=$13::bigint
+             AND dispatch_lease_expires_at>clock_timestamp()))
          AND fence_epoch=($5::bigint-1)`,
       [record.state, canonical(envelope), record.evidenceRef, record.sourceDigest,
         record.fenceEpoch.toString(), record.updatedAt, record.siteId, record.invocationRef,
-        record.logicalCallRef, record.requestDigest, record.dispatchOwnerRef ?? "", priorState],
+        record.logicalCallRef, record.requestDigest, record.dispatchOwnerRef ?? "", priorState,
+        (record.dispatchFence ?? 0n).toString()],
     ), "MODEL_GATEWAY_TERMINAL_CAS_LOST");
     if (priorState === "dispatching") {
       await one(sql.execute(
@@ -342,6 +346,7 @@ export class PostgresModelGatewayRepository implements ModelGatewayRepository, M
   async persistOutcomeUnknown(
     transaction: PlatformTransaction,
     record: ModelGatewayInvocationRecord,
+    authority: ModelGatewayOutcomeUnknownAuthority,
   ): Promise<void> {
     if (record.state !== "outcome_unknown" || record.responseBody !== null ||
         record.usageEvidence !== null || record.evidenceRef !== null ||
@@ -349,16 +354,27 @@ export class PostgresModelGatewayRepository implements ModelGatewayRepository, M
       throw new Error("MODEL_GATEWAY_UNKNOWN_RECORD_INVALID");
     }
     const sql = resolvePlatformTransaction(transaction);
+    const ownerInstanceRef = authority.kind === "owned"
+      ? authority.ownerInstanceRef
+      : authority.observedOwnerInstanceRef;
+    const dispatchFence = authority.kind === "owned"
+      ? authority.dispatchFence
+      : authority.observedDispatchFence;
+    const observedLeaseExpiresAt = authority.kind === "expired"
+      ? authority.observedLeaseExpiresAt
+      : record.dispatchLeaseExpiresAt ?? record.updatedAt;
     await one(sql.execute(
       `UPDATE platform.model_gateway_invocation
        SET state='outcome_unknown',owner_evidence_ref=$1,fence_epoch=$2,updated_at=$3::timestamptz
        WHERE site_ref=$4 AND invocation_ref=$5 AND logical_call_ref=$6
          AND request_digest=$7 AND state='dispatching' AND fence_epoch<$2
-         AND ((dispatch_owner_ref=$8 AND dispatch_lease_expires_at>now())
-           OR dispatch_lease_expires_at<=now())`,
+         AND dispatch_owner_ref=$8 AND dispatch_fence=$9::bigint
+         AND (($10='owned' AND dispatch_lease_expires_at>clock_timestamp())
+           OR ($10='expired' AND dispatch_lease_expires_at=$11::timestamptz
+             AND dispatch_lease_expires_at<=clock_timestamp()))`,
       [record.ownerEvidenceRef, record.fenceEpoch.toString(), record.updatedAt,
         record.siteId, record.invocationRef, record.logicalCallRef, record.requestDigest,
-        record.dispatchOwnerRef ?? ""],
+        ownerInstanceRef, dispatchFence.toString(), authority.kind, observedLeaseExpiresAt],
     ), "MODEL_GATEWAY_UNKNOWN_CAS_LOST");
     await one(sql.execute(
       `UPDATE platform.model_gateway_capacity
