@@ -28,6 +28,10 @@ import {
 import { commerceCanonicalJson } from "../../domain/canonical-json.js";
 import type { FulfillmentOutputLine } from "../../domain/output-line.js";
 import { createFulfillmentSourceIdentity } from "../../domain/fulfillment-source.js";
+import {
+  fulfillmentOutputSetDigest,
+  type FulfillmentOutputCommitment,
+} from "../../domain/canonical-fulfillment.js";
 import type { CommerceLockSequence } from "../../application/command-lock-order.js";
 import type {
   CreditGrantIssuancePort,
@@ -156,6 +160,9 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
     const programs = await sql.query<ProgramConfirmationRow>(PROGRAM_FOR_CONFIRM_SQL, [
       preview.redemptionProgramRevisionRef,
       input.siteId,
+      input.subjectId,
+      input.workloadIdentityId,
+      input.authorityReleaseRef,
     ]);
     const program = programs[0];
     if (program === undefined || programs.length !== 1) return rejected();
@@ -163,7 +170,8 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
     if (safeTerms.planRef !== null) {
       const plans = await sql.query<Record<string, unknown> & { planRef: string; state: "active" | "disabled" }>(
         PLAN_FOR_CONFIRM_SQL,
-        [input.siteId, safeTerms.planRef],
+        [safeTerms.planRef, input.siteId, input.subjectId, input.workloadIdentityId,
+          input.authorityReleaseRef],
       );
       if (plans.length !== 1) return rejected();
       catalogPlan = Object.freeze(plans[0]!);
@@ -174,7 +182,8 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
       startsAt: Date | string | null;
       endsAt: Date | string | null;
       redemptionProgramRevisionRef: string;
-    }>(BATCH_FOR_CONFIRM_SQL, [preview.batchRef, input.siteId]);
+    }>(BATCH_FOR_CONFIRM_SQL, [preview.batchRef, input.siteId, input.subjectId,
+      input.workloadIdentityId, input.authorityReleaseRef]);
     const batch = batches[0];
     if (batch === undefined || batches.length !== 1) return rejected();
     locks.enter("code");
@@ -196,6 +205,8 @@ export class PostgresRedemptionConfirmationRepository implements RedemptionConfi
       input.siteId,
       input.subjectId,
       preview.redemptionProgramRevisionRef,
+      input.workloadIdentityId,
+      input.authorityReleaseRef,
     ]);
     const account = accounts[0];
     if (account === undefined || accounts.length !== 1) return rejected();
@@ -538,7 +549,18 @@ async function loadReceipt(
     }
     return commitment;
   }));
-  if (digest({ version: 1, outputs }) !== redemption.outputSetDigest) {
+  const canonicalOutputs: readonly FulfillmentOutputCommitment[] = outputs.map((output) =>
+    Object.freeze({
+      kind: output.kind,
+      outputLineId: output.outputLineId,
+      outputOrdinal: output.outputOrdinal,
+      occurrence: output.occurrence,
+      outputRef: output.resourceRef,
+      templateRevisionRef: output.templateRevisionRef,
+      outputVersion: output.outputVersion,
+      outputDigest: output.outputDigest,
+    }));
+  if (fulfillmentOutputSetDigest(canonicalOutputs) !== redemption.outputSetDigest) {
     throw new Error("REDEMPTION_OUTPUT_SET_DIGEST_MISMATCH");
   }
   const commerceCorrections = await sql.query<Record<string, unknown> & { reversalRef: string }>(
@@ -810,44 +832,29 @@ const PREVIEW_FOR_CONFIRM_SQL = `
   FOR UPDATE OF preview`;
 
 const PROGRAM_FOR_CONFIRM_SQL = `
-  SELECT availability.state AS "availabilityState",availability.starts_at AS "startsAt",
-         availability.ends_at AS "endsAt",program.redemption_program_revision_ref AS "redemptionProgramRevisionRef",
-         program.program_digest AS "programDigest",program.max_redemptions_per_account AS "maxRedemptionsPerAccount",
-         product.state AS "productState",product.product_ref AS "productRef",
-         product_version.product_version_ref AS "productVersionRef",plan_version.plan_ref AS "planRef",
-         plan_version.plan_version_ref AS "planVersionRef",product_version.revision_digest AS "productRevisionDigest",
-         program.fulfillment_program_revision_ref AS "fulfillmentProgramRevisionRef",
-         fulfillment.revision AS "fulfillmentProgramRevision",
-         fulfillment.output_plan_digest AS "outputPlanDigest",plan_version.stacking_scope AS "stackingScope"
-         ,plan_version.term_action AS "termAction",plan_version.term_seconds AS "termSeconds"
-  FROM platform.commerce_redemption_program_availability availability
-  JOIN platform.commerce_redemption_program_revision program
-    ON program.redemption_program_revision_ref=availability.redemption_program_revision_ref
-      AND program.site_ref=availability.site_ref
-  JOIN platform.commerce_catalog_product_version product_version
-    ON product_version.product_version_ref=program.product_version_ref AND product_version.site_ref=program.site_ref
-  JOIN platform.commerce_catalog_product product
-    ON product.site_ref=product_version.site_ref AND product.product_ref=product_version.product_ref
-  JOIN platform.commerce_fulfillment_program_revision fulfillment
-    ON fulfillment.fulfillment_program_revision_ref=program.fulfillment_program_revision_ref
-      AND fulfillment.site_ref=program.site_ref
-  LEFT JOIN platform.commerce_catalog_plan_version plan_version
-    ON plan_version.plan_version_ref=product_version.plan_version_ref AND plan_version.site_ref=product_version.site_ref
-  WHERE availability.redemption_program_revision_ref=$1 AND availability.site_ref=$2
-  FOR UPDATE OF availability,product`;
+  SELECT result_availability_state AS "availabilityState",result_starts_at AS "startsAt",
+         result_ends_at AS "endsAt",
+         result_redemption_program_revision_ref AS "redemptionProgramRevisionRef",
+         result_program_digest AS "programDigest",
+         result_max_redemptions_per_account AS "maxRedemptionsPerAccount",
+         result_product_state AS "productState",result_product_ref AS "productRef",
+         result_product_version_ref AS "productVersionRef",result_plan_ref AS "planRef",
+         result_plan_version_ref AS "planVersionRef",
+         result_product_revision_digest AS "productRevisionDigest",
+         result_fulfillment_program_revision_ref AS "fulfillmentProgramRevisionRef",
+         result_fulfillment_program_revision AS "fulfillmentProgramRevision",
+         result_output_plan_digest AS "outputPlanDigest",result_stacking_scope AS "stackingScope",
+         result_term_action AS "termAction",result_term_seconds AS "termSeconds"
+  FROM platform.lock_commerce_redemption_program_authority($1,$2,$3,$4,$5)`;
 
 const PLAN_FOR_CONFIRM_SQL = `
-  SELECT plan_ref AS "planRef",state
-  FROM platform.commerce_catalog_plan
-  WHERE site_ref=$1 AND plan_ref=$2
-  FOR UPDATE`;
+  SELECT result_plan_ref AS "planRef",result_state AS state
+  FROM platform.lock_commerce_redemption_plan_authority($1,$2,$3,$4,$5)`;
 
 const BATCH_FOR_CONFIRM_SQL = `
-  SELECT state,starts_at AS "startsAt",ends_at AS "endsAt",
-         redemption_program_revision_ref AS "redemptionProgramRevisionRef"
-  FROM platform.commerce_code_batch
-  WHERE batch_ref=$1::uuid AND site_ref=$2
-  FOR UPDATE`;
+  SELECT result_state AS state,result_starts_at AS "startsAt",result_ends_at AS "endsAt",
+         result_redemption_program_revision_ref AS "redemptionProgramRevisionRef"
+  FROM platform.lock_commerce_redemption_batch_authority($1::uuid,$2,$3,$4,$5)`;
 
 const CODE_FOR_CONFIRM_SQL = `
   SELECT state,batch_ref AS "batchRef",safe_fingerprint AS "safeCodeFingerprint"
@@ -856,18 +863,9 @@ const CODE_FOR_CONFIRM_SQL = `
   FOR UPDATE`;
 
 const BILLING_FOR_CONFIRM_SQL = `
-  SELECT account.state AS "accountState",membership.state AS "membershipState",
-         membership.subject_generation AS "subjectGeneration",
-         (SELECT count(*) FROM platform.commerce_redemption redemption
-          WHERE redemption.site_ref=account.site_ref
-            AND redemption.billing_account_ref=account.billing_account_ref
-            AND redemption.redemption_program_revision_ref=$4
-            AND redemption.state IN ('fulfilled','reversed','reconciliation_required')) AS "redemptionCount"
-  FROM platform.commerce_billing_account account
-  JOIN platform.commerce_billing_account_membership membership
-    ON membership.billing_account_ref=account.billing_account_ref AND membership.site_ref=account.site_ref
-  WHERE account.billing_account_ref=$1 AND account.site_ref=$2 AND membership.subject_ref=$3
-  FOR UPDATE OF account,membership`;
+  SELECT result_account_state AS "accountState",result_membership_state AS "membershipState",
+         result_subject_generation AS "subjectGeneration",result_redemption_count AS "redemptionCount"
+  FROM platform.lock_commerce_redemption_billing_authority($1,$2,$3,$4,$5,$6)`;
 
 const SUBSCRIPTION_FOR_CONFIRM_SQL = `
   SELECT subscription.subscription_ref AS "subscriptionId",subscription.state,

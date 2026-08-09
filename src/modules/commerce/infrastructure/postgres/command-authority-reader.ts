@@ -11,24 +11,21 @@ export class PostgresCommerceCommandAuthorityReader implements CommerceCommandAu
     transaction: PlatformTransaction,
     key: CommerceCommandAuthorityKey,
   ): Promise<CommerceCommandAuthoritySnapshot | undefined> {
-    return this.#load(transaction, key, true);
+    return this.#load(transaction, key, AUTHORITY_LOCK_SQL);
   }
 
   readCurrent(
     transaction: PlatformTransaction,
     key: CommerceCommandAuthorityKey,
   ): Promise<CommerceCommandAuthoritySnapshot | undefined> {
-    return this.#load(transaction, key, false);
+    return this.#load(transaction, key, AUTHORITY_SQL);
   }
 
   async #load(
     transaction: PlatformTransaction,
     key: CommerceCommandAuthorityKey,
-    lock: boolean,
+    statement: string,
   ): Promise<CommerceCommandAuthoritySnapshot | undefined> {
-    const statement = lock
-      ? `${AUTHORITY_SQL}\n  FOR UPDATE OF binding,site,release,subject,identity_session`
-      : AUTHORITY_SQL;
     const rows = await resolvePlatformTransaction(transaction).query<AuthorityRow>(
       statement,
       [key.workloadIdentityId, key.siteId, key.subjectId, key.sessionId],
@@ -38,6 +35,18 @@ export class PostgresCommerceCommandAuthorityReader implements CommerceCommandAu
 }
 
 type AuthorityRow = Record<string, unknown> & CommerceCommandAuthoritySnapshot;
+
+const AUTHORITY_LOCK_SQL = `
+  SELECT result_site_ref AS "siteId",result_release_ref AS "releaseRef",
+         result_subject_ref AS "subjectId",result_binding_epoch AS "bindingEpoch",
+         result_security_epoch AS "securityEpoch",result_policy_epoch AS "policyEpoch",
+         result_subject_generation AS "subjectGeneration",result_restriction_epoch AS "restrictionEpoch",
+         result_session_epoch AS "sessionEpoch",result_binding_state AS "bindingState",
+         result_site_state AS "siteState",result_release_state AS "releaseState",
+         result_subject_state AS "subjectState",result_session_state AS "sessionState",
+         result_environment AS environment,result_region AS region,result_audience AS audience,
+         result_expires_at AS "expiresAt"
+  FROM platform.lock_commerce_command_authority($1,$2,$3,$4)`;
 
 const AUTHORITY_SQL = `
   SELECT binding.site_ref AS "siteId", binding.release_ref AS "releaseRef",

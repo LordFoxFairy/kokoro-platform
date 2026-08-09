@@ -54,6 +54,8 @@ import { SignedScopedSessionAuthorizationPublisher } from "../modules/authorizat
 import { CommandReceiptRepository } from "../shared/outbox-inbox/receipt.js";
 import { OutboxRepository } from "../shared/outbox-inbox/outbox.js";
 import { createRedemptionSecretCodec } from "../modules/commerce/infrastructure/crypto/redemption-secret-codec.js";
+import type { RedemptionSecretPort } from
+  "../modules/commerce/application/contracts/redemption-secret-port.js";
 import { PostgresRedemptionRepository } from "../modules/commerce/infrastructure/postgres/redemption-repository.js";
 import { PostgresCommerceRepository } from "../modules/commerce/infrastructure/postgres/repository.js";
 import { CommerceCommandFence } from "../modules/commerce/application/command-fence.js";
@@ -118,6 +120,65 @@ export interface PlatformPublicProductionComposition {
   readonly handler: PlatformPublicHttpHandler;
   readonly secure: true;
   createServer(listener: RequestListener): Server;
+}
+
+export interface CommercePublicApplicationComposition {
+  readonly preview: PreviewRedemptionService;
+  readonly confirm: ConfirmRedemptionService;
+  readonly queries: RedemptionQueryService;
+  readonly accountQueries: AccountReadService;
+}
+
+/** Production public Commerce composition shared by the API listener and PostgreSQL component tests. */
+export function createCommercePublicApplicationComposition(input: Readonly<{
+  database: PlatformTransactionalDatabaseClient;
+  secrets: RedemptionSecretPort;
+  redemptionReference?: (purpose: string, ordinal: number, now: number) => string;
+}>): CommercePublicApplicationComposition {
+  const unitOfWork = new PlatformUnitOfWork(input.database);
+  const creditPrograms = new PostgresCreditGrantProgram();
+  const redemptionRepository = new PostgresRedemptionRepository(creditPrograms);
+  const commerceRepository = new PostgresCommerceRepository();
+  const commerceAuthorization = createCommerceCommandAuthorization(
+    new PostgresCommerceCommandAuthorityReader(),
+  );
+  const redemptionConfirmationRepository = new PostgresRedemptionConfirmationRepository({
+    commerce: commerceRepository,
+    creditGrants: new PostgresCreditGrantIssuer(),
+    creditPrograms,
+    creditCorrections: new PostgresCreditSourceCorrection(),
+    ...(input.redemptionReference === undefined ? {} : { reference: input.redemptionReference }),
+  });
+  const commerceFence = new CommerceCommandFence(
+    unitOfWork,
+    commerceRepository,
+    (transaction, context, operation) =>
+      commerceAuthorization.authorizeCommand(transaction, context, operation, new Date().toISOString()),
+  );
+  return Object.freeze({
+    preview: new PreviewRedemptionService({
+      unitOfWork,
+      fence: commerceFence,
+      repository: redemptionRepository,
+      secrets: input.secrets,
+    }),
+    confirm: new ConfirmRedemptionService({
+      unitOfWork,
+      fence: commerceFence,
+      repository: redemptionConfirmationRepository,
+      secrets: input.secrets,
+    }),
+    queries: new RedemptionQueryService({
+      unitOfWork,
+      repository: redemptionConfirmationRepository,
+      authorizeRead: commerceAuthorization.authorizeRead,
+    }),
+    accountQueries: new AccountReadService({
+      unitOfWork,
+      repository: new PostgresAccountReadRepository(),
+      authorizeRead: commerceAuthorization.authorizeRead,
+    }),
+  });
 }
 
 export async function createPlatformPublicProductionComposition(
@@ -248,48 +309,9 @@ export async function createPlatformPublicProductionComposition(
     ),
   });
   const identityOperations = createIdentityPublicOperations(identity, identitySecurityManagement);
-  const creditPrograms = new PostgresCreditGrantProgram();
-  const redemptionRepository = new PostgresRedemptionRepository(creditPrograms);
-  const commerceRepository = new PostgresCommerceRepository();
-  const commerceAuthorization = createCommerceCommandAuthorization(
-    new PostgresCommerceCommandAuthorityReader(),
+  const commerceOperations = createCommercePublicOperations(
+    createCommercePublicApplicationComposition({ database: input.database, secrets: redemptionSecrets }),
   );
-  const redemptionConfirmationRepository = new PostgresRedemptionConfirmationRepository({
-    commerce: commerceRepository,
-    creditGrants: new PostgresCreditGrantIssuer(),
-    creditPrograms,
-    creditCorrections: new PostgresCreditSourceCorrection(),
-  });
-  const commerceFence = new CommerceCommandFence(
-    unitOfWork,
-    commerceRepository,
-    (transaction, context, operation) =>
-      commerceAuthorization.authorizeCommand(transaction, context, operation, new Date().toISOString()),
-  );
-  const commerceOperations = createCommercePublicOperations({
-    preview: new PreviewRedemptionService({
-      unitOfWork,
-      fence: commerceFence,
-      repository: redemptionRepository,
-      secrets: redemptionSecrets,
-    }),
-    confirm: new ConfirmRedemptionService({
-      unitOfWork,
-      fence: commerceFence,
-      repository: redemptionConfirmationRepository,
-      secrets: redemptionSecrets,
-    }),
-    queries: new RedemptionQueryService({
-      unitOfWork,
-      repository: redemptionConfirmationRepository,
-      authorizeRead: commerceAuthorization.authorizeRead,
-    }),
-    accountQueries: new AccountReadService({
-      unitOfWork,
-      repository: new PostgresAccountReadRepository(),
-      authorizeRead: commerceAuthorization.authorizeRead,
-    }),
-  });
   const assetUploadRepository = new PostgresAssetUploadRepository();
   const assetQueries = new AssetOwnerQueryService({
     unitOfWork,

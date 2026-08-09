@@ -2524,3 +2524,292 @@ CREATE POLICY site_isolation ON platform.commerce_command_outbox
   WITH CHECK (EXISTS (SELECT 1 FROM platform.commerce_command parent
     WHERE parent.command_id=commerce_command_outbox.command_id
       AND parent.site_ref=current_setting('app.site_id',true)));
+
+-- Public Commerce freezes the authorization snapshot through an exact owner
+-- routine instead of receiving UPDATE authority on its five authority rows.
+CREATE FUNCTION platform.lock_commerce_command_authority(
+  p_workload_identity_id TEXT,
+  p_site_ref TEXT,
+  p_subject_ref TEXT,
+  p_session_ref TEXT
+)
+RETURNS TABLE(
+  result_site_ref TEXT,
+  result_release_ref TEXT,
+  result_subject_ref TEXT,
+  result_binding_epoch BIGINT,
+  result_security_epoch BIGINT,
+  result_policy_epoch BIGINT,
+  result_subject_generation BIGINT,
+  result_restriction_epoch BIGINT,
+  result_session_epoch BIGINT,
+  result_binding_state TEXT,
+  result_site_state TEXT,
+  result_release_state TEXT,
+  result_subject_state TEXT,
+  result_session_state TEXT,
+  result_environment TEXT,
+  result_region TEXT,
+  result_audience TEXT,
+  result_expires_at TIMESTAMPTZ
+)
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER SET search_path=pg_catalog,platform
+AS $function$
+BEGIN
+  IF NOT pg_catalog.has_function_privilege(
+       SESSION_USER,
+       'platform.lock_commerce_command_authority(text,text,text,text)',
+       'EXECUTE'
+     )
+     OR current_setting('app.workload_kind',true) IS DISTINCT FROM 'site_product'
+     OR current_setting('app.actor_kind',true) IS DISTINCT FROM 'user'
+     OR COALESCE(current_setting('app.operation',true),'') NOT IN ('previewRedemption','confirmRedemption')
+     OR current_setting('app.workload_identity_ref',true) IS DISTINCT FROM p_workload_identity_id
+     OR current_setting('app.site_id',true) IS DISTINCT FROM p_site_ref
+     OR current_setting('app.subject_id',true) IS DISTINCT FROM p_subject_ref THEN
+    RAISE EXCEPTION 'COMMERCE_COMMAND_AUTHORITY_LOCK_INVALID' USING ERRCODE='42501';
+  END IF;
+
+  RETURN QUERY
+  SELECT binding.site_ref,binding.release_ref,subject.subject_ref,binding.binding_epoch,
+         site.security_epoch,site.policy_epoch,subject.subject_generation,subject.restriction_epoch,
+         identity_session.session_epoch,binding.state,site.state,release.state,subject.state,
+         identity_session.state,binding.environment,binding.region,binding.audience,
+         identity_session.expires_at
+  FROM platform.authorization_product_binding binding
+  JOIN platform.authorization_site site ON site.site_ref=binding.site_ref
+  JOIN platform.authorization_site_release release
+    ON release.release_ref=binding.release_ref AND release.site_ref=binding.site_ref
+  JOIN platform.authorization_subject subject
+    ON subject.subject_ref=p_subject_ref AND subject.site_ref=binding.site_ref
+  JOIN platform.authorization_identity_session identity_session
+    ON identity_session.session_ref=p_session_ref AND identity_session.subject_ref=subject.subject_ref
+      AND identity_session.site_ref=binding.site_ref
+  WHERE binding.workload_identity_id=p_workload_identity_id AND binding.site_ref=p_site_ref
+  FOR UPDATE OF binding,site,release,subject,identity_session;
+END
+$function$;
+
+REVOKE ALL ON FUNCTION platform.lock_commerce_command_authority(TEXT,TEXT,TEXT,TEXT) FROM PUBLIC;
+
+CREATE FUNCTION platform.lock_commerce_redemption_program_authority(
+  p_redemption_program_revision_ref TEXT,
+  p_site_ref TEXT,
+  p_subject_ref TEXT,
+  p_workload_identity_id TEXT,
+  p_release_ref TEXT
+)
+RETURNS TABLE(
+  result_availability_state TEXT,
+  result_starts_at TIMESTAMPTZ,
+  result_ends_at TIMESTAMPTZ,
+  result_redemption_program_revision_ref TEXT,
+  result_program_digest CHAR(64),
+  result_max_redemptions_per_account INTEGER,
+  result_product_state TEXT,
+  result_product_ref TEXT,
+  result_product_version_ref TEXT,
+  result_plan_ref TEXT,
+  result_plan_version_ref TEXT,
+  result_product_revision_digest CHAR(64),
+  result_fulfillment_program_revision_ref TEXT,
+  result_fulfillment_program_revision BIGINT,
+  result_output_plan_digest CHAR(64),
+  result_stacking_scope TEXT,
+  result_term_action TEXT,
+  result_term_seconds BIGINT
+)
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER SET search_path=pg_catalog,platform
+AS $function$
+BEGIN
+  IF NOT pg_catalog.has_function_privilege(
+       SESSION_USER,
+       'platform.lock_commerce_redemption_program_authority(text,text,text,text,text)',
+       'EXECUTE'
+     )
+     OR current_setting('app.workload_kind',true) IS DISTINCT FROM 'site_product'
+     OR current_setting('app.actor_kind',true) IS DISTINCT FROM 'user'
+     OR current_setting('app.operation',true) IS DISTINCT FROM 'confirmRedemption'
+     OR current_setting('app.workload_identity_ref',true) IS DISTINCT FROM p_workload_identity_id
+     OR current_setting('app.site_release_ref',true) IS DISTINCT FROM p_release_ref
+     OR current_setting('app.site_id',true) IS DISTINCT FROM p_site_ref
+     OR current_setting('app.subject_id',true) IS DISTINCT FROM p_subject_ref THEN
+    RAISE EXCEPTION 'COMMERCE_PUBLIC_LOCK_INVALID' USING ERRCODE='42501';
+  END IF;
+
+  RETURN QUERY
+  SELECT availability.state,availability.starts_at,availability.ends_at,
+         program.redemption_program_revision_ref,program.program_digest,
+         program.max_redemptions_per_account,product.state,product.product_ref,
+         product_version.product_version_ref,plan_version.plan_ref,plan_version.plan_version_ref,
+         product_version.revision_digest,program.fulfillment_program_revision_ref,
+         fulfillment.revision,fulfillment.output_plan_digest,plan_version.stacking_scope,
+         plan_version.term_action,plan_version.term_seconds
+  FROM platform.commerce_redemption_program_availability availability
+  JOIN platform.commerce_redemption_program_revision program
+    ON program.redemption_program_revision_ref=availability.redemption_program_revision_ref
+      AND program.site_ref=availability.site_ref
+  JOIN platform.commerce_catalog_product_version product_version
+    ON product_version.product_version_ref=program.product_version_ref
+      AND product_version.site_ref=program.site_ref
+  JOIN platform.commerce_catalog_product product
+    ON product.site_ref=product_version.site_ref AND product.product_ref=product_version.product_ref
+  JOIN platform.commerce_fulfillment_program_revision fulfillment
+    ON fulfillment.fulfillment_program_revision_ref=program.fulfillment_program_revision_ref
+      AND fulfillment.site_ref=program.site_ref
+  LEFT JOIN platform.commerce_catalog_plan_version plan_version
+    ON plan_version.plan_version_ref=product_version.plan_version_ref
+      AND plan_version.site_ref=product_version.site_ref
+  WHERE availability.redemption_program_revision_ref=p_redemption_program_revision_ref
+    AND availability.site_ref=p_site_ref
+  FOR UPDATE OF availability,product;
+END
+$function$;
+
+REVOKE ALL ON FUNCTION platform.lock_commerce_redemption_program_authority(
+  TEXT,TEXT,TEXT,TEXT,TEXT
+) FROM PUBLIC;
+
+CREATE FUNCTION platform.lock_commerce_redemption_plan_authority(
+  p_plan_ref TEXT,
+  p_site_ref TEXT,
+  p_subject_ref TEXT,
+  p_workload_identity_id TEXT,
+  p_release_ref TEXT
+)
+RETURNS TABLE(result_plan_ref TEXT,result_state TEXT)
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER SET search_path=pg_catalog,platform
+AS $function$
+BEGIN
+  IF NOT pg_catalog.has_function_privilege(
+       SESSION_USER,
+       'platform.lock_commerce_redemption_plan_authority(text,text,text,text,text)',
+       'EXECUTE'
+     )
+     OR current_setting('app.workload_kind',true) IS DISTINCT FROM 'site_product'
+     OR current_setting('app.actor_kind',true) IS DISTINCT FROM 'user'
+     OR current_setting('app.operation',true) IS DISTINCT FROM 'confirmRedemption'
+     OR current_setting('app.workload_identity_ref',true) IS DISTINCT FROM p_workload_identity_id
+     OR current_setting('app.site_release_ref',true) IS DISTINCT FROM p_release_ref
+     OR current_setting('app.site_id',true) IS DISTINCT FROM p_site_ref
+     OR current_setting('app.subject_id',true) IS DISTINCT FROM p_subject_ref THEN
+    RAISE EXCEPTION 'COMMERCE_PUBLIC_LOCK_INVALID' USING ERRCODE='42501';
+  END IF;
+
+  RETURN QUERY
+  SELECT plan.plan_ref,plan.state
+  FROM platform.commerce_catalog_plan plan
+  WHERE plan.site_ref=p_site_ref AND plan.plan_ref=p_plan_ref
+  FOR UPDATE OF plan;
+END
+$function$;
+
+REVOKE ALL ON FUNCTION platform.lock_commerce_redemption_plan_authority(
+  TEXT,TEXT,TEXT,TEXT,TEXT
+) FROM PUBLIC;
+
+CREATE FUNCTION platform.lock_commerce_redemption_batch_authority(
+  p_batch_ref UUID,
+  p_site_ref TEXT,
+  p_subject_ref TEXT,
+  p_workload_identity_id TEXT,
+  p_release_ref TEXT
+)
+RETURNS TABLE(
+  result_state TEXT,
+  result_starts_at TIMESTAMPTZ,
+  result_ends_at TIMESTAMPTZ,
+  result_redemption_program_revision_ref TEXT
+)
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER SET search_path=pg_catalog,platform
+AS $function$
+BEGIN
+  IF NOT pg_catalog.has_function_privilege(
+       SESSION_USER,
+       'platform.lock_commerce_redemption_batch_authority(uuid,text,text,text,text)',
+       'EXECUTE'
+     )
+     OR current_setting('app.workload_kind',true) IS DISTINCT FROM 'site_product'
+     OR current_setting('app.actor_kind',true) IS DISTINCT FROM 'user'
+     OR current_setting('app.operation',true) IS DISTINCT FROM 'confirmRedemption'
+     OR current_setting('app.workload_identity_ref',true) IS DISTINCT FROM p_workload_identity_id
+     OR current_setting('app.site_release_ref',true) IS DISTINCT FROM p_release_ref
+     OR current_setting('app.site_id',true) IS DISTINCT FROM p_site_ref
+     OR current_setting('app.subject_id',true) IS DISTINCT FROM p_subject_ref THEN
+    RAISE EXCEPTION 'COMMERCE_PUBLIC_LOCK_INVALID' USING ERRCODE='42501';
+  END IF;
+
+  RETURN QUERY
+  SELECT batch.state,batch.starts_at,batch.ends_at,batch.redemption_program_revision_ref
+  FROM platform.commerce_code_batch batch
+  WHERE batch.batch_ref=p_batch_ref AND batch.site_ref=p_site_ref
+  FOR UPDATE OF batch;
+END
+$function$;
+
+REVOKE ALL ON FUNCTION platform.lock_commerce_redemption_batch_authority(
+  UUID,TEXT,TEXT,TEXT,TEXT
+) FROM PUBLIC;
+
+CREATE FUNCTION platform.lock_commerce_redemption_billing_authority(
+  p_billing_account_ref TEXT,
+  p_site_ref TEXT,
+  p_subject_ref TEXT,
+  p_redemption_program_revision_ref TEXT,
+  p_workload_identity_id TEXT,
+  p_release_ref TEXT
+)
+RETURNS TABLE(
+  result_account_state TEXT,
+  result_membership_state TEXT,
+  result_subject_generation BIGINT,
+  result_redemption_count BIGINT
+)
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER SET search_path=pg_catalog,platform
+AS $function$
+BEGIN
+  IF NOT pg_catalog.has_function_privilege(
+       SESSION_USER,
+       'platform.lock_commerce_redemption_billing_authority(text,text,text,text,text,text)',
+       'EXECUTE'
+     )
+     OR current_setting('app.workload_kind',true) IS DISTINCT FROM 'site_product'
+     OR current_setting('app.actor_kind',true) IS DISTINCT FROM 'user'
+     OR current_setting('app.operation',true) IS DISTINCT FROM 'confirmRedemption'
+     OR current_setting('app.workload_identity_ref',true) IS DISTINCT FROM p_workload_identity_id
+     OR current_setting('app.site_release_ref',true) IS DISTINCT FROM p_release_ref
+     OR current_setting('app.site_id',true) IS DISTINCT FROM p_site_ref
+     OR current_setting('app.subject_id',true) IS DISTINCT FROM p_subject_ref THEN
+    RAISE EXCEPTION 'COMMERCE_PUBLIC_LOCK_INVALID' USING ERRCODE='42501';
+  END IF;
+
+  RETURN QUERY
+  SELECT account.state,membership.state,membership.subject_generation,
+         (SELECT count(*) FROM platform.commerce_redemption redemption
+          WHERE redemption.site_ref=account.site_ref
+            AND redemption.billing_account_ref=account.billing_account_ref
+            AND redemption.redemption_program_revision_ref=p_redemption_program_revision_ref
+            AND redemption.state IN ('fulfilled','reversed','reconciliation_required'))
+  FROM platform.commerce_billing_account account
+  JOIN platform.commerce_billing_account_membership membership
+    ON membership.billing_account_ref=account.billing_account_ref
+      AND membership.site_ref=account.site_ref
+  WHERE account.billing_account_ref=p_billing_account_ref AND account.site_ref=p_site_ref
+    AND membership.subject_ref=p_subject_ref
+  FOR UPDATE OF account,membership;
+END
+$function$;
+
+REVOKE ALL ON FUNCTION platform.lock_commerce_redemption_billing_authority(
+  TEXT,TEXT,TEXT,TEXT,TEXT,TEXT
+) FROM PUBLIC;

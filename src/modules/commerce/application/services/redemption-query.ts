@@ -4,7 +4,11 @@ import type { RedemptionReceiptResponse } from
   "../../../../generated/contracts/openapi/platform-public/types.gen.js";
 import type { RedemptionConfirmationRepository } from "../contracts/redemption-confirmation-repository.js";
 import { CommerceApplicationError } from "../commerce-application-error.js";
-import { redemptionCommandView, type ConfirmRedemptionView } from "./confirm-redemption.js";
+import {
+  redemptionCommandView,
+  redemptionReceiptView,
+  type ConfirmRedemptionView,
+} from "./confirm-redemption.js";
 import type { CommerceReadAuthorizer } from "../command-authorization.js";
 
 export class RedemptionQueryService {
@@ -53,11 +57,7 @@ export class RedemptionQueryService {
     );
     if (receipt === null) throw new CommerceApplicationError("REDEMPTION_NOT_FOUND");
     return Object.freeze({
-      redemption: Object.freeze({
-        ...receipt,
-        outputs: receipt.outputs.map((output) => ({ ...output })),
-        reversalRefs: [...receipt.reversalRefs],
-      }),
+      redemption: redemptionReceiptView(receipt),
     });
   }
 }

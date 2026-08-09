@@ -32,6 +32,13 @@ const commerceService = readFileSync(
   new URL("../../src/modules/commerce/application/services/commerce-administration.ts", import.meta.url),
   "utf8",
 );
+const commercePublicLocks = readFileSync(
+  new URL(
+    "../../src/infrastructure/postgres/commerce-public-lock-routines.ts",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const compactMigration = migration.replace(/\s+/gu, " ");
 const allMigrationSql = readdirSync(new URL("../../prisma/migrations/", import.meta.url), {
   withFileTypes: true,
@@ -326,5 +333,37 @@ describe("Wave 2A Commerce authority schema", () => {
       "platform.credit_authorization_segment, platform.commerce_fulfillment_transaction",
     );
     expect(migrator).toContain("GRANT INSERT, UPDATE ON TABLE platform.commerce_billing_account");
+  });
+
+  it("locks public command authority through one configurable API-only owner routine", () => {
+    const authorityLock = migration.slice(
+      migration.indexOf("CREATE FUNCTION platform.lock_commerce_command_authority("),
+    );
+    expect(authorityLock).toContain("SECURITY DEFINER SET search_path=pg_catalog,platform");
+    expect(authorityLock).toContain("pg_catalog.has_function_privilege(");
+    expect(authorityLock).toContain("SESSION_USER,");
+    expect(authorityLock).not.toContain("SESSION_USER<>'platform_api'");
+    expect(authorityLock).toContain(
+      "current_setting('app.workload_identity_ref',true) IS DISTINCT FROM p_workload_identity_id",
+    );
+    expect(authorityLock).toContain(
+      "current_setting('app.site_id',true) IS DISTINCT FROM p_site_ref",
+    );
+    expect(authorityLock).toContain(
+      "FOR UPDATE OF binding,site,release,subject,identity_session",
+    );
+    expect(authorityLock).toContain(
+      "REVOKE ALL ON FUNCTION platform.lock_commerce_command_authority(TEXT,TEXT,TEXT,TEXT) FROM PUBLIC",
+    );
+    expect(commercePublicLocks).toContain("export const COMMERCE_PUBLIC_LOCK_ROUTINES");
+    expect(commercePublicLocks).toContain(
+      '"platform.lock_commerce_redemption_billing_authority(text,text,text,text,text,text)"',
+    );
+    expect(migrator).toContain("GRANT EXECUTE ON FUNCTION ${COMMERCE_PUBLIC_LOCK_ROUTINES_SQL}");
+    expect(migrator).toContain('commercePublicLockPrivilegeChecks("runtime_role.rolname")');
+    expect(authorityLock.match(/SECURITY DEFINER SET search_path=pg_catalog,platform/gu) ?? [])
+      .toHaveLength(5);
+    expect(authorityLock.match(/REVOKE ALL ON FUNCTION platform\.lock_commerce_/gu) ?? [])
+      .toHaveLength(5);
   });
 });

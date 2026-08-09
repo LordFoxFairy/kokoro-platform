@@ -44,7 +44,18 @@ describe("RedemptionQueryService", () => {
     try {
       await expect(harness.service.getReceipt({
         context: context("getRedemptionReceipt"), redemptionId: receipt().redemptionId,
-      })).resolves.toEqual({ redemption: receipt() });
+      })).resolves.toEqual({ redemption: {
+        commandId: "00000000-0000-7000-8000-000000000201",
+        redemptionId: "00000000-0000-7000-8000-000000000301",
+        fulfillmentRef: "00000000-0000-7000-8000-000000000302",
+        outputSetDigest: "a".repeat(64),
+        outputs: [{ kind: "credit_grant", outputLineId: "credits",
+          resourceRef: "00000000-0000-7000-8000-000000000303",
+          templateRevisionRef: "credit-program-v1" }],
+        planRef: null, planVersionRef: null, productRef: "product-1", productVersionRef: "product-v1",
+        redeemedAt: "2026-07-29T01:00:00.000Z", safeCodeFingerprint: "CODE-0123456789ABCDEF",
+        state: "fulfilled", stateObservedAt: "2026-07-29T01:00:00.000Z", reversalRefs: [],
+      } });
       expect(repository.receiptInput).toMatchObject({
         siteId: "site-1", subjectId: "subject-1", subjectGeneration: "2",
       });
@@ -127,7 +138,16 @@ function receipt() {
     commandId: "00000000-0000-7000-8000-000000000201",
     redemptionId: "00000000-0000-7000-8000-000000000301",
     fulfillmentRef: "00000000-0000-7000-8000-000000000302",
-    outputSetDigest: "a".repeat(64), outputs: [], planRef: null, planVersionRef: null,
+    outputSetDigest: "a".repeat(64), outputs: [{
+      kind: "credit_grant" as const,
+      outputLineId: "credits",
+      outputOrdinal: 1,
+      occurrence: 1,
+      resourceRef: "00000000-0000-7000-8000-000000000303",
+      templateRevisionRef: "credit-program-v1",
+      outputVersion: 1 as const,
+      outputDigest: "b".repeat(64),
+    }], planRef: null, planVersionRef: null,
     productRef: "product-1", productVersionRef: "product-v1",
     redeemedAt: "2026-07-29T01:00:00.000Z", safeCodeFingerprint: "CODE-0123456789ABCDEF",
     state: "fulfilled" as const, stateObservedAt: "2026-07-29T01:00:00.000Z", reversalRefs: [],

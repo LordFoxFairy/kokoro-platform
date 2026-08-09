@@ -7,6 +7,7 @@ import type { RedemptionReceipt } from
 import type { CommerceCommandFence } from "../command-fence.js";
 import type {
   RedemptionConfirmationRepository,
+  RedemptionReceiptRecord,
   StoredRedemptionConfirmation,
   StoredRedemptionReceipt,
 } from "../contracts/redemption-confirmation-repository.js";
@@ -164,27 +165,7 @@ export function redemptionCommandView(
 }
 
 function succeededView(receipt: StoredRedemptionReceipt, requestDigest: string): ConfirmRedemptionView {
-  const redemption = Object.freeze({
-    commandId: receipt.commandId,
-    fulfillmentRef: receipt.fulfillmentRef,
-    outputSetDigest: receipt.outputSetDigest,
-    outputs: Object.freeze(receipt.outputs.map((output) => Object.freeze({
-      kind: output.kind,
-      outputLineId: output.outputLineId,
-      resourceRef: output.resourceRef,
-      templateRevisionRef: output.templateRevisionRef,
-    } satisfies RedemptionReceipt["outputs"][number]))),
-    planRef: receipt.planRef,
-    planVersionRef: receipt.planVersionRef,
-    productRef: receipt.productRef,
-    productVersionRef: receipt.productVersionRef,
-    redeemedAt: receipt.redeemedAt,
-    redemptionId: receipt.redemptionId,
-    reversalRefs: Object.freeze([...receipt.reversalRefs]),
-    safeCodeFingerprint: receipt.safeCodeFingerprint,
-    state: receipt.state,
-    stateObservedAt: receipt.stateObservedAt,
-  } satisfies PublicRedemptionReceipt);
+  const redemption = redemptionReceiptView(receipt);
   return Object.freeze({
     kind: "succeeded" as const,
     command: cursor(
@@ -195,6 +176,35 @@ function succeededView(receipt: StoredRedemptionReceipt, requestDigest: string):
     ),
     redemption,
   });
+}
+
+export function redemptionReceiptView(receipt: RedemptionReceiptRecord): RedemptionReceipt {
+  const outputs: RedemptionReceipt["outputs"] = receipt.outputs.map((output) => Object.freeze({
+    kind: output.kind,
+    outputLineId: output.outputLineId,
+    resourceRef: output.resourceRef,
+    templateRevisionRef: output.templateRevisionRef,
+  } satisfies RedemptionReceipt["outputs"][number]));
+  Object.freeze(outputs);
+  const reversalRefs: string[] = [...receipt.reversalRefs];
+  Object.freeze(reversalRefs);
+  const redemption = Object.freeze({
+    commandId: receipt.commandId,
+    fulfillmentRef: receipt.fulfillmentRef,
+    outputSetDigest: receipt.outputSetDigest,
+    outputs,
+    planRef: receipt.planRef,
+    planVersionRef: receipt.planVersionRef,
+    productRef: receipt.productRef,
+    productVersionRef: receipt.productVersionRef,
+    redeemedAt: receipt.redeemedAt,
+    redemptionId: receipt.redemptionId,
+    reversalRefs,
+    safeCodeFingerprint: receipt.safeCodeFingerprint,
+    state: receipt.state,
+    stateObservedAt: receipt.stateObservedAt,
+  } satisfies PublicRedemptionReceipt);
+  return redemption;
 }
 
 function rejectedView(

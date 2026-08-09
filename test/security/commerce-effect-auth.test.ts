@@ -26,7 +26,9 @@ describe("Commerce effect-point authorization", () => {
     const lease = issuePlatformTransaction(sql);
     try {
       await expect(authorization.authorizeCommand(lease.transaction, await context(true), "confirmRedemption", "2026-07-28T00:05:00.000Z")).resolves.toMatchObject({ siteId: "site-1", releaseRef: "release-1" });
-      expect(statements[0]).toContain("FOR UPDATE OF binding,site,release,subject,identity_session");
+      expect(statements[0]).toContain(
+        "FROM platform.lock_commerce_command_authority($1,$2,$3,$4)",
+      );
     } finally { revokePlatformTransaction(lease); }
   });
 

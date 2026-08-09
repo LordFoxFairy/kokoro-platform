@@ -12,6 +12,11 @@ import {
 } from "./admission-role-lease.js";
 import { OUTBOX_OWNER_POLICY_COUNT } from "./outbox-policy-authority.js";
 import {
+  COMMERCE_PUBLIC_LOCK_REGPROCEDURES_SQL,
+  COMMERCE_PUBLIC_LOCK_ROUTINES_SQL,
+  commercePublicLockPrivilegeChecks,
+} from "./commerce-public-lock-routines.js";
+import {
   canonicalRelationAuthority,
   compareUtf8Bytewise,
   SPLIT_WORKER_DEFINER_RLS_AUTHORITY,
@@ -2283,6 +2288,9 @@ async function grantFoundationPrivileges(
       `REVOKE ALL ON FUNCTION platform.site_evidence_resolver_role_is_current(), ` +
         `platform.site_evidence_owner_role_is_current() FROM ${identifier}`,
     );
+    await client.query(
+      `REVOKE ALL ON FUNCTION ${COMMERCE_PUBLIC_LOCK_ROUTINES_SQL} FROM ${identifier}`,
+    );
     if (role === apiRole) {
       await client.query(
         `GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${AUTHORIZATION_TABLES}, ${IDENTITY_TABLES}, ${COMMERCE_TABLES}, ${ASSET_API_TABLES}, platform.site, platform.site_release TO ${identifier}`,
@@ -2340,6 +2348,9 @@ async function grantFoundationPrivileges(
       );
       await client.query(
         `GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.commerce_safe_label_is_valid(TEXT), platform.resolve_model_candidates(TEXT, TEXT, TEXT), platform.find_model_selection_decision(UUID), platform.resolve_product_model_option_catalog(TEXT, TEXT) TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT EXECUTE ON FUNCTION ${COMMERCE_PUBLIC_LOCK_ROUTINES_SQL} TO ${identifier}`,
       );
     } else if (role === admissionRole) {
       await client.query(
@@ -2997,6 +3008,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
            AND has_column_privilege(runtime_role.rolname, 'platform.asset_eligibility_projection', 'purpose', 'SELECT')
            AND has_column_privilege(runtime_role.rolname, 'platform.asset_eligibility_projection', 'eligibility_epoch', 'SELECT')
            AND has_column_privilege(runtime_role.rolname, 'platform.asset_eligibility_projection', 'state', 'SELECT')
+           AND ${commercePublicLockPrivilegeChecks("runtime_role.rolname")}
          WHEN runtime_role.rolname = $5 THEN
            (has_table_privilege(runtime_role.rolname, 'platform.admission_command', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.admission_command', 'INSERT') AND has_table_privilege(runtime_role.rolname, 'platform.admission_command', 'UPDATE'))
            AND (has_table_privilege(runtime_role.rolname, 'platform.capability_projection_command', 'SELECT') AND has_table_privilege(runtime_role.rolname, 'platform.capability_projection_command', 'INSERT'))
@@ -3840,6 +3852,7 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  to_regprocedure('platform.resolve_model_candidates(text,text,text)'),
                  to_regprocedure('platform.find_model_selection_decision(uuid)'),
                  to_regprocedure('platform.resolve_product_model_option_catalog(text,text)'),
+                 ${COMMERCE_PUBLIC_LOCK_REGPROCEDURES_SQL},
                  to_regprocedure('platform.valid_credit_scope_policy(jsonb)'),
                  to_regprocedure('platform.commerce_safe_label_is_valid(text)'),
                  to_regprocedure('platform.list_owned_artifacts(timestamptz,text,integer)'),

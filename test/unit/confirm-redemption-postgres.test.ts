@@ -15,6 +15,8 @@ import {
   "../../src/modules/commerce/domain/redemption-preview.js";
 import { CommerceLockSequence } from "../../src/modules/commerce/application/command-lock-order.js";
 import { commerceCanonicalJson } from "../../src/modules/commerce/domain/canonical-json.js";
+import { fulfillmentOutputSetDigest } from
+  "../../src/modules/commerce/domain/canonical-fulfillment.js";
 import type { CreditGrantProgramPort } from
   "../../src/modules/commerce/application/contracts/credit-program.js";
 
@@ -75,12 +77,12 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       query: async (statement) => {
         statements.push(statement);
         if (statement.includes("FROM platform.commerce_redemption_preview preview")) return [preview] as never;
-        if (statement.includes("FROM platform.commerce_redemption_program_availability")) return [programRow(preview)] as never;
-        if (statement.includes("FROM platform.commerce_code_batch")) return [{ state: "active", startsAt: null,
+        if (statement.includes("FROM platform.lock_commerce_redemption_program_authority")) return [programRow(preview)] as never;
+        if (statement.includes("FROM platform.lock_commerce_redemption_batch_authority")) return [{ state: "active", startsAt: null,
           endsAt: null, redemptionProgramRevisionRef: preview.redemptionProgramRevisionRef }] as never;
         if (statement.includes("FROM platform.commerce_redeem_code")) return [{ state: "available",
           batchRef: preview.batchRef, safeCodeFingerprint: preview.safeCodeFingerprint }] as never;
-        if (statement.includes("FROM platform.commerce_billing_account account")) return [{ accountState: "active",
+        if (statement.includes("FROM platform.lock_commerce_redemption_billing_authority")) return [{ accountState: "active",
           membershipState: "active", subjectGeneration: 2n, redemptionCount: 0n }] as never;
         if (statement.includes("FROM platform.commerce_fulfillment_program_output")) return [output] as never;
         if (statement.includes("clock_timestamp()")) return [{ effectAt: new Date("2026-07-29T01:00:00.000Z") }] as never;
@@ -148,12 +150,12 @@ describe("PostgresRedemptionConfirmationRepository", () => {
         statements.push(statement);
         queries.push({ statement, values });
         if (statement.includes("FROM platform.commerce_redemption_preview preview")) return [preview] as never;
-        if (statement.includes("FROM platform.commerce_redemption_program_availability")) return [programRow(preview)] as never;
-        if (statement.includes("FROM platform.commerce_code_batch")) return [{ state: "active", startsAt: null,
+        if (statement.includes("FROM platform.lock_commerce_redemption_program_authority")) return [programRow(preview)] as never;
+        if (statement.includes("FROM platform.lock_commerce_redemption_batch_authority")) return [{ state: "active", startsAt: null,
           endsAt: null, redemptionProgramRevisionRef: preview.redemptionProgramRevisionRef }] as never;
         if (statement.includes("FROM platform.commerce_redeem_code")) return [{ state: "available",
           batchRef: preview.batchRef, safeCodeFingerprint: preview.safeCodeFingerprint }] as never;
-        if (statement.includes("FROM platform.commerce_billing_account account")) return [{ accountState: "active",
+        if (statement.includes("FROM platform.lock_commerce_redemption_billing_authority")) return [{ accountState: "active",
           membershipState: "active", subjectGeneration: 2n, redemptionCount: 0n }] as never;
         if (statement.includes("FROM platform.commerce_fulfillment_program_output")) return [output] as never;
         if (statement.includes("FROM platform.credit_account")) return [];
@@ -251,15 +253,15 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       query: async (statement) => {
         statements.push(statement);
         if (statement.includes("FROM platform.commerce_redemption_preview preview")) return [preview] as never;
-        if (statement.includes("FROM platform.commerce_redemption_program_availability")) return [{
+        if (statement.includes("FROM platform.lock_commerce_redemption_program_authority")) return [{
           ...programRow(preview), stackingScope: "plan:pro", termAction: "new_subscription", termSeconds: 86400n,
         }] as never;
-        if (statement.includes("FROM platform.commerce_catalog_plan")) return [{ planRef: "plan-1", state: "active" }] as never;
-        if (statement.includes("FROM platform.commerce_code_batch")) return [{ state: "active", startsAt: null,
+        if (statement.includes("FROM platform.lock_commerce_redemption_plan_authority")) return [{ planRef: "plan-1", state: "active" }] as never;
+        if (statement.includes("FROM platform.lock_commerce_redemption_batch_authority")) return [{ state: "active", startsAt: null,
           endsAt: null, redemptionProgramRevisionRef: preview.redemptionProgramRevisionRef }] as never;
         if (statement.includes("FROM platform.commerce_redeem_code")) return [{ state: "available",
           batchRef: preview.batchRef, safeCodeFingerprint: preview.safeCodeFingerprint }] as never;
-        if (statement.includes("FROM platform.commerce_billing_account account")) return [{ accountState: "active",
+        if (statement.includes("FROM platform.lock_commerce_redemption_billing_authority")) return [{ accountState: "active",
           membershipState: "active", subjectGeneration: 2n, redemptionCount: 0n }] as never;
         if (statement.includes("FROM platform.commerce_subscription subscription")) return [];
         if (statement.includes("FROM platform.commerce_fulfillment_program_output")) return [output] as never;
@@ -343,6 +345,45 @@ describe("PostgresRedemptionConfirmationRepository", () => {
     }
   });
 
+  it("rejects a one-field mutation of the committed output-set digest", async () => {
+    const output = entitlementReceipt();
+    const canonicalDigest = outputSetDigest([output]);
+    const mutatedDigest = `${canonicalDigest.slice(0, -1)}${canonicalDigest.endsWith("0") ? "1" : "0"}`;
+    const lease = issuePlatformTransaction({
+      query: async (statement) => {
+        if (statement.includes("FROM platform.command_receipt receipt")) return [{
+          state: "succeeded", commandReceivedAt: new Date("2026-07-29T00:59:58.000Z"),
+          commandUpdatedAt: new Date("2026-07-29T01:00:01.000Z"),
+        }] as never;
+        if (statement.includes("FROM platform.commerce_redemption redemption")) return [{
+          commandId: confirmationInput().commandId,
+          redemptionId: "00000000-0000-7000-8000-000000000301",
+          fulfillmentRef: "00000000-0000-7000-8000-000000000302",
+          outputSetDigest: mutatedDigest,
+          fulfillmentIdempotencyKey: "redeem:command-1",
+          planRef: null, planVersionRef: null,
+          productRef: "product-1", productVersionRef: "product-v1",
+          redeemedAt: new Date("2026-07-29T01:00:00.000Z"),
+          safeCodeFingerprint: "CODE-0123456789ABCDEF", state: "fulfilled",
+          stateObservedAt: new Date("2026-07-29T01:00:00.000Z"),
+        }] as never;
+        if (statement.includes("FROM platform.commerce_fulfillment_actual_output actual")) {
+          return [output] as never;
+        }
+        return [];
+      },
+      execute: async () => 0,
+    });
+    try {
+      await expect(confirmationRepository().findConfirmationByCommand(
+        lease.transaction,
+        commandLookup(),
+      )).rejects.toThrow("REDEMPTION_OUTPUT_SET_DIGEST_MISMATCH");
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
   it("recovers a command cursor only by the authenticated actor's idempotency key", async () => {
     const statements: string[] = [];
     const lease = issuePlatformTransaction({
@@ -415,12 +456,12 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       query: async (statement) => {
         statements.push(statement);
         if (statement.includes("FROM platform.commerce_redemption_preview preview")) return [preview] as never;
-        if (statement.includes("FROM platform.commerce_redemption_program_availability")) return [programRow(preview)] as never;
-        if (statement.includes("FROM platform.commerce_code_batch")) return [{ state: "active", startsAt: null,
+        if (statement.includes("FROM platform.lock_commerce_redemption_program_authority")) return [programRow(preview)] as never;
+        if (statement.includes("FROM platform.lock_commerce_redemption_batch_authority")) return [{ state: "active", startsAt: null,
           endsAt: null, redemptionProgramRevisionRef: preview.redemptionProgramRevisionRef }] as never;
         if (statement.includes("FROM platform.commerce_redeem_code")) return [{ state: "available",
           batchRef: preview.batchRef, safeCodeFingerprint: preview.safeCodeFingerprint }] as never;
-        if (statement.includes("FROM platform.commerce_billing_account account")) return [{ accountState: "active",
+        if (statement.includes("FROM platform.lock_commerce_redemption_billing_authority")) return [{ accountState: "active",
           membershipState: "active", subjectGeneration: 2n, redemptionCount: 0n }] as never;
         if (statement.includes("FROM platform.commerce_fulfillment_program_output")) return [output] as never;
         if (statement.includes("clock_timestamp()")) return [{ effectAt: new Date("2026-07-29T01:05:00.000Z") }] as never;
@@ -453,15 +494,15 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       query: async (statement) => {
         statements.push(statement);
         if (statement.includes("FROM platform.commerce_redemption_preview preview")) return [preview] as never;
-        if (statement.includes("FROM platform.commerce_redemption_program_availability")) return [{
+        if (statement.includes("FROM platform.lock_commerce_redemption_program_authority")) return [{
           ...programRow(preview), stackingScope: "plan:pro", termAction: "new_subscription", termSeconds: 86400n,
         }] as never;
-        if (statement.includes("FROM platform.commerce_catalog_plan")) return [{ planRef: "plan-1", state: "disabled" }] as never;
-        if (statement.includes("FROM platform.commerce_code_batch")) return [{ state: "active", startsAt: null,
+        if (statement.includes("FROM platform.lock_commerce_redemption_plan_authority")) return [{ planRef: "plan-1", state: "disabled" }] as never;
+        if (statement.includes("FROM platform.lock_commerce_redemption_batch_authority")) return [{ state: "active", startsAt: null,
           endsAt: null, redemptionProgramRevisionRef: preview.redemptionProgramRevisionRef }] as never;
         if (statement.includes("FROM platform.commerce_redeem_code")) return [{ state: "available",
           batchRef: preview.batchRef, safeCodeFingerprint: preview.safeCodeFingerprint }] as never;
-        if (statement.includes("FROM platform.commerce_billing_account account")) return [{ accountState: "active",
+        if (statement.includes("FROM platform.lock_commerce_redemption_billing_authority")) return [{ accountState: "active",
           membershipState: "active", subjectGeneration: 2n, redemptionCount: 0n }] as never;
         if (statement.includes("FROM platform.commerce_subscription subscription")) return [];
         if (statement.includes("FROM platform.commerce_fulfillment_program_output")) return [output] as never;
@@ -476,7 +517,7 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       }).confirmRedemption(lease.transaction, confirmationInput(), new CommerceLockSequence()))
         .resolves.toEqual({ kind: "rejected", code: "REDEEM_NOT_ACCEPTED" });
       expect(statements.some((statement) =>
-        statement.includes("FROM platform.commerce_catalog_plan") && statement.includes("FOR UPDATE"))).toBe(true);
+        statement.includes("FROM platform.lock_commerce_redemption_plan_authority"))).toBe(true);
       expect(statements.filter((statement) => /^\s*(?:INSERT|UPDATE|DELETE)\b/u.test(statement))).toEqual([]);
     } finally {
       revokePlatformTransaction(lease);
@@ -497,15 +538,15 @@ describe("PostgresRedemptionConfirmationRepository", () => {
       query: async (statement) => {
         statements.push(statement);
         if (statement.includes("FROM platform.commerce_redemption_preview preview")) return [preview] as never;
-        if (statement.includes("FROM platform.commerce_redemption_program_availability")) return [{
+        if (statement.includes("FROM platform.lock_commerce_redemption_program_authority")) return [{
           ...programRow(preview), stackingScope: "shared-scope", termAction: "new_subscription", termSeconds: 86400n,
         }] as never;
-        if (statement.includes("FROM platform.commerce_catalog_plan")) return [{ planRef: "plan-1", state: "active" }] as never;
-        if (statement.includes("FROM platform.commerce_code_batch")) return [{ state: "active", startsAt: null,
+        if (statement.includes("FROM platform.lock_commerce_redemption_plan_authority")) return [{ planRef: "plan-1", state: "active" }] as never;
+        if (statement.includes("FROM platform.lock_commerce_redemption_batch_authority")) return [{ state: "active", startsAt: null,
           endsAt: null, redemptionProgramRevisionRef: preview.redemptionProgramRevisionRef }] as never;
         if (statement.includes("FROM platform.commerce_redeem_code")) return [{ state: "available",
           batchRef: preview.batchRef, safeCodeFingerprint: preview.safeCodeFingerprint }] as never;
-        if (statement.includes("FROM platform.commerce_billing_account account")) return [{ accountState: "active",
+        if (statement.includes("FROM platform.lock_commerce_redemption_billing_authority")) return [{ accountState: "active",
           membershipState: "active", subjectGeneration: 2n, redemptionCount: 0n }] as never;
         if (statement.includes("FROM platform.commerce_subscription subscription")) return [{
           subscriptionId: "00000000-0000-7000-8000-000000000901", state: "active",
@@ -728,7 +769,17 @@ function commerceReceipt(
 }
 
 function outputSetDigest(outputs: readonly Record<string, unknown>[]): string {
-  return createHash("sha256").update(commerceCanonicalJson({ version: 1, outputs }), "utf8").digest("hex");
+  return fulfillmentOutputSetDigest(outputs.map((output) => ({
+    kind: output.kind as "subscription_term" | "entitlement_grant" | "credit_grant" |
+      "credit_program_enrollment",
+    outputLineId: output.outputLineId as string,
+    outputOrdinal: output.outputOrdinal as number,
+    occurrence: output.occurrence as number,
+    outputRef: output.resourceRef as string,
+    templateRevisionRef: output.templateRevisionRef as string,
+    outputVersion: output.outputVersion as 1,
+    outputDigest: output.outputDigest as string,
+  })));
 }
 
 function entitlementReceipt() {

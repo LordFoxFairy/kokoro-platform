@@ -14,6 +14,10 @@ import type { AdminQueryPermit } from "../../modules/admin/interfaces/connect/ad
 import type { AdminWorkloadAxes } from "../../modules/admin/application/services/admin-oidc-service.js";
 import { OUTBOX_POLICY_RUNTIME_ASSERTION_SQL } from "./outbox-policy-authority.js";
 import {
+  COMMERCE_PUBLIC_LOCK_REGPROCEDURES_SQL,
+  commercePublicLockPrivilegeChecks,
+} from "./commerce-public-lock-routines.js";
+import {
   canonicalRelationAuthority,
   splitWorkerRelationNames,
   SPLIT_WORKER_EXACT_AUTHORITY_SQL,
@@ -1523,6 +1527,7 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_column_privilege(current_user, 'platform.asset_eligibility_projection', 'purpose', 'SELECT')
            AND has_column_privilege(current_user, 'platform.asset_eligibility_projection', 'eligibility_epoch', 'SELECT')
            AND has_column_privilege(current_user, 'platform.asset_eligibility_projection', 'state', 'SELECT')
+           AND ${commercePublicLockPrivilegeChecks("current_user")}
          WHEN $2 = 'admission' THEN
            (has_table_privilege(current_user, 'platform.admission_command', 'SELECT') AND has_table_privilege(current_user, 'platform.admission_command', 'INSERT') AND has_table_privilege(current_user, 'platform.admission_command', 'UPDATE'))
            AND (has_table_privilege(current_user, 'platform.capability_projection_command', 'SELECT') AND has_table_privilege(current_user, 'platform.capability_projection_command', 'INSERT'))
@@ -2493,6 +2498,7 @@ const RUNTIME_IDENTITY_SQL = `
                  to_regprocedure('platform.resolve_model_candidates(text,text,text)'),
                  to_regprocedure('platform.find_model_selection_decision(uuid)'),
                  to_regprocedure('platform.resolve_product_model_option_catalog(text,text)'),
+                 ${COMMERCE_PUBLIC_LOCK_REGPROCEDURES_SQL},
                  to_regprocedure('platform.valid_credit_scope_policy(jsonb)'),
                  to_regprocedure('platform.commerce_safe_label_is_valid(text)'),
                  to_regprocedure('platform.list_owned_artifacts(timestamptz,text,integer)'),
