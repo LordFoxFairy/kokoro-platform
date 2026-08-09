@@ -1,8 +1,11 @@
+import { dirname } from "node:path";
 import type { PlatformTransactionalDatabaseClient } from "../infrastructure/postgres/client.js";
 import { CommerceAdministrationService } from "../modules/commerce/application/services/commerce-administration.js";
 import { PostgresCommerceAdministrationRepository } from "../modules/commerce/infrastructure/postgres/commerce-administration-repository.js";
 import { PlatformUnitOfWork } from "../shared/unit-of-work/index.js";
 import { loadRedemptionSecretCodec } from "./platform-public-composition.js";
+import { createPlatformApiRuntimeFileReader } from "./platform-api-runtime-contract.js";
+import { createBoundedFileReaderWithinTrustRoot } from "./secret-files.js";
 import { PostgresCreditGrantProgram } from "../modules/commerce/infrastructure/postgres/credit-program-repository.js";
 import { PostgresCommerceAdministrationReader } from
   "../modules/commerce/infrastructure/postgres/commerce-administration-reader.js";
@@ -24,7 +27,13 @@ export async function createCommerceAdministrationComposition(input: Readonly<{
   if (keyRingPath === undefined || keyRingPath.length === 0) {
     throw new Error("PLATFORM_COMMERCE_REDEMPTION_KEY_RING_FILE_REQUIRED");
   }
-  const codes = await loadRedemptionSecretCodec(keyRingPath);
+  const keyRingReader = createPlatformApiRuntimeFileReader(
+    await createBoundedFileReaderWithinTrustRoot(
+      dirname(keyRingPath),
+      "PLATFORM_COMMERCE_REDEMPTION_KEY_RING_TRUST_ROOT_INVALID",
+    ),
+  );
+  const codes = await loadRedemptionSecretCodec(keyRingPath, keyRingReader);
   return Object.freeze({
     commerce: new CommerceAdministrationService({
       unitOfWork: new PlatformUnitOfWork(input.database),
