@@ -4,38 +4,14 @@ import { PostgresCommerceAdministrationRepository } from "../modules/commerce/in
 import { PlatformUnitOfWork } from "../shared/unit-of-work/index.js";
 import { loadRedemptionSecretCodec } from "./platform-public-composition.js";
 import { PostgresCreditGrantProgram } from "../modules/commerce/infrastructure/postgres/credit-program-repository.js";
-import { CreditProgramCatalogService } from "../modules/commerce/application/credit-program-catalog-service.js";
-import { PostgresCreditProgramCatalog } from "../modules/commerce/infrastructure/postgres/credit-program-catalog.js";
-import { PostgresCreditProgramCatalogReader } from
-  "../modules/commerce/infrastructure/postgres/credit-program-catalog-reader.js";
-import { canonicalCreditProgramDefinitionFromBytes } from
-  "../modules/commerce/infrastructure/protobuf/credit-program-codec.js";
-import type { CreditProgramCatalogReader, CreditProgramCatalogReadTransactionHost } from
-  "../modules/commerce/application/contracts/credit-program-catalog-reader.js";
+import { PostgresCommerceAdministrationReader } from
+  "../modules/commerce/infrastructure/postgres/commerce-administration-reader.js";
+import { PostgresCreditGrantProgramAdministrationReader } from
+  "../modules/commerce/infrastructure/postgres/credit-program-administration-reader.js";
 
 export interface CommerceAdministrationComposition {
   readonly commerce: CommerceAdministrationService;
-}
-
-export interface CommerceProgramCatalogComposition {
-  readonly programCatalog: CreditProgramCatalogService;
-  readonly programCatalogReader: CreditProgramCatalogReader;
-}
-
-export function createCommerceProgramCatalogComposition(input: Readonly<{
-  database: PlatformTransactionalDatabaseClient;
-  queryHost: CreditProgramCatalogReadTransactionHost;
-  clock?: () => string;
-}>): CommerceProgramCatalogComposition {
-  return Object.freeze({
-    programCatalog: new CreditProgramCatalogService({
-      unitOfWork: new PlatformUnitOfWork(input.database),
-      repository: new PostgresCreditProgramCatalog(),
-      decodeDefinitionBytes: canonicalCreditProgramDefinitionFromBytes,
-      ...(input.clock === undefined ? {} : { clock: input.clock }),
-    }),
-    programCatalogReader: new PostgresCreditProgramCatalogReader(input.queryHost),
-  });
+  readonly reader: PostgresCommerceAdministrationReader;
 }
 
 /** Production control-plane composition; caller owns the verified Admin context and process lifecycle. */
@@ -55,5 +31,9 @@ export async function createCommerceAdministrationComposition(input: Readonly<{
       repository: new PostgresCommerceAdministrationRepository(new PostgresCreditGrantProgram()),
       codes,
     }),
+    reader: new PostgresCommerceAdministrationReader(
+      input.database,
+      new PostgresCreditGrantProgramAdministrationReader(input.database),
+    ),
   });
 }

@@ -1,12 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const migration = readFileSync(
   new URL("../../prisma/migrations/20260729_wave_2a_commerce_core/migration.sql", import.meta.url),
-  "utf8",
-);
-const programCatalogMigration = readFileSync(
-  new URL("../../prisma/migrations/20260816_commerce_credit_program_catalog_owner/migration.sql", import.meta.url),
   "utf8",
 );
 const creditTriggerAuthorityRepairUrl = new URL(
@@ -37,6 +33,11 @@ const commerceService = readFileSync(
   "utf8",
 );
 const compactMigration = migration.replace(/\s+/gu, " ");
+const allMigrationSql = readdirSync(new URL("../../prisma/migrations/", import.meta.url), {
+  withFileTypes: true,
+}).filter((entry) => entry.isDirectory()).map((entry) => readFileSync(new URL(
+  `../../prisma/migrations/${entry.name}/migration.sql`, import.meta.url,
+), "utf8")).join("\n");
 
 describe("Wave 2A Commerce authority schema", () => {
   it("creates the authoritative command identity shape in the initial transaction kernel", () => {
@@ -102,8 +103,12 @@ describe("Wave 2A Commerce authority schema", () => {
     expect(migrator).toContain("GRANT UPDATE ON TABLE platform.commerce_catalog_epoch_authority");
   });
 
-  it("owns the global Credit Program catalog under Commerce physical names", () => {
-    for (const table of [
+  it("contains no retired global Credit Program relation authority", () => {
+    expect(existsSync(new URL(
+      "../../prisma/migrations/20260816_commerce_credit_program_catalog_owner/migration.sql",
+      import.meta.url,
+    ))).toBe(false);
+    for (const retiredRelation of [
       "commerce_credit_program_catalog_snapshot",
       "commerce_credit_program_catalog_snapshot_revision",
       "commerce_credit_program_head",
@@ -112,9 +117,8 @@ describe("Wave 2A Commerce authority schema", () => {
       "commerce_credit_program_publication_audit",
       "commerce_credit_program_outbox",
     ]) {
-      expect(programCatalogMigration).toContain(`platform.${table}`);
+      expect(allMigrationSql).not.toContain(`platform.${retiredRelation}`);
     }
-    expect(programCatalogMigration).not.toMatch(/platform\.credit_program_/u);
   });
 
   it("forces default-deny Site RLS across all fresh Commerce and Credit authority tables", () => {

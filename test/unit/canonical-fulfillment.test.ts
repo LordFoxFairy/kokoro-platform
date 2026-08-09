@@ -5,7 +5,7 @@ import {
 } from "../../src/modules/commerce/domain/canonical-fulfillment.js";
 
 describe("canonical fulfillment transaction", () => {
-  it("sorts committed outputs and binds every Root-contract field into one protobuf digest", () => {
+  it("sorts committed outputs and binds every owner field into one canonical digest", () => {
     const outputA = output("line-a", 1, 1, "grant-a");
     const outputB = output("line-b", 2, 1, "grant-b");
     const committed = canonicalFulfillmentTransaction({
@@ -29,6 +29,9 @@ describe("canonical fulfillment transaction", () => {
     expect(committed.outputs.map((item) => item.outputRef)).toEqual(["grant-a", "grant-b"]);
     expect(committed.transactionVersion).toBe(1);
     expect(committed.transactionDigest).toMatch(/^[a-f0-9]{64}$/u);
+    expect(committed.transactionDigest).toBe(
+      "a7b182d18a85a0a7bd4ae8678157a547a462dafa4a898ec935908e8d56e56f79",
+    );
     expect(canonicalFulfillmentTransaction({
       ...committed,
       acquisition: { ...committed.acquisition, sourceDigest: "c".repeat(64) },

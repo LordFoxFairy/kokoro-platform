@@ -56,22 +56,28 @@ describe("Platform module boundaries", () => {
     expect(violations).toEqual([]);
   });
 
-  it("keeps the complete Program owner stack in Commerce", async () => {
+  it("keeps one Site-scoped Program owner stack in Commerce and no retired global runtime", async () => {
     const commerceRoot = join(process.cwd(), "src", "modules", "commerce");
-    const present = new Set((await files(commerceRoot)).map((file) => relative(commerceRoot, file)));
+    const commerceFiles = await files(commerceRoot);
+    const present = new Set(commerceFiles.map((file) => relative(commerceRoot, file)));
     expect([...present]).toEqual(expect.arrayContaining([
       "application/contracts/credit-program.ts",
+      "application/contracts/credit-program-administration-reader.ts",
+      "application/services/commerce-administration.ts",
+      "infrastructure/postgres/credit-program-repository.ts",
+      "infrastructure/postgres/credit-program-administration-reader.ts",
+    ]));
+    expect([...present]).not.toEqual(expect.arrayContaining([
       "application/contracts/credit-program-catalog.ts",
       "application/contracts/credit-program-catalog-reader.ts",
-      "application/contracts/credit-program-administration-reader.ts",
       "application/credit-program-catalog-service.ts",
       "domain/credit-program-catalog.ts",
-      "infrastructure/postgres/credit-program-repository.ts",
       "infrastructure/postgres/credit-program-catalog.ts",
       "infrastructure/postgres/credit-program-catalog-reader.ts",
-      "infrastructure/postgres/credit-program-administration-reader.ts",
       "infrastructure/protobuf/credit-program-codec.ts",
     ]));
+    const production = (await Promise.all(commerceFiles.map((file) => readFile(file, "utf8")))).join("\n");
+    expect(production).not.toMatch(/\bcredit\.program\.(?:publish|read)\b/u);
   });
 });
 
