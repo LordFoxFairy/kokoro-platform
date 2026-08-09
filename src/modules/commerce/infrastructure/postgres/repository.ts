@@ -88,10 +88,11 @@ export class PostgresCommerceRepository implements CommerceRepository {
     }
     if (storedRows.length !== 1) throw new Error("FULFILLMENT_CLAIM_AMBIGUOUS");
     if (!sameFulfillmentClaim(stored, input)) throw new Error("FULFILLMENT_SOURCE_CONFLICT");
-    const outputRows = await sql.query<Record<string, unknown> & FulfillmentOutputReceipt>(
+    const rawOutputRows = await sql.query<FulfillmentOutputReceiptRow>(
       FULFILLMENT_OUTPUT_RECEIPT_SQL,
       [stored.fulfillmentId],
     );
+    const outputRows = Object.freeze(rawOutputRows.map(decodeFulfillmentOutputReceiptRow));
     const canonical = canonicalFulfillmentTransaction({
       platformTransactionRef: stored.fulfillmentId,
       siteRef: stored.siteId,
@@ -242,6 +243,35 @@ type FulfillmentRow = Record<string, unknown> & {
   transactionDigest: string;
   committedAt: Date | string;
 };
+
+type FulfillmentOutputReceiptRow = Readonly<{
+  kind: FulfillmentOutputReceipt["kind"];
+  outputLineId: string;
+  outputOrdinal: number;
+  occurrence: number;
+  resourceRef: string;
+  templateRevisionRef: string;
+  outputVersion: unknown;
+  outputDigest: string;
+}>;
+
+function decodeFulfillmentOutputReceiptRow(row: FulfillmentOutputReceiptRow): FulfillmentOutputReceipt {
+  const exactNumberOne = typeof row.outputVersion === "number" &&
+    Number.isSafeInteger(row.outputVersion) && row.outputVersion === 1;
+  if (row.outputVersion !== 1n && row.outputVersion !== "1" && !exactNumberOne) {
+    throw new Error("FULFILLMENT_OUTPUT_VERSION_INVALID");
+  }
+  return Object.freeze({
+    kind: row.kind,
+    outputLineId: row.outputLineId,
+    outputOrdinal: row.outputOrdinal,
+    occurrence: row.occurrence,
+    resourceRef: row.resourceRef,
+    templateRevisionRef: row.templateRevisionRef,
+    outputVersion: 1,
+    outputDigest: row.outputDigest,
+  });
+}
 
 function sameFulfillmentClaim(stored: FulfillmentRow, input: ClaimFulfillmentInput): boolean {
   return stored.siteId === input.source.siteId &&

@@ -56,65 +56,78 @@ describe("PostgresCommerceRepository fulfillment facts", () => {
     } finally { revokePlatformTransaction(lease); }
   });
 
-  it("reconstructs and verifies the canonical committed fact before replay", async () => {
-    const claim = claimInput({ sourceType: "payment", sourceRef: "settlement-7", pricingSnapshotRef: "price-v7" });
-    const outputBase = { kind: "credit_grant" as const, outputLineId: "credits", outputOrdinal: 1,
-      occurrence: 1, outputRef: "grant-7", templateRevisionRef: "credit-v1", outputVersion: 1 as const };
-    const output = { ...outputBase, outputDigest: fulfillmentOutputDigest(outputBase) };
-    const fact = canonicalFulfillmentTransaction({
-      platformTransactionRef: claim.fulfillmentId, siteRef: claim.source.siteId,
-      acquisition: { sourceKind: claim.source.sourceType, sourceRef: claim.source.sourceRef,
-        sourceVersion: claim.snapshot.sourceVersion, sourceDigest: claim.snapshot.sourceDigest,
-        acquiredAt: claim.snapshot.acquiredAt },
-      program: { fulfillmentProgramRevisionRef: claim.snapshot.fulfillmentProgramRevisionRef,
-        fulfillmentProgramRevision: claim.snapshot.fulfillmentProgramRevision,
-        fulfillmentProgramDigest: claim.snapshot.fulfillmentProgramDigest },
-      outputs: [output], committedAt: "2026-07-30T02:00:01.000Z",
-    });
-    let storedTransactionDigest = fact.transactionDigest;
-    const sql: PlatformSqlTransaction = {
-      query: async (statement) => {
-        if (statement.includes("pg_advisory_xact_lock")) return [{}] as never;
-        if (statement.includes("FROM platform.commerce_fulfillment_transaction")) return [{
-          fulfillmentId: claim.fulfillmentId, siteId: claim.source.siteId, billingAccountId: claim.billingAccountId,
-          sourceType: claim.source.sourceType, sourceRef: claim.source.sourceRef, purpose: claim.source.purpose,
-          cycleKey: claim.source.cycleKey, idempotencyKey: claim.source.idempotencyKey,
-          productVersionRef: claim.snapshot.productVersionRef, planVersionRef: claim.snapshot.planVersionRef,
-          offeringVersionRef: claim.snapshot.offeringVersionRef, sourceVersion: claim.snapshot.sourceVersion,
-          sourceDigest: claim.snapshot.sourceDigest, acquiredAt: claim.snapshot.acquiredAt,
-          fulfillmentProgramRevisionRef: claim.snapshot.fulfillmentProgramRevisionRef,
+  it.each([1n, "1", 1] as const)(
+    "normalizes a PostgreSQL output version %s before canonical replay",
+    async (rawOutputVersion) => {
+      const claim = claimInput({ sourceType: "payment", sourceRef: "settlement-7", pricingSnapshotRef: "price-v7" });
+      const outputBase = { kind: "credit_grant" as const, outputLineId: "credits", outputOrdinal: 1,
+        occurrence: 1, outputRef: "grant-7", templateRevisionRef: "credit-v1", outputVersion: 1 as const };
+      const output = { ...outputBase, outputDigest: fulfillmentOutputDigest(outputBase) };
+      const fact = canonicalFulfillmentTransaction({
+        platformTransactionRef: claim.fulfillmentId, siteRef: claim.source.siteId,
+        acquisition: { sourceKind: claim.source.sourceType, sourceRef: claim.source.sourceRef,
+          sourceVersion: claim.snapshot.sourceVersion, sourceDigest: claim.snapshot.sourceDigest,
+          acquiredAt: claim.snapshot.acquiredAt },
+        program: { fulfillmentProgramRevisionRef: claim.snapshot.fulfillmentProgramRevisionRef,
           fulfillmentProgramRevision: claim.snapshot.fulfillmentProgramRevision,
-          fulfillmentProgramDigest: claim.snapshot.fulfillmentProgramDigest,
-          pricingSnapshotRef: claim.snapshot.pricingSnapshotRef, outputSetDigest: fact.outputSetDigest,
-          transactionVersion: 1n, transactionDigest: storedTransactionDigest, committedAt: fact.committedAt,
-        }] as never;
-        if (statement.includes("FROM platform.commerce_fulfillment_actual_output")) return [{
-          kind: output.kind, outputLineId: output.outputLineId, outputOrdinal: output.outputOrdinal,
-          occurrence: output.occurrence, resourceRef: output.outputRef,
-          templateRevisionRef: output.templateRevisionRef, outputVersion: output.outputVersion,
-          outputDigest: output.outputDigest,
-        }] as never;
-        return [];
-      },
-      execute: async () => 0,
-    };
-    const lease = issuePlatformTransaction(sql);
-    try {
-      const repository = new PostgresCommerceRepository();
-      await expect(repository.claimFulfillment(lease.transaction, claim)).resolves.toEqual({
-        disposition: "replay",
-        receipt: { fulfillmentId: claim.fulfillmentId, transactionVersion: 1,
-          transactionDigest: fact.transactionDigest, outputSetDigest: fact.outputSetDigest,
-          outputs: [{ kind: output.kind, outputLineId: output.outputLineId,
-            outputOrdinal: output.outputOrdinal, occurrence: output.occurrence, resourceRef: output.outputRef,
-            templateRevisionRef: output.templateRevisionRef, outputVersion: output.outputVersion,
-            outputDigest: output.outputDigest }] },
+          fulfillmentProgramDigest: claim.snapshot.fulfillmentProgramDigest },
+        outputs: [output], committedAt: "2026-07-30T02:00:01.000Z",
       });
-      storedTransactionDigest = "f".repeat(64);
-      await expect(repository.claimFulfillment(lease.transaction, claim))
-        .rejects.toThrow("FULFILLMENT_TRANSACTION_DIGEST_MISMATCH");
-    } finally { revokePlatformTransaction(lease); }
-  });
+      let storedTransactionDigest = fact.transactionDigest;
+      let storedOutputVersion: unknown = rawOutputVersion;
+      const sql: PlatformSqlTransaction = {
+        query: async (statement) => {
+          if (statement.includes("pg_advisory_xact_lock")) return [{}] as never;
+          if (statement.includes("FROM platform.commerce_fulfillment_transaction")) return [{
+            fulfillmentId: claim.fulfillmentId, siteId: claim.source.siteId, billingAccountId: claim.billingAccountId,
+            sourceType: claim.source.sourceType, sourceRef: claim.source.sourceRef, purpose: claim.source.purpose,
+            cycleKey: claim.source.cycleKey, idempotencyKey: claim.source.idempotencyKey,
+            productVersionRef: claim.snapshot.productVersionRef, planVersionRef: claim.snapshot.planVersionRef,
+            offeringVersionRef: claim.snapshot.offeringVersionRef, sourceVersion: claim.snapshot.sourceVersion,
+            sourceDigest: claim.snapshot.sourceDigest, acquiredAt: claim.snapshot.acquiredAt,
+            fulfillmentProgramRevisionRef: claim.snapshot.fulfillmentProgramRevisionRef,
+            fulfillmentProgramRevision: claim.snapshot.fulfillmentProgramRevision,
+            fulfillmentProgramDigest: claim.snapshot.fulfillmentProgramDigest,
+            pricingSnapshotRef: claim.snapshot.pricingSnapshotRef, outputSetDigest: fact.outputSetDigest,
+            transactionVersion: 1n, transactionDigest: storedTransactionDigest, committedAt: fact.committedAt,
+          }] as never;
+          if (statement.includes("FROM platform.commerce_fulfillment_actual_output")) return [{
+            kind: output.kind, outputLineId: output.outputLineId, outputOrdinal: output.outputOrdinal,
+            occurrence: output.occurrence, resourceRef: output.outputRef,
+            templateRevisionRef: output.templateRevisionRef, outputVersion: storedOutputVersion,
+            outputDigest: output.outputDigest,
+          }] as never;
+          return [];
+        },
+        execute: async () => 0,
+      };
+      const lease = issuePlatformTransaction(sql);
+      try {
+        const repository = new PostgresCommerceRepository();
+        await expect(repository.claimFulfillment(lease.transaction, claim)).resolves.toEqual({
+          disposition: "replay",
+          receipt: { fulfillmentId: claim.fulfillmentId, transactionVersion: 1,
+            transactionDigest: fact.transactionDigest, outputSetDigest: fact.outputSetDigest,
+            outputs: [{ kind: output.kind, outputLineId: output.outputLineId,
+              outputOrdinal: output.outputOrdinal, occurrence: output.occurrence, resourceRef: output.outputRef,
+              templateRevisionRef: output.templateRevisionRef, outputVersion: output.outputVersion,
+              outputDigest: output.outputDigest }] },
+        });
+        storedTransactionDigest = "f".repeat(64);
+        await expect(repository.claimFulfillment(lease.transaction, claim))
+          .rejects.toThrow("FULFILLMENT_TRANSACTION_DIGEST_MISMATCH");
+        storedTransactionDigest = fact.transactionDigest;
+        for (const invalid of [
+          0n, 2n, "0", "2", "01", "1.0", 0, 2, 1.5, Number.NaN,
+          Number.POSITIVE_INFINITY, null, undefined, {},
+        ]) {
+          storedOutputVersion = invalid;
+          await expect(repository.claimFulfillment(lease.transaction, claim))
+            .rejects.toThrow("FULFILLMENT_OUTPUT_VERSION_INVALID");
+        }
+      } finally { revokePlatformTransaction(lease); }
+    },
+  );
 });
 
 function claimInput(overrides: Readonly<{
