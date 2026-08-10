@@ -560,8 +560,6 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         attachments: command.effect.attachmentRefs,
       });
       if (assets.kind !== "resolved") return assets;
-      // Resolution inserts the stable Session binding when it does not exist.
-      markEffectStarted();
       const executionBinding = await this.#ports.executionBinding.resolve(transaction, {
         siteId: command.siteId,
         projectRef: command.effect.projectRef,
@@ -571,7 +569,6 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         configurationRevisionId: site.value.configurationRevisionId,
       });
       if (executionBinding.kind !== "resolved") return executionBinding;
-      if (mediaReservation !== undefined) markEffectStarted();
       const mediaAccess = mediaReservation === undefined
         ? undefined
         : await this.#ports.mediaAccess.reserve(transaction, {
@@ -589,7 +586,9 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
             inputPolicyDecisionRef: site.value.policyDecisionRef,
             maximumExpiresAt: mediaReservation.value.expiresAt,
           });
-      if (mediaAccess !== undefined && mediaAccess.kind !== "resolved") return mediaAccess;
+      if (mediaAccess !== undefined && mediaAccess.kind !== "resolved") {
+        return completeLocalTransactionEffect(markEffectStarted, mediaAccess);
+      }
       const ownerFacts: VerifiedGaRunRequestOwnerFacts = {
         kind: "run.request",
         run_id: command.effect.proposedRunId,
@@ -636,7 +635,6 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
       });
       const manifestRef = `execution-manifest:sha256:${manifestDigest}`;
       const maximumExpiresAt = new Date(this.#now() + MAX_AUTHORIZATION_TTL_MS).toISOString();
-      markEffectStarted();
       const budget = await this.#ports.budget.reserveRoot(transaction, {
         siteId: command.siteId,
         projectRef: command.effect.projectRef,
@@ -653,7 +651,9 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         requestDigest: command.requestDigest,
         ...(capability.value.agent === undefined ? {} : { agentRef: capability.value.agent }),
       });
-      if (budget.kind !== "resolved") return budget;
+      if (budget.kind !== "resolved") {
+        return completeLocalTransactionEffect(markEffectStarted, budget);
+      }
       const record = await this.#ports.lifecycle.prepare(transaction, {
         siteId: command.siteId,
         commandId: command.commandId,
@@ -706,7 +706,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
           })),
         }),
       };
-      return capability.value.prerequisiteRefs.length === 0
+      const decision: PrepareRunOwnerDecision = capability.value.prerequisiteRefs.length === 0
         ? { kind: "accepted", ownerFacts, prepared, prerequisiteRefs: [] }
         : {
             kind: "waiting_prerequisite",
@@ -714,6 +714,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
             prepared,
             prerequisiteRefs: Object.freeze([...capability.value.prerequisiteRefs]),
           };
+      return completeLocalTransactionEffect(markEffectStarted, decision);
     });
   }
 
@@ -790,7 +791,6 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
       assertSameAuthorization(record, observed);
       assertExpectedSegmentVersion(record, command.effect.expectedSegmentVersion);
       if (record.state !== "reserved") return denied("ADMISSION_AUTHORIZATION_NOT_FINALIZABLE");
-      markEffectStarted();
       if (Date.parse(record.expiresAt) <= this.#now()) {
         const credit = await this.#ports.budget.releaseRoot(transaction, {
           siteId: command.siteId,
@@ -804,7 +804,11 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
           noDispatchEvidenceRef: `admission-expiry:${record.manifestDigest}`,
         });
         await this.#ports.lifecycle.expire(transaction, record, credit.segmentVersion);
-        return { kind: "expired", expired: { expiredAt: timestampFromDate(this.#date()) } };
+        const decision: FinalizeRunOwnerDecision = {
+          kind: "expired",
+          expired: { expiredAt: timestampFromDate(this.#date()) },
+        };
+        return completeLocalTransactionEffect(markEffectStarted, decision);
       }
       const credit = await this.#ports.budget.commitRoot(transaction, {
         siteId: command.siteId,
@@ -817,7 +821,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
       });
       const changed = await this.#ports.lifecycle.commit(transaction, record, credit.segmentVersion);
       assertTransition(changed, record, "committed", credit.segmentVersion);
-      return committed(changed, this.#date());
+      return completeLocalTransactionEffect(markEffectStarted, committed(changed, this.#date()));
     });
   }
 
@@ -865,7 +869,6 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
       assertSameAuthorization(locked, observed);
       if (locked.state === "released") return alreadyReleased(locked, this.#date());
       if (locked.state !== "reserved") return notReleasable("ADMISSION_AUTHORIZATION_ALREADY_EFFECTFUL");
-      markEffectStarted();
       const credit = await this.#ports.budget.releaseRoot(transaction, {
         siteId: command.siteId,
         rootHoldRef: locked.rootHoldRef,
@@ -880,7 +883,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
       const changed = await this.#ports.lifecycle.release(transaction, locked, evidence,
         credit.segmentVersion);
       assertTransition(changed, locked, "released", credit.segmentVersion);
-      return released(changed, this.#date());
+      return completeLocalTransactionEffect(markEffectStarted, released(changed, this.#date()));
     });
   }
 
@@ -985,11 +988,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
           executionEvidence.safeStatusRef,
           budget.kind === "settled" ? budget.settlement : undefined,
         );
-        // The local Credit and lifecycle effects are still rollback-safe until
-        // this callback returns. From this point, an execute() failure can be a
-        // lost commit response and must remain outcome_unknown.
-        markEffectStarted();
-        return decision;
+        return completeLocalTransactionEffect(markEffectStarted, decision);
       }
       if (dispatchEvidence === undefined) {
         throw new Error("ADMISSION_RECONCILIATION_OWNER_EVIDENCE_REQUIRED");
@@ -1012,8 +1011,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         : await this.#ports.lifecycle.requireReconciliation(transaction, locked,
             budget.segmentVersion);
       const decision = reconciliation("reconciliation_required", changed, this.#date());
-      markEffectStarted();
-      return decision;
+      return completeLocalTransactionEffect(markEffectStarted, decision);
     });
   }
 
@@ -1038,6 +1036,19 @@ async function withAdmissionOwnerEffectBoundary<Result>(
     if (!effectStarted) throw new AdmissionOwnerNoEffectError(cause);
     throw cause;
   }
+}
+
+/**
+ * Called as the final step of a local transaction callback. A failure before
+ * this point is rollback-confirmed; a later Unit of Work failure can be a lost
+ * commit response and therefore remains outcome_unknown.
+ */
+function completeLocalTransactionEffect<Result>(
+  markEffectStarted: () => void,
+  result: Result,
+): Result {
+  markEffectStarted();
+  return result;
 }
 
 export function assertPlatformAdmissionOwnerPorts(

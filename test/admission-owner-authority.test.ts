@@ -763,24 +763,504 @@ describe("Platform Admission owner authority", () => {
     expect(dependencies.budget.reserveRoot).not.toHaveBeenCalled();
   });
 
-  it("keeps an execution-binding response loss ambiguous after its persistent effect starts", async () => {
+  it("keeps an execution-binding callback abort retryable because the local transaction rolls back", async () => {
     const dependencies = ports();
-    const ambiguous = new Error("execution binding commit response lost");
-    let bindingEffects = 0;
-    vi.mocked(dependencies.executionBinding.resolve).mockImplementation(async () => {
-      bindingEffects += 1;
+    const transient = new Error("execution binding transaction aborted");
+    vi.mocked(dependencies.executionBinding.resolve).mockRejectedValueOnce(transient);
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+    const command = {
+      caller, siteId: "site-1", commandId: "command-prepare-binding-retry",
+      requestDigest: "e".repeat(64), effect: prepareEffect(),
+    };
+
+    await expect(authority.prepareRun(command)).rejects.toMatchObject({
+      name: "AdmissionOwnerNoEffectError",
+      cause: transient,
+    });
+    await expect(authority.prepareRun(command)).resolves.toMatchObject({ kind: "accepted" });
+
+    expect(dependencies.executionBinding.resolve).toHaveBeenCalledTimes(2);
+    expect(dependencies.budget.reserveRoot).toHaveBeenCalledOnce();
+    expect(dependencies.lifecycle.prepare).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a prepare budget callback abort retryable until the local callback completes", async () => {
+    const dependencies = ports();
+    const transient = new Error("prepare budget transaction aborted");
+    vi.mocked(dependencies.budget.reserveRoot).mockRejectedValueOnce(transient);
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+    const command = {
+      caller, siteId: "site-1", commandId: "command-prepare-budget-retry",
+      requestDigest: "e".repeat(64), effect: prepareEffect(),
+    };
+
+    await expect(authority.prepareRun(command)).rejects.toMatchObject({
+      name: "AdmissionOwnerNoEffectError",
+      cause: transient,
+    });
+    await expect(authority.prepareRun(command)).resolves.toMatchObject({ kind: "accepted" });
+
+    expect(dependencies.executionBinding.resolve).toHaveBeenCalledTimes(2);
+    expect(dependencies.budget.reserveRoot).toHaveBeenCalledTimes(2);
+    expect(dependencies.lifecycle.prepare).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a prepare lifecycle callback abort retryable until the local callback completes", async () => {
+    const dependencies = ports();
+    const transient = new Error("prepare lifecycle transaction aborted");
+    vi.mocked(dependencies.lifecycle.prepare).mockRejectedValueOnce(transient);
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+    const command = {
+      caller, siteId: "site-1", commandId: "command-prepare-lifecycle-retry",
+      requestDigest: "e".repeat(64), effect: prepareEffect(),
+    };
+
+    await expect(authority.prepareRun(command)).rejects.toMatchObject({
+      name: "AdmissionOwnerNoEffectError",
+      cause: transient,
+    });
+    await expect(authority.prepareRun(command)).resolves.toMatchObject({ kind: "accepted" });
+
+    expect(dependencies.executionBinding.resolve).toHaveBeenCalledTimes(2);
+    expect(dependencies.budget.reserveRoot).toHaveBeenCalledTimes(2);
+    expect(dependencies.lifecycle.prepare).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps an effect-free execution-binding denial retryable across a UoW failure", async () => {
+    const dependencies = ports();
+    const rolledBack = new Error("read-only transaction completion failed");
+    const baseExecute = dependencies.unitOfWork.execute;
+    let unitOfWorkCalls = 0;
+    dependencies.unitOfWork.execute = async <Result>(
+      command: AdmissionAuthorityCommand,
+      work: (transaction: PlatformTransaction) => Promise<Result>,
+    ): Promise<Result> => {
+      const result = await baseExecute(command, work);
+      unitOfWorkCalls += 1;
+      if (unitOfWorkCalls === 1) throw rolledBack;
+      return result;
+    };
+    vi.mocked(dependencies.executionBinding.resolve).mockResolvedValue({
+      kind: "denied",
+      denial: { code: "ADMISSION_EXECUTION_SPACE_NOT_READY",
+        retryClass: AdmissionRetryClass.AFTER_DELAY },
+    });
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+    const command = {
+      caller, siteId: "site-1", commandId: "command-prepare-binding-denied-retry",
+      requestDigest: "e".repeat(64), effect: prepareEffect(),
+    };
+
+    await expect(authority.prepareRun(command)).rejects.toMatchObject({
+      name: "AdmissionOwnerNoEffectError",
+      cause: rolledBack,
+    });
+    await expect(authority.prepareRun(command)).resolves.toMatchObject({ kind: "denied" });
+
+    expect(dependencies.executionBinding.resolve).toHaveBeenCalledTimes(2);
+    expect(dependencies.budget.reserveRoot).not.toHaveBeenCalled();
+  });
+
+  it("keeps a post-binding denied callback commit response loss ambiguous", async () => {
+    const dependencies = ports();
+    const ambiguous = new Error("prepare denied commit response lost");
+    const baseExecute = dependencies.unitOfWork.execute;
+    dependencies.unitOfWork.execute = async <Result>(
+      command: AdmissionAuthorityCommand,
+      work: (transaction: PlatformTransaction) => Promise<Result>,
+    ): Promise<Result> => {
+      await baseExecute(command, work);
       throw ambiguous;
+    };
+    vi.mocked(dependencies.budget.reserveRoot).mockResolvedValue({
+      kind: "denied",
+      denial: { code: "ADMISSION_INSUFFICIENT_CREDIT", retryClass: AdmissionRetryClass.NEVER },
     });
     const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
       mediaProjectionRecoveryKey, clock: () => now });
 
     await expect(authority.prepareRun({
-      caller, siteId: "site-1", commandId: "command-prepare-binding-ambiguous",
+      caller, siteId: "site-1", commandId: "command-prepare-denied-ambiguous",
       requestDigest: "e".repeat(64), effect: prepareEffect(),
     })).rejects.toBe(ambiguous);
 
-    expect(bindingEffects).toBe(1);
-    expect(dependencies.budget.reserveRoot).not.toHaveBeenCalled();
+    expect(dependencies.executionBinding.resolve).toHaveBeenCalledOnce();
+    expect(dependencies.budget.reserveRoot).toHaveBeenCalledOnce();
+    expect(dependencies.lifecycle.prepare).not.toHaveBeenCalled();
+  });
+
+  it("keeps a prepare UoW commit response loss ambiguous after the callback completes", async () => {
+    const dependencies = ports();
+    const ambiguous = new Error("prepare commit response lost");
+    const baseExecute = dependencies.unitOfWork.execute;
+    dependencies.unitOfWork.execute = async <Result>(
+      command: AdmissionAuthorityCommand,
+      work: (transaction: PlatformTransaction) => Promise<Result>,
+    ): Promise<Result> => {
+      await baseExecute(command, work);
+      throw ambiguous;
+    };
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+
+    await expect(authority.prepareRun({
+      caller, siteId: "site-1", commandId: "command-prepare-commit-ambiguous",
+      requestDigest: "e".repeat(64), effect: prepareEffect(),
+    })).rejects.toBe(ambiguous);
+
+    expect(dependencies.budget.reserveRoot).toHaveBeenCalledOnce();
+    expect(dependencies.lifecycle.prepare).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a local prepare abort ambiguous after the external Media effect starts", async () => {
+    const dependencies = ports();
+    const localAbort = new Error("prepare local transaction aborted after Media reservation");
+    vi.mocked(dependencies.session.resolve).mockResolvedValue({
+      kind: "resolved",
+      value: { threadId: "session-1", assistantMessageId: "assistant-1" },
+    });
+    vi.mocked(dependencies.budget.reserveRoot).mockRejectedValue(localAbort);
+    const effect = prepareEffect();
+    effect.sessionProjectionAuthorizationHandle =
+      `session-projection-authorization:${"s".repeat(32)}`;
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+
+    await expect(authority.prepareRun({
+      caller, siteId: "site-1", commandId: "command-prepare-media-local-ambiguous",
+      requestDigest: "e".repeat(64), effect,
+    })).rejects.toBe(localAbort);
+
+    expect(dependencies.mediaProjection.issueReservation).toHaveBeenCalledOnce();
+    expect(dependencies.budget.reserveRoot).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a finalize Credit callback abort retryable until the local callback completes", async () => {
+    const dependencies = ports();
+    const transient = new Error("finalize Credit transaction aborted");
+    vi.mocked(dependencies.budget.commitRoot).mockRejectedValueOnce(transient);
+    vi.mocked(dependencies.lifecycle.commit).mockImplementation(
+      async (_transaction, record, segmentVersion) => ({
+        ...record, state: "committed" as const, segmentVersion,
+      }),
+    );
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+    const command = {
+      caller, siteId: "site-1", commandId: "command-finalize-credit-retry",
+      requestDigest: "e".repeat(64), effect: finalizeEffect(),
+    };
+
+    await expect(authority.finalizeRunAuthorization(command)).rejects.toMatchObject({
+      name: "AdmissionOwnerNoEffectError",
+      cause: transient,
+    });
+    await expect(authority.finalizeRunAuthorization(command))
+      .resolves.toMatchObject({ kind: "committed" });
+
+    expect(dependencies.budget.commitRoot).toHaveBeenCalledTimes(2);
+    expect(dependencies.lifecycle.commit).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a finalize lifecycle callback abort retryable until the local callback completes", async () => {
+    const dependencies = ports();
+    const transient = new Error("finalize lifecycle transaction aborted");
+    vi.mocked(dependencies.lifecycle.commit)
+      .mockRejectedValueOnce(transient)
+      .mockImplementation(async (_transaction, record, segmentVersion) => ({
+        ...record, state: "committed" as const, segmentVersion,
+      }));
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+    const command = {
+      caller, siteId: "site-1", commandId: "command-finalize-lifecycle-retry",
+      requestDigest: "e".repeat(64), effect: finalizeEffect(),
+    };
+
+    await expect(authority.finalizeRunAuthorization(command)).rejects.toMatchObject({
+      name: "AdmissionOwnerNoEffectError",
+      cause: transient,
+    });
+    await expect(authority.finalizeRunAuthorization(command))
+      .resolves.toMatchObject({ kind: "committed" });
+
+    expect(dependencies.budget.commitRoot).toHaveBeenCalledTimes(2);
+    expect(dependencies.lifecycle.commit).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps an expired finalize callback abort retryable until the local callback completes", async () => {
+    const dependencies = ports();
+    const transient = new Error("finalize expiry transaction aborted");
+    const expiredRecord = {
+      siteId: "site-1",
+      manifestRef: "manifest-1",
+      manifestDigest: "a".repeat(64),
+      sessionId: "session-1",
+      launchId: "launch-1",
+      runId: "run-1",
+      rootHoldRef: "hold-1",
+      authorizationSegmentRef: "segment-1",
+      segmentVersion: 1n,
+      state: "reserved" as const,
+      expiresAt: now.toISOString(),
+    };
+    vi.mocked(dependencies.lifecycle.read).mockResolvedValue(expiredRecord);
+    vi.mocked(dependencies.lifecycle.lock).mockResolvedValue(expiredRecord);
+    vi.mocked(dependencies.lifecycle.expire).mockRejectedValueOnce(transient);
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+    const command = {
+      caller, siteId: "site-1", commandId: "command-finalize-expiry-retry",
+      requestDigest: "e".repeat(64), effect: finalizeEffect(),
+    };
+
+    await expect(authority.finalizeRunAuthorization(command)).rejects.toMatchObject({
+      name: "AdmissionOwnerNoEffectError",
+      cause: transient,
+    });
+    await expect(authority.finalizeRunAuthorization(command))
+      .resolves.toMatchObject({ kind: "expired" });
+
+    expect(dependencies.budget.releaseRoot).toHaveBeenCalledTimes(2);
+    expect(dependencies.lifecycle.expire).toHaveBeenCalledTimes(2);
+    expect(dependencies.budget.commitRoot).not.toHaveBeenCalled();
+  });
+
+  it("keeps an expired finalize commit response loss ambiguous after the callback completes", async () => {
+    const dependencies = ports();
+    const ambiguous = new Error("finalize expiry commit response lost");
+    const expiredRecord = {
+      siteId: "site-1",
+      manifestRef: "manifest-1",
+      manifestDigest: "a".repeat(64),
+      sessionId: "session-1",
+      launchId: "launch-1",
+      runId: "run-1",
+      rootHoldRef: "hold-1",
+      authorizationSegmentRef: "segment-1",
+      segmentVersion: 1n,
+      state: "reserved" as const,
+      expiresAt: now.toISOString(),
+    };
+    vi.mocked(dependencies.lifecycle.read).mockResolvedValue(expiredRecord);
+    vi.mocked(dependencies.lifecycle.lock).mockResolvedValue(expiredRecord);
+    const baseExecute = dependencies.unitOfWork.execute;
+    let unitOfWorkCalls = 0;
+    dependencies.unitOfWork.execute = async <Result>(
+      command: AdmissionAuthorityCommand,
+      work: (transaction: PlatformTransaction) => Promise<Result>,
+    ): Promise<Result> => {
+      const result = await baseExecute(command, work);
+      unitOfWorkCalls += 1;
+      if (unitOfWorkCalls === 2) throw ambiguous;
+      return result;
+    };
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+
+    await expect(authority.finalizeRunAuthorization({
+      caller, siteId: "site-1", commandId: "command-finalize-expiry-ambiguous",
+      requestDigest: "e".repeat(64), effect: finalizeEffect(),
+    })).rejects.toBe(ambiguous);
+
+    expect(dependencies.budget.releaseRoot).toHaveBeenCalledOnce();
+    expect(dependencies.lifecycle.expire).toHaveBeenCalledOnce();
+    expect(dependencies.budget.commitRoot).not.toHaveBeenCalled();
+  });
+
+  it("keeps a raced finalize denial retryable across an effect-free UoW failure", async () => {
+    const dependencies = ports();
+    const rolledBack = new Error("finalize denial transaction completion failed");
+    vi.mocked(dependencies.lifecycle.lock).mockImplementation(async () => ({
+      siteId: "site-1",
+      manifestRef: "manifest-1",
+      manifestDigest: "a".repeat(64),
+      sessionId: "session-1",
+      launchId: "launch-1",
+      runId: "run-1",
+      rootHoldRef: "hold-1",
+      authorizationSegmentRef: "segment-1",
+      segmentVersion: 1n,
+      state: "reconciliation_required" as const,
+      expiresAt: "2026-07-29T12:04:00.000Z",
+    }));
+    const baseExecute = dependencies.unitOfWork.execute;
+    let unitOfWorkCalls = 0;
+    dependencies.unitOfWork.execute = async <Result>(
+      command: AdmissionAuthorityCommand,
+      work: (transaction: PlatformTransaction) => Promise<Result>,
+    ): Promise<Result> => {
+      const result = await baseExecute(command, work);
+      unitOfWorkCalls += 1;
+      if (unitOfWorkCalls === 2) throw rolledBack;
+      return result;
+    };
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+    const command = {
+      caller, siteId: "site-1", commandId: "command-finalize-raced-denial-retry",
+      requestDigest: "e".repeat(64), effect: finalizeEffect(),
+    };
+
+    await expect(authority.finalizeRunAuthorization(command)).rejects.toMatchObject({
+      name: "AdmissionOwnerNoEffectError",
+      cause: rolledBack,
+    });
+    await expect(authority.finalizeRunAuthorization(command))
+      .resolves.toMatchObject({ kind: "denied" });
+
+    expect(dependencies.budget.commitRoot).not.toHaveBeenCalled();
+    expect(dependencies.budget.releaseRoot).not.toHaveBeenCalled();
+  });
+
+  it("keeps a finalize UoW commit response loss ambiguous after the callback completes", async () => {
+    const dependencies = ports();
+    const ambiguous = new Error("finalize commit response lost");
+    const baseExecute = dependencies.unitOfWork.execute;
+    let unitOfWorkCalls = 0;
+    dependencies.unitOfWork.execute = async <Result>(
+      command: AdmissionAuthorityCommand,
+      work: (transaction: PlatformTransaction) => Promise<Result>,
+    ): Promise<Result> => {
+      const result = await baseExecute(command, work);
+      unitOfWorkCalls += 1;
+      if (unitOfWorkCalls === 2) throw ambiguous;
+      return result;
+    };
+    vi.mocked(dependencies.lifecycle.commit).mockImplementation(
+      async (_transaction, record, segmentVersion) => ({
+        ...record, state: "committed" as const, segmentVersion,
+      }),
+    );
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+
+    await expect(authority.finalizeRunAuthorization({
+      caller, siteId: "site-1", commandId: "command-finalize-commit-ambiguous",
+      requestDigest: "e".repeat(64), effect: finalizeEffect(),
+    })).rejects.toBe(ambiguous);
+
+    expect(dependencies.budget.commitRoot).toHaveBeenCalledOnce();
+    expect(dependencies.lifecycle.commit).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a release Credit callback abort retryable until the local callback completes", async () => {
+    const dependencies = ports();
+    const transient = new Error("release Credit transaction aborted");
+    vi.mocked(dependencies.budget.releaseRoot).mockRejectedValueOnce(transient);
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+    const command = {
+      caller, siteId: "site-1", commandId: "command-release-credit-retry",
+      requestDigest: "e".repeat(64), effect: releaseEffect(),
+    };
+
+    await expect(authority.releaseRunAuthorization(command)).rejects.toMatchObject({
+      name: "AdmissionOwnerNoEffectError",
+      cause: transient,
+    });
+    await expect(authority.releaseRunAuthorization(command))
+      .resolves.toMatchObject({ kind: "released" });
+
+    expect(dependencies.budget.releaseRoot).toHaveBeenCalledTimes(2);
+    expect(dependencies.lifecycle.release).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a release lifecycle callback abort retryable until the local callback completes", async () => {
+    const dependencies = ports();
+    const transient = new Error("release lifecycle transaction aborted");
+    vi.mocked(dependencies.lifecycle.release).mockRejectedValueOnce(transient);
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+    const command = {
+      caller, siteId: "site-1", commandId: "command-release-lifecycle-retry",
+      requestDigest: "e".repeat(64), effect: releaseEffect(),
+    };
+
+    await expect(authority.releaseRunAuthorization(command)).rejects.toMatchObject({
+      name: "AdmissionOwnerNoEffectError",
+      cause: transient,
+    });
+    await expect(authority.releaseRunAuthorization(command))
+      .resolves.toMatchObject({ kind: "released" });
+
+    expect(dependencies.budget.releaseRoot).toHaveBeenCalledTimes(2);
+    expect(dependencies.lifecycle.release).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a release UoW commit response loss ambiguous after the callback completes", async () => {
+    const dependencies = ports();
+    const ambiguous = new Error("release commit response lost");
+    const baseExecute = dependencies.unitOfWork.execute;
+    let unitOfWorkCalls = 0;
+    dependencies.unitOfWork.execute = async <Result>(
+      command: AdmissionAuthorityCommand,
+      work: (transaction: PlatformTransaction) => Promise<Result>,
+    ): Promise<Result> => {
+      const result = await baseExecute(command, work);
+      unitOfWorkCalls += 1;
+      if (unitOfWorkCalls === 2) throw ambiguous;
+      return result;
+    };
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+
+    await expect(authority.releaseRunAuthorization({
+      caller, siteId: "site-1", commandId: "command-release-commit-ambiguous",
+      requestDigest: "e".repeat(64), effect: releaseEffect(),
+    })).rejects.toBe(ambiguous);
+
+    expect(dependencies.budget.releaseRoot).toHaveBeenCalledOnce();
+    expect(dependencies.lifecycle.release).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a raced release rejection retryable across an effect-free UoW failure", async () => {
+    const dependencies = ports();
+    const rolledBack = new Error("release rejection transaction completion failed");
+    vi.mocked(dependencies.lifecycle.lock).mockImplementation(async () => ({
+      siteId: "site-1",
+      manifestRef: "manifest-1",
+      manifestDigest: "a".repeat(64),
+      sessionId: "session-1",
+      launchId: "launch-1",
+      runId: "run-1",
+      rootHoldRef: "hold-1",
+      authorizationSegmentRef: "segment-1",
+      segmentVersion: 1n,
+      state: "committed" as const,
+      expiresAt: "2026-07-29T12:04:00.000Z",
+    }));
+    const baseExecute = dependencies.unitOfWork.execute;
+    let unitOfWorkCalls = 0;
+    dependencies.unitOfWork.execute = async <Result>(
+      command: AdmissionAuthorityCommand,
+      work: (transaction: PlatformTransaction) => Promise<Result>,
+    ): Promise<Result> => {
+      const result = await baseExecute(command, work);
+      unitOfWorkCalls += 1;
+      if (unitOfWorkCalls === 2) throw rolledBack;
+      return result;
+    };
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+    const command = {
+      caller, siteId: "site-1", commandId: "command-release-raced-rejection-retry",
+      requestDigest: "e".repeat(64), effect: releaseEffect(),
+    };
+
+    await expect(authority.releaseRunAuthorization(command)).rejects.toMatchObject({
+      name: "AdmissionOwnerNoEffectError",
+      cause: rolledBack,
+    });
+    await expect(authority.releaseRunAuthorization(command))
+      .resolves.toMatchObject({ kind: "not_releasable" });
+
+    expect(dependencies.budget.releaseRoot).not.toHaveBeenCalled();
+    expect(dependencies.lifecycle.release).not.toHaveBeenCalled();
   });
 
   it("marks a finalize observation failure before the owner effect boundary as retryable", async () => {
@@ -825,6 +1305,43 @@ describe("Platform Admission owner authority", () => {
     })).rejects.toBeInstanceOf(AdmissionOwnerNoEffectError);
 
     expect(dependencies.budget.reconcileRoot).not.toHaveBeenCalled();
+  });
+
+  it("keeps an execution-observed reconciliation retryable across an effect-free UoW failure", async () => {
+    const dependencies = ports();
+    const rolledBack = new Error("execution-observed transaction completion failed");
+    vi.mocked(dependencies.executionEvidence.resolve).mockResolvedValue({
+      kind: "execution_observed",
+      safeStatusRef: "execution-evidence-1",
+    });
+    const baseExecute = dependencies.unitOfWork.execute;
+    let unitOfWorkCalls = 0;
+    dependencies.unitOfWork.execute = async <Result>(
+      command: AdmissionAuthorityCommand,
+      work: (transaction: PlatformTransaction) => Promise<Result>,
+    ): Promise<Result> => {
+      const result = await baseExecute(command, work);
+      unitOfWorkCalls += 1;
+      if (unitOfWorkCalls === 2) throw rolledBack;
+      return result;
+    };
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+    const command = {
+      caller, siteId: "site-1", commandId: "command-reconcile-execution-observed-retry",
+      requestDigest: "e".repeat(64), effect: reconcileEffect(),
+    };
+
+    await expect(authority.reconcileRunAuthorization(command)).rejects.toMatchObject({
+      name: "AdmissionOwnerNoEffectError",
+      cause: rolledBack,
+    });
+    await expect(authority.reconcileRunAuthorization(command))
+      .resolves.toMatchObject({ kind: "execution_observed" });
+
+    expect(dependencies.budget.reconcileRoot).not.toHaveBeenCalled();
+    expect(dependencies.lifecycle.settle).not.toHaveBeenCalled();
+    expect(dependencies.lifecycle.requireReconciliation).not.toHaveBeenCalled();
   });
 
   it("marks a terminal reconciliation transaction abort as retryable until the callback reaches commit", async () => {
