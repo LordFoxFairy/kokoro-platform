@@ -13,6 +13,10 @@ import {
   PlatformAdmissionOwnerAuthority,
   type PlatformAdmissionOwnerPorts,
 } from "../src/modules/admission/application/platform-admission-owner-authority.js";
+import {
+  AdmissionOwnerNoEffectError,
+  type AdmissionAuthorityCommand,
+} from "../src/modules/admission/application/admission-ports.js";
 import { createPlatformAdmissionOwnerAuthority } from "../src/process/admission-composition.js";
 import {
   issuePlatformTransaction,
@@ -42,6 +46,36 @@ function prepareEffect() {
     executionContext: create(OpaqueExecutionContextIntentSchema, {
       mode: { case: "root", value: true },
     }),
+  });
+}
+
+function finalizeEffect() {
+  return create(FinalizeRunAuthorizationEffectSchema, {
+    manifestRef: "manifest-1",
+    manifestDigest: "a".repeat(64),
+    authorizationSegmentRef: "segment-1",
+    expectedSegmentVersion: 1n,
+    launchId: "launch-1",
+    sessionIntentReceiptRef: "intent-receipt-1",
+  });
+}
+
+function releaseEffect() {
+  return create(ReleaseRunAuthorizationEffectSchema, {
+    manifestRef: "manifest-1",
+    authorizationSegmentRef: "segment-1",
+    expectedSegmentVersion: 1n,
+    reasonCode: "DISPATCH_PAYLOAD_INVALID",
+    noDispatchEvidenceRef: `session-dispatch-evidence:v1:${"b".repeat(64)}`,
+  });
+}
+
+function reconcileEffect() {
+  return create(ReconcileRunAuthorizationEffectSchema, {
+    manifestRef: "manifest-1",
+    authorizationSegmentRef: "segment-1",
+    expectedSegmentVersion: 1n,
+    terminalOwnerEvidenceRef: "terminal-evidence-1",
   });
 }
 
@@ -635,6 +669,155 @@ describe("Platform Admission owner authority", () => {
     expect(decision.kind).toBe("already_released");
     expect(dependencies.dispatchEvidence.get).not.toHaveBeenCalled();
     expect(dependencies.budget.releaseRoot).not.toHaveBeenCalled();
+  });
+
+  it("marks a prepare failure before the owner effect boundary as retryable", async () => {
+    const dependencies = ports();
+    vi.mocked(dependencies.session.resolve).mockRejectedValue(new Error("session unavailable"));
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+
+    await expect(authority.prepareRun({
+      caller, siteId: "site-1", commandId: "command-prepare-retry",
+      requestDigest: "e".repeat(64), effect: prepareEffect(),
+    })).rejects.toBeInstanceOf(AdmissionOwnerNoEffectError);
+
+    expect(dependencies.budget.reserveRoot).not.toHaveBeenCalled();
+  });
+
+  it("keeps a Media reservation response loss ambiguous after the external effect starts", async () => {
+    const dependencies = ports();
+    const ambiguous = new Error("media reservation response lost");
+    vi.mocked(dependencies.session.resolve).mockResolvedValue({
+      kind: "resolved",
+      value: { threadId: "session-1", assistantMessageId: "assistant-1" },
+    });
+    vi.mocked(dependencies.mediaProjection.issueReservation).mockRejectedValue(ambiguous);
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+    const effect = prepareEffect();
+    effect.sessionProjectionAuthorizationHandle =
+      `session-projection-authorization:${"s".repeat(32)}`;
+
+    await expect(authority.prepareRun({
+      caller, siteId: "site-1", commandId: "command-prepare-media-ambiguous",
+      requestDigest: "e".repeat(64), effect,
+    })).rejects.toBe(ambiguous);
+
+    expect(dependencies.mediaProjection.issueReservation).toHaveBeenCalledOnce();
+    expect(dependencies.budget.reserveRoot).not.toHaveBeenCalled();
+  });
+
+  it("keeps an execution-binding response loss ambiguous after its persistent effect starts", async () => {
+    const dependencies = ports();
+    const ambiguous = new Error("execution binding commit response lost");
+    let bindingEffects = 0;
+    vi.mocked(dependencies.executionBinding.resolve).mockImplementation(async () => {
+      bindingEffects += 1;
+      throw ambiguous;
+    });
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+
+    await expect(authority.prepareRun({
+      caller, siteId: "site-1", commandId: "command-prepare-binding-ambiguous",
+      requestDigest: "e".repeat(64), effect: prepareEffect(),
+    })).rejects.toBe(ambiguous);
+
+    expect(bindingEffects).toBe(1);
+    expect(dependencies.budget.reserveRoot).not.toHaveBeenCalled();
+  });
+
+  it("marks a finalize observation failure before the owner effect boundary as retryable", async () => {
+    const dependencies = ports();
+    vi.mocked(dependencies.session.verifyFinalizeReceipts)
+      .mockRejectedValue(new Error("session unavailable"));
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+
+    await expect(authority.finalizeRunAuthorization({
+      caller, siteId: "site-1", commandId: "command-finalize-retry",
+      requestDigest: "e".repeat(64), effect: finalizeEffect(),
+    })).rejects.toBeInstanceOf(AdmissionOwnerNoEffectError);
+
+    expect(dependencies.budget.commitRoot).not.toHaveBeenCalled();
+  });
+
+  it("marks a release observation failure before the owner effect boundary as retryable", async () => {
+    const dependencies = ports();
+    vi.mocked(dependencies.dispatchEvidence.get).mockRejectedValue(new Error("session unavailable"));
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+
+    await expect(authority.releaseRunAuthorization({
+      caller, siteId: "site-1", commandId: "command-release-retry",
+      requestDigest: "e".repeat(64), effect: releaseEffect(),
+    })).rejects.toBeInstanceOf(AdmissionOwnerNoEffectError);
+
+    expect(dependencies.budget.releaseRoot).not.toHaveBeenCalled();
+  });
+
+  it("marks a reconciliation observation failure before the owner effect boundary as retryable", async () => {
+    const dependencies = ports();
+    vi.mocked(dependencies.executionEvidence.resolve)
+      .mockRejectedValue(new Error("agent evidence unavailable"));
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+
+    await expect(authority.reconcileRunAuthorization({
+      caller, siteId: "site-1", commandId: "command-reconcile-retry",
+      requestDigest: "e".repeat(64), effect: reconcileEffect(),
+    })).rejects.toBeInstanceOf(AdmissionOwnerNoEffectError);
+
+    expect(dependencies.budget.reconcileRoot).not.toHaveBeenCalled();
+  });
+
+  it("keeps a reconciliation UoW commit failure ambiguous after the credit effect", async () => {
+    const dependencies = ports();
+    const ambiguous = new Error("owner commit response lost");
+    let ownerUnitOfWorkCalls = 0;
+    let creditEffects = 0;
+    const baseExecute = dependencies.unitOfWork.execute;
+    dependencies.unitOfWork.execute = async <Result>(
+      command: AdmissionAuthorityCommand,
+      work: (transaction: PlatformTransaction) => Promise<Result>,
+    ): Promise<Result> => {
+      const result = await baseExecute(command, work);
+      ownerUnitOfWorkCalls += 1;
+      if (ownerUnitOfWorkCalls === 2) throw ambiguous;
+      return result;
+    };
+    vi.mocked(dependencies.executionEvidence.resolve).mockResolvedValue({
+      kind: "terminal_observed",
+      terminalEvidenceRef: "terminal-evidence-1",
+      terminalEvidenceDigest: "f".repeat(64),
+      terminalOutcome: "completed",
+      safeStatusRef: "terminal-evidence-1",
+    });
+    vi.mocked(dependencies.budget.reconcileRoot).mockImplementation(async () => {
+      creditEffects += 1;
+      return {
+        kind: "settled",
+        segmentVersion: 2n,
+        settlement: {
+          settlementRef: "settlement-1",
+          closureRef: "closure-1",
+          ratedAmount: "1",
+          currencyOrCreditUnit: "credit_micros",
+          ratingSnapshotRef: "rating-snapshot-1",
+          usageEvidenceRefs: ["usage-evidence-1"],
+        },
+      };
+    });
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+
+    await expect(authority.reconcileRunAuthorization({
+      caller, siteId: "site-1", commandId: "command-reconcile-ambiguous",
+      requestDigest: "e".repeat(64), effect: reconcileEffect(),
+    })).rejects.toBe(ambiguous);
+
+    expect(creditEffects).toBe(1);
   });
 
   it("advances outcome-unknown reconciliation through Credit before Admission", async () => {

@@ -22,13 +22,14 @@ import {
   type DispatchOwnerEvidenceLookup,
 } from "./dispatch-owner-evidence.js";
 import type { VerifiedGaRunRequestOwnerFacts } from "./ga-run-request-draft-factory.js";
-import type {
-  AdmissionAuthorityCommand,
-  AdmissionOwnerAuthority,
-  FinalizeRunOwnerDecision,
-  PrepareRunOwnerDecision,
-  ReconcileRunOwnerDecision,
-  ReleaseRunOwnerDecision,
+import {
+  AdmissionOwnerNoEffectError,
+  type AdmissionAuthorityCommand,
+  type AdmissionOwnerAuthority,
+  type FinalizeRunOwnerDecision,
+  type PrepareRunOwnerDecision,
+  type ReconcileRunOwnerDecision,
+  type ReleaseRunOwnerDecision,
 } from "./admission-ports.js";
 
 const MAX_AUTHORIZATION_TTL_MS = 5 * 60 * 1_000;
@@ -460,6 +461,14 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
   async prepareRun(
     command: Parameters<AdmissionOwnerAuthority["prepareRun"]>[0],
   ): Promise<PrepareRunOwnerDecision> {
+    return withAdmissionOwnerEffectBoundary((markEffectStarted) =>
+      this.#prepareRun(command, markEffectStarted));
+  }
+
+  async #prepareRun(
+    command: Parameters<AdmissionOwnerAuthority["prepareRun"]>[0],
+    markEffectStarted: () => void,
+  ): Promise<PrepareRunOwnerDecision> {
     const session = await this.#ports.session.resolve({
       siteId: command.siteId,
       projectRef: command.effect.projectRef,
@@ -475,9 +484,12 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
       ? undefined
       : await this.#resolveMediaPreflight(command);
     if (mediaPreflight !== undefined && mediaPreflight.kind !== "resolved") return mediaPreflight;
-    const mediaReservation = mediaPreflight === undefined
-      ? undefined
-      : await this.#ports.mediaProjection.issueReservation({
+    let mediaReservation: Awaited<
+      ReturnType<AdmissionMediaProjectionOwnerPort["issueReservation"]>
+    > | undefined;
+    if (mediaPreflight !== undefined) {
+      markEffectStarted();
+      mediaReservation = await this.#ports.mediaProjection.issueReservation({
           sessionProjectionAuthorizationHandle: command.effect.sessionProjectionAuthorizationHandle,
           sessionId: command.effect.sessionId,
           runId: command.effect.proposedRunId,
@@ -490,6 +502,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
             command,
           ),
         }, AbortSignal.timeout(5_000));
+    }
     if (mediaReservation !== undefined && mediaReservation.kind !== "resolved") return mediaReservation;
     return this.#ports.unitOfWork.execute(command, async (transaction) => {
       const site = await this.#ports.site.resolve(transaction, {
@@ -547,6 +560,8 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         attachments: command.effect.attachmentRefs,
       });
       if (assets.kind !== "resolved") return assets;
+      // Resolution inserts the stable Session binding when it does not exist.
+      markEffectStarted();
       const executionBinding = await this.#ports.executionBinding.resolve(transaction, {
         siteId: command.siteId,
         projectRef: command.effect.projectRef,
@@ -556,6 +571,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         configurationRevisionId: site.value.configurationRevisionId,
       });
       if (executionBinding.kind !== "resolved") return executionBinding;
+      if (mediaReservation !== undefined) markEffectStarted();
       const mediaAccess = mediaReservation === undefined
         ? undefined
         : await this.#ports.mediaAccess.reserve(transaction, {
@@ -620,6 +636,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
       });
       const manifestRef = `execution-manifest:sha256:${manifestDigest}`;
       const maximumExpiresAt = new Date(this.#now() + MAX_AUTHORIZATION_TTL_MS).toISOString();
+      markEffectStarted();
       const budget = await this.#ports.budget.reserveRoot(transaction, {
         siteId: command.siteId,
         projectRef: command.effect.projectRef,
@@ -736,6 +753,14 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
   async finalizeRunAuthorization(
     command: Parameters<AdmissionOwnerAuthority["finalizeRunAuthorization"]>[0],
   ): Promise<FinalizeRunOwnerDecision> {
+    return withAdmissionOwnerEffectBoundary((markEffectStarted) =>
+      this.#finalizeRunAuthorization(command, markEffectStarted));
+  }
+
+  async #finalizeRunAuthorization(
+    command: Parameters<AdmissionOwnerAuthority["finalizeRunAuthorization"]>[0],
+    markEffectStarted: () => void,
+  ): Promise<FinalizeRunOwnerDecision> {
     const observed = await this.#ports.unitOfWork.execute(command, (transaction) =>
       this.#ports.lifecycle.read(transaction, lifecycleLookup(command)));
     if (observed === null) return denied("ADMISSION_AUTHORIZATION_NOT_FOUND");
@@ -765,6 +790,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
       assertSameAuthorization(record, observed);
       assertExpectedSegmentVersion(record, command.effect.expectedSegmentVersion);
       if (record.state !== "reserved") return denied("ADMISSION_AUTHORIZATION_NOT_FINALIZABLE");
+      markEffectStarted();
       if (Date.parse(record.expiresAt) <= this.#now()) {
         const credit = await this.#ports.budget.releaseRoot(transaction, {
           siteId: command.siteId,
@@ -797,6 +823,14 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
 
   async releaseRunAuthorization(
     command: Parameters<AdmissionOwnerAuthority["releaseRunAuthorization"]>[0],
+  ): Promise<ReleaseRunOwnerDecision> {
+    return withAdmissionOwnerEffectBoundary((markEffectStarted) =>
+      this.#releaseRunAuthorization(command, markEffectStarted));
+  }
+
+  async #releaseRunAuthorization(
+    command: Parameters<AdmissionOwnerAuthority["releaseRunAuthorization"]>[0],
+    markEffectStarted: () => void,
   ): Promise<ReleaseRunOwnerDecision> {
     const observed = await this.#ports.unitOfWork.execute(command, (transaction) =>
       this.#ports.lifecycle.read(transaction, lifecycleLookup(command)));
@@ -831,6 +865,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
       assertSameAuthorization(locked, observed);
       if (locked.state === "released") return alreadyReleased(locked, this.#date());
       if (locked.state !== "reserved") return notReleasable("ADMISSION_AUTHORIZATION_ALREADY_EFFECTFUL");
+      markEffectStarted();
       const credit = await this.#ports.budget.releaseRoot(transaction, {
         siteId: command.siteId,
         rootHoldRef: locked.rootHoldRef,
@@ -851,6 +886,14 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
 
   async reconcileRunAuthorization(
     command: Parameters<AdmissionOwnerAuthority["reconcileRunAuthorization"]>[0],
+  ): Promise<ReconcileRunOwnerDecision> {
+    return withAdmissionOwnerEffectBoundary((markEffectStarted) =>
+      this.#reconcileRunAuthorization(command, markEffectStarted));
+  }
+
+  async #reconcileRunAuthorization(
+    command: Parameters<AdmissionOwnerAuthority["reconcileRunAuthorization"]>[0],
+    markEffectStarted: () => void,
   ): Promise<ReconcileRunOwnerDecision> {
     const observed = await this.#ports.unitOfWork.execute(command, (transaction) =>
       this.#ports.lifecycle.read(transaction, lifecycleLookup(command)));
@@ -916,6 +959,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         );
       }
       if (executionEvidence.kind === "terminal_observed") {
+        markEffectStarted();
         const budget = await this.#ports.budget.reconcileRoot(transaction, {
           siteId: command.siteId,
           rootHoldRef: locked.rootHoldRef,
@@ -946,6 +990,7 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
       if (dispatchEvidence === undefined) {
         throw new Error("ADMISSION_RECONCILIATION_OWNER_EVIDENCE_REQUIRED");
       }
+      markEffectStarted();
       const budget = await this.#ports.budget.reconcileRoot(transaction, {
         siteId: command.siteId,
         rootHoldRef: locked.rootHoldRef,
@@ -975,6 +1020,18 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
     const value = this.#clock();
     if (!Number.isFinite(value.getTime())) throw new Error("ADMISSION_OWNER_CLOCK_INVALID");
     return value;
+  }
+}
+
+async function withAdmissionOwnerEffectBoundary<Result>(
+  work: (markEffectStarted: () => void) => Promise<Result>,
+): Promise<Result> {
+  let effectStarted = false;
+  try {
+    return await work(() => { effectStarted = true; });
+  } catch (cause) {
+    if (!effectStarted) throw new AdmissionOwnerNoEffectError(cause);
+    throw cause;
   }
 }
 

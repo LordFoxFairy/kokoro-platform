@@ -8,6 +8,7 @@ import {
 } from "../../src/generated/proto/kokoro/common/v1/receipt_pb.js";
 import {
   AdmissionOperation,
+  AdmissionRetryClass,
   FinalizeRunAuthorizationEffectSchema,
   FinalizeRunAuthorizationRequestSchema,
   FinalizeRunAuthorizationResponseSchema,
@@ -18,8 +19,10 @@ import {
   PrepareRunResponseSchema,
   ReconcileRunAuthorizationEffectSchema,
   ReconcileRunAuthorizationRequestSchema,
+  ReconcileRunAuthorizationResponseSchema,
   ReleaseRunAuthorizationEffectSchema,
   ReleaseRunAuthorizationRequestSchema,
+  ReleaseRunAuthorizationResponseSchema,
   SafeAdmissionSnapshotSchema,
 } from "../../src/generated/proto/kokoro/platform/admission/v1/admission_pb.js";
 import type {
@@ -29,6 +32,8 @@ import type {
   AdmissionOwnerAuthority,
   AdmissionReceiptLookup,
 } from "../../src/modules/admission/application/admission-ports.js";
+import { AdmissionOwnerNoEffectError } from
+  "../../src/modules/admission/application/admission-ports.js";
 import { AdmissionApplicationService } from "../../src/modules/admission/application/admission-service.js";
 import {
   GaRunRequestDraftFactory,
@@ -491,6 +496,259 @@ describe("Admission application provider", () => {
       toBinary(FinalizeRunAuthorizationResponseSchema, committed),
     );
     expect(owner.finalizeRunAuthorization).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries the exact prepare command after a pre-effect owner failure", async () => {
+    let currentTime = now;
+    const owner = authority();
+    owner.prepareRun = vi.fn()
+      .mockRejectedValueOnce(new AdmissionOwnerNoEffectError())
+      .mockResolvedValue({
+        kind: "denied" as const,
+        denial: { code: "PREPARE_DENIED", retryClass: AdmissionRetryClass.NEVER },
+      });
+    const fixture = service(owner, new MemoryJournal(() => currentTime), () => currentTime);
+    const request = prepareRequest("0198f279-7420-7a32-995f-7f4421eb6d01");
+
+    const pending = await fixture.service.prepareRun(request, caller);
+    currentTime = new Date("2026-07-29T12:00:01.000Z");
+    const denied = await fixture.service.prepareRun(request, caller);
+    const replay = await fixture.service.prepareRun(request, caller);
+
+    expect(pending.result.case).toBe("pending");
+    expect(denied.result.case).toBe("denied");
+    expect(toBinary(PrepareRunResponseSchema, replay)).toEqual(
+      toBinary(PrepareRunResponseSchema, denied),
+    );
+    expect(owner.prepareRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries the exact finalize command after a pre-effect owner failure", async () => {
+    let currentTime = now;
+    const owner = authority();
+    owner.finalizeRunAuthorization = vi.fn()
+      .mockRejectedValueOnce(new AdmissionOwnerNoEffectError())
+      .mockImplementation(async ({ effect }) => ({
+        kind: "committed" as const,
+        committed: {
+          authorizationSegmentRef: effect.authorizationSegmentRef,
+          segmentVersion: effect.expectedSegmentVersion + 1n,
+          committedAt: timestampFromDate(currentTime),
+        },
+      }));
+    const fixture = service(owner, new MemoryJournal(() => currentTime), () => currentTime);
+    const effect = create(FinalizeRunAuthorizationEffectSchema, {
+      manifestRef: "manifest-1",
+      manifestDigest: "b".repeat(64),
+      authorizationSegmentRef: "segment-1",
+      expectedSegmentVersion: 1n,
+      launchId: "launch-1",
+      sessionIntentReceiptRef: "intent-receipt-1",
+    });
+    const request = create(FinalizeRunAuthorizationRequestSchema, {
+      siteId: "site-1",
+      effect,
+      command: wireCommand(FinalizeRunAuthorizationEffectSchema, effect, "finalize-no-effect-1"),
+    });
+
+    const pending = await fixture.service.finalizeRunAuthorization(request, caller);
+    currentTime = new Date("2026-07-29T12:00:01.000Z");
+    const committed = await fixture.service.finalizeRunAuthorization(request, caller);
+    const replay = await fixture.service.finalizeRunAuthorization(request, caller);
+
+    expect(pending.result.case).toBe("pending");
+    expect(committed.result.case).toBe("committed");
+    expect(toBinary(FinalizeRunAuthorizationResponseSchema, replay)).toEqual(
+      toBinary(FinalizeRunAuthorizationResponseSchema, committed),
+    );
+    expect(owner.finalizeRunAuthorization).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries the exact release command after a pre-effect owner failure", async () => {
+    let currentTime = now;
+    const owner = authority();
+    owner.releaseRunAuthorization = vi.fn()
+      .mockRejectedValueOnce(new AdmissionOwnerNoEffectError())
+      .mockImplementation(async ({ effect }) => ({
+        kind: "released" as const,
+        released: {
+          authorizationSegmentRef: effect.authorizationSegmentRef,
+          segmentVersion: effect.expectedSegmentVersion + 1n,
+          releasedAt: timestampFromDate(currentTime),
+        },
+      }));
+    const fixture = service(owner, new MemoryJournal(() => currentTime), () => currentTime);
+    const effect = create(ReleaseRunAuthorizationEffectSchema, {
+      manifestRef: "manifest-1",
+      authorizationSegmentRef: "segment-1",
+      expectedSegmentVersion: 1n,
+      reasonCode: "DISPATCH_FAILED",
+      noDispatchEvidenceRef: "no-dispatch-1",
+    });
+    const request = create(ReleaseRunAuthorizationRequestSchema, {
+      siteId: "site-1",
+      effect,
+      command: wireCommand(ReleaseRunAuthorizationEffectSchema, effect, "release-no-effect-1"),
+    });
+
+    const pending = await fixture.service.releaseRunAuthorization(request, caller);
+    currentTime = new Date("2026-07-29T12:00:01.000Z");
+    const released = await fixture.service.releaseRunAuthorization(request, caller);
+    const replay = await fixture.service.releaseRunAuthorization(request, caller);
+
+    expect(pending.result.case).toBe("pending");
+    expect(released.result.case).toBe("released");
+    expect(toBinary(ReleaseRunAuthorizationResponseSchema, replay)).toEqual(
+      toBinary(ReleaseRunAuthorizationResponseSchema, released),
+    );
+    expect(owner.releaseRunAuthorization).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries the exact reconciliation after a pre-effect owner failure", async () => {
+    let currentTime = now;
+    const owner = authority();
+    owner.reconcileRunAuthorization = vi.fn()
+      .mockRejectedValueOnce(new AdmissionOwnerNoEffectError())
+      .mockImplementation(async ({ effect }) => ({
+        kind: "settled" as const,
+        result: {
+          authorizationSegmentRef: effect.authorizationSegmentRef,
+          segmentVersion: effect.expectedSegmentVersion + 1n,
+          observedAt: timestampFromDate(currentTime),
+          safeStatusRef: "terminal-evidence-1",
+          settledUsage: {
+            settlementRef: "settlement-1",
+            closureRef: "closure-1",
+            ratedAmount: "1",
+            currencyOrCreditUnit: "credit_micros",
+            ratingSnapshotRef: "rating-snapshot-1",
+            usageEvidenceRefs: ["usage-evidence-1"],
+          },
+        },
+      }));
+    const journal = new MemoryJournal(() => currentTime);
+    const fixture = service(owner, journal, () => currentTime);
+    const effect = create(ReconcileRunAuthorizationEffectSchema, {
+      manifestRef: "manifest-1",
+      authorizationSegmentRef: "segment-1",
+      expectedSegmentVersion: 1n,
+      terminalOwnerEvidenceRef: "terminal-evidence-1",
+    });
+    const request = create(ReconcileRunAuthorizationRequestSchema, {
+      siteId: "site-1",
+      effect,
+      command: wireCommand(ReconcileRunAuthorizationEffectSchema, effect, "reconcile-retry-1"),
+    });
+
+    const pending = await fixture.service.reconcileRunAuthorization(request, caller);
+    currentTime = new Date("2026-07-29T12:00:01.000Z");
+    const settled = await fixture.service.reconcileRunAuthorization(request, caller);
+    const replay = await fixture.service.reconcileRunAuthorization(request, caller);
+
+    expect(pending.result.case).toBe("pending");
+    expect(settled.result.case).toBe("settled");
+    expect(toBinary(ReconcileRunAuthorizationResponseSchema, replay)).toEqual(
+      toBinary(ReconcileRunAuthorizationResponseSchema, settled),
+    );
+    expect(owner.reconcileRunAuthorization).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(owner.reconcileRunAuthorization).mock.calls[1]?.[0])
+      .toEqual(vi.mocked(owner.reconcileRunAuthorization).mock.calls[0]?.[0]);
+  });
+
+  it("replays an ambiguous finalize receipt without repeating the owner effect", async () => {
+    const owner = authority();
+    let creditEffects = 0;
+    owner.finalizeRunAuthorization = vi.fn(async () => {
+      creditEffects += 1;
+      throw new Error("response lost after owner commit");
+    });
+    const fixture = service(owner);
+    const effect = create(FinalizeRunAuthorizationEffectSchema, {
+      manifestRef: "manifest-1",
+      manifestDigest: "b".repeat(64),
+      authorizationSegmentRef: "segment-1",
+      expectedSegmentVersion: 1n,
+      launchId: "launch-1",
+      sessionIntentReceiptRef: "intent-receipt-1",
+    });
+    const request = create(FinalizeRunAuthorizationRequestSchema, {
+      siteId: "site-1",
+      effect,
+      command: wireCommand(FinalizeRunAuthorizationEffectSchema, effect, "finalize-ambiguous-1"),
+    });
+
+    const unknown = await fixture.service.finalizeRunAuthorization(request, caller);
+    const replay = await fixture.service.finalizeRunAuthorization(request, caller);
+
+    expect(unknown.result.case).toBe("outcomeUnknown");
+    expect(toBinary(FinalizeRunAuthorizationResponseSchema, replay)).toEqual(
+      toBinary(FinalizeRunAuthorizationResponseSchema, unknown),
+    );
+    expect(creditEffects).toBe(1);
+    expect(owner.finalizeRunAuthorization).toHaveBeenCalledOnce();
+  });
+
+  it("replays an ambiguous release receipt without repeating the owner effect", async () => {
+    const owner = authority();
+    let creditEffects = 0;
+    owner.releaseRunAuthorization = vi.fn(async () => {
+      creditEffects += 1;
+      throw new Error("response lost after owner commit");
+    });
+    const fixture = service(owner);
+    const effect = create(ReleaseRunAuthorizationEffectSchema, {
+      manifestRef: "manifest-1",
+      authorizationSegmentRef: "segment-1",
+      expectedSegmentVersion: 1n,
+      reasonCode: "DISPATCH_FAILED",
+      noDispatchEvidenceRef: "no-dispatch-1",
+    });
+    const request = create(ReleaseRunAuthorizationRequestSchema, {
+      siteId: "site-1",
+      effect,
+      command: wireCommand(ReleaseRunAuthorizationEffectSchema, effect, "release-ambiguous-1"),
+    });
+
+    const unknown = await fixture.service.releaseRunAuthorization(request, caller);
+    const replay = await fixture.service.releaseRunAuthorization(request, caller);
+
+    expect(unknown.result.case).toBe("outcomeUnknown");
+    expect(toBinary(ReleaseRunAuthorizationResponseSchema, replay)).toEqual(
+      toBinary(ReleaseRunAuthorizationResponseSchema, unknown),
+    );
+    expect(creditEffects).toBe(1);
+    expect(owner.releaseRunAuthorization).toHaveBeenCalledOnce();
+  });
+
+  it("replays an ambiguous reconciliation receipt without repeating the owner effect", async () => {
+    const owner = authority();
+    let creditEffects = 0;
+    owner.reconcileRunAuthorization = vi.fn(async () => {
+      creditEffects += 1;
+      throw new Error("response lost after owner commit");
+    });
+    const fixture = service(owner);
+    const effect = create(ReconcileRunAuthorizationEffectSchema, {
+      manifestRef: "manifest-1",
+      authorizationSegmentRef: "segment-1",
+      expectedSegmentVersion: 1n,
+      terminalOwnerEvidenceRef: "terminal-evidence-1",
+    });
+    const request = create(ReconcileRunAuthorizationRequestSchema, {
+      siteId: "site-1",
+      effect,
+      command: wireCommand(ReconcileRunAuthorizationEffectSchema, effect, "reconcile-ambiguous-1"),
+    });
+
+    const unknown = await fixture.service.reconcileRunAuthorization(request, caller);
+    const replay = await fixture.service.reconcileRunAuthorization(request, caller);
+
+    expect(unknown.result.case).toBe("outcomeUnknown");
+    expect(toBinary(ReconcileRunAuthorizationResponseSchema, replay)).toEqual(
+      toBinary(ReconcileRunAuthorizationResponseSchema, unknown),
+    );
+    expect(creditEffects).toBe(1);
+    expect(owner.reconcileRunAuthorization).toHaveBeenCalledOnce();
   });
 
   it("returns the journal-capped retry authority instead of an unbounded owner hint", async () => {

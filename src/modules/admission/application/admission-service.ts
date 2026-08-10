@@ -54,16 +54,17 @@ import {
   type GaRunRequestDraftFactory,
 } from "./ga-run-request-draft-factory.js";
 import { mapOpaqueExecutionContextIntent } from "../interfaces/connect/opaque-execution-context.js";
-import type {
-  AdmissionCaller,
-  AdmissionCommandJournal,
-  AdmissionCommandKey,
-  AdmissionOperationName,
-  AdmissionOwnerAuthority,
-  FinalizeRunOwnerDecision,
-  PrepareRunOwnerDecision,
-  ReconcileRunOwnerDecision,
-  ReleaseRunOwnerDecision,
+import {
+  AdmissionOwnerNoEffectError,
+  type AdmissionCaller,
+  type AdmissionCommandJournal,
+  type AdmissionCommandKey,
+  type AdmissionOperationName,
+  type AdmissionOwnerAuthority,
+  type FinalizeRunOwnerDecision,
+  type PrepareRunOwnerDecision,
+  type ReconcileRunOwnerDecision,
+  type ReleaseRunOwnerDecision,
 } from "./admission-ports.js";
 
 const SHA256 = /^[0-9a-f]{64}$/u;
@@ -128,8 +129,10 @@ export class AdmissionApplicationService {
       });
       response = await this.#prepareResponse(command, decision);
       assertValidProto(PrepareRunResponseSchema, response, "ADMISSION_PREPARE_RESPONSE_INVALID");
-    } catch {
-      response = prepareUnknown(command, this.#now());
+    } catch (error) {
+      response = error instanceof AdmissionOwnerNoEffectError
+        ? preparePending(command, this.#now())
+        : prepareUnknown(command, this.#now());
     }
     if (response.result.case === "pending") {
       const effectiveRetryAt = await this.#journal.defer(
@@ -183,8 +186,10 @@ export class AdmissionApplicationService {
         this.#now(),
       );
       assertValidProto(FinalizeRunAuthorizationResponseSchema, response, "ADMISSION_FINALIZE_RESPONSE_INVALID");
-    } catch {
-      response = finalizeUnknown(command, this.#now());
+    } catch (error) {
+      response = error instanceof AdmissionOwnerNoEffectError
+        ? finalizePending(command, this.#now())
+        : finalizeUnknown(command, this.#now());
     }
     if (response.result.case === "pending") {
       const effectiveRetryAt = await this.#journal.defer(
@@ -238,8 +243,10 @@ export class AdmissionApplicationService {
         this.#now(),
       );
       assertValidProto(ReleaseRunAuthorizationResponseSchema, response, "ADMISSION_RELEASE_RESPONSE_INVALID");
-    } catch {
-      response = releaseUnknown(command, this.#now());
+    } catch (error) {
+      response = error instanceof AdmissionOwnerNoEffectError
+        ? releasePending(command, this.#now())
+        : releaseUnknown(command, this.#now());
     }
     if (response.result.case === "pending") {
       const effectiveRetryAt = await this.#journal.defer(
@@ -293,8 +300,10 @@ export class AdmissionApplicationService {
         this.#now(),
       );
       assertValidProto(ReconcileRunAuthorizationResponseSchema, response, "ADMISSION_RECONCILE_RESPONSE_INVALID");
-    } catch {
-      response = reconcileUnknown(command, this.#now());
+    } catch (error) {
+      response = error instanceof AdmissionOwnerNoEffectError
+        ? reconcilePending(command, this.#now())
+        : reconcileUnknown(command, this.#now());
     }
     if (response.result.case === "pending") {
       const effectiveRetryAt = await this.#journal.defer(

@@ -77,6 +77,14 @@ export interface AdmissionAuthorityCommand {
   readonly requestDigest: string;
 }
 
+/** The owner failed before starting any effect, so the exact command may be retried. */
+export class AdmissionOwnerNoEffectError extends Error {
+  constructor(cause?: unknown) {
+    super("ADMISSION_OWNER_NO_EFFECT", cause === undefined ? undefined : { cause });
+    this.name = "AdmissionOwnerNoEffectError";
+  }
+}
+
 type Denied = Readonly<{
   kind: "denied";
   denial: MessageInitShape<typeof AdmissionDenialSchema>;
