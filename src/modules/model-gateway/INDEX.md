@@ -55,8 +55,9 @@ A non-committed success/failure finalization error immediately switches to one s
 they never re-enter adapter selection or provider streaming. The owner keeps renewing its durable dispatch lease throughout these
 retries, so same-process and independent maintenance scanners cannot replace live terminalization evidence with expired-owner
 evidence. A commit-ambiguous finalize/unknown retry first observes the durable invocation, replays its original terminal, and cannot
-append a second terminal frame. If shutdown wins while storage remains unavailable, restart maintenance marks the expired dispatch
-`outcome_unknown` without preparing or invoking any provider.
+append a second terminal frame. PostgreSQL freezes terminal invocation evidence and dispatch authority while a partial unique index
+permits exactly one terminal frame per invocation. If shutdown wins while storage remains unavailable, restart maintenance marks
+the expired dispatch `outcome_unknown` without preparing or invoking any provider.
 
 Lease renewal and terminal CAS use PostgreSQL's statement clock rather than a transaction-start timestamp. Live-owner
 terminalization must retain the same instance reference and dispatch fence under an unexpired lease; expired-owner recovery must

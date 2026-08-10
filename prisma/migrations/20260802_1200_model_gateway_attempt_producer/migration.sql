@@ -336,13 +336,6 @@ BEGIN
     OR (OLD.state=NEW.state AND OLD.state IN ('dispatching','succeeded','failed','outcome_unknown'))
   ) THEN RAISE EXCEPTION 'MODEL_GATEWAY_INVOCATION_TRANSITION_INVALID';
   END IF;
-  IF OLD.dispatch_fence>0 AND (
-    NEW.dispatch_owner_ref IS DISTINCT FROM OLD.dispatch_owner_ref
-    OR NEW.dispatch_fence IS DISTINCT FROM OLD.dispatch_fence
-    OR (NEW.state='dispatching'
-      AND NEW.dispatch_lease_expires_at<OLD.dispatch_lease_expires_at)
-  ) THEN RAISE EXCEPTION 'MODEL_GATEWAY_INVOCATION_DISPATCH_AUTHORITY_INVALID';
-  END IF;
   IF (
     OLD.state='queued' AND NEW.state='dispatching'
     AND (NEW.fence_epoch<>OLD.fence_epoch OR NEW.dispatch_fence<>OLD.dispatch_fence+1)

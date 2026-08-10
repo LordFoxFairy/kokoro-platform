@@ -1,5 +1,6 @@
 import { Client, type QueryResult } from "pg";
 import { createHash, randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createPlatformDatabaseClient,
@@ -832,6 +833,359 @@ describe("Platform PostgreSQL foundation", () => {
       await Promise.all([
         bootstrap.end(), admin.end(), api.end(), admission.end(), modelGateway.end(),
       ]);
+    }
+  }, 60_000);
+
+  it("upgrades the Model Gateway dispatch guard and freezes its terminal frame once", async () => {
+    const original = await readFile(
+      "prisma/migrations/20260802_1200_model_gateway_attempt_producer/migration.sql",
+      "utf8",
+    );
+    const forward = await readFile(
+      "prisma/migrations/20260826_model_gateway_dispatch_authority_fence/migration.sql",
+      "utf8",
+    );
+    const oldGuardStart = original.indexOf(
+      "CREATE FUNCTION platform.guard_model_gateway_invocation_transition()",
+    );
+    const oldGuardEnd = original.indexOf(
+      "REVOKE ALL ON FUNCTION platform.guard_model_gateway_invocation_transition() FROM PUBLIC",
+      oldGuardStart,
+    );
+    if (oldGuardStart < 0 || oldGuardEnd < 0) {
+      throw new Error("MODEL_GATEWAY_ORIGINAL_GUARD_FIXTURE_INVALID");
+    }
+    const oldGuard = original.slice(oldGuardStart, oldGuardEnd)
+      .replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION");
+    const forwardGuardStart = forward.indexOf(
+      "CREATE OR REPLACE FUNCTION platform.guard_model_gateway_invocation_transition()",
+    );
+    const forwardGuardEnd = forward.indexOf("\n$$;", forwardGuardStart);
+    if (forwardGuardStart < 0 || forwardGuardEnd < 0) {
+      throw new Error("MODEL_GATEWAY_FORWARD_GUARD_FIXTURE_INVALID");
+    }
+    const functionTerminatorLength = "\n$$;".length;
+    const forwardIndex = forward.slice(0, forwardGuardStart).trim();
+    const forwardGuard = forward.slice(
+      forwardGuardStart,
+      forwardGuardEnd + functionTerminatorLength,
+    );
+    const forwardRevoke = forward.slice(forwardGuardEnd + functionTerminatorLength).trim();
+    if (!forwardIndex.endsWith(";") || !forwardRevoke.startsWith("REVOKE ALL ON FUNCTION")) {
+      throw new Error("MODEL_GATEWAY_FORWARD_MIGRATION_FIXTURE_INVALID");
+    }
+    const suffix = randomUUID();
+    const siteRef = `site:model-gateway-upgrade:${suffix}`;
+    const invocationRef = randomUUID();
+    const logicalCallRef = `logical-call:model-gateway-upgrade:${suffix}`;
+    const authorizationHandle = `model-authorization:sha256:${createHash("sha256")
+      .update(suffix).digest("hex")}`;
+    const authorizationSegmentRef = randomUUID();
+    const attemptAuthorizationRef = randomUUID();
+    const evidenceRef = randomUUID();
+    const probeSuffix = suffix.replaceAll("-", "").slice(0, 20);
+    const invocationTable = `platform.${quoteIdentifier(
+      `model_gateway_invocation_upgrade_${probeSuffix}`,
+    )}`;
+    const frameTable = `platform.${quoteIdentifier(
+      `model_gateway_frame_upgrade_${probeSuffix}`,
+    )}`;
+    const probeTrigger = quoteIdentifier(`model_gateway_upgrade_${probeSuffix}`);
+    const probeTerminalIndex = quoteIdentifier(`model_gateway_terminal_${probeSuffix}`);
+    const bootstrap = new Client({ connectionString: bootstrapDatabaseUrl });
+    const gateway = new Client({ connectionString: modelGatewayDatabaseUrl });
+    await Promise.all([bootstrap.connect(), gateway.connect()]);
+
+    const setGatewayContext = async (): Promise<void> => {
+      await gateway.query(
+        `SELECT set_config('app.site_id',$1,true),
+                set_config('app.workload_kind','platform_model_gateway',true)`,
+        [siteRef],
+      );
+    };
+    const rejected = async (statement: string, expected: string): Promise<void> => {
+      await gateway.query("SAVEPOINT model_gateway_rejection");
+      let cause: unknown;
+      try {
+        await gateway.query(statement, [siteRef, invocationRef]);
+      } catch (error) {
+        cause = error;
+      }
+      await gateway.query("ROLLBACK TO SAVEPOINT model_gateway_rejection");
+      await gateway.query("RELEASE SAVEPOINT model_gateway_rejection");
+      expect(cause).toMatchObject({ message: expected });
+    };
+
+    try {
+      await bootstrap.query("BEGIN");
+      await bootstrap.query(
+        `CREATE TABLE ${invocationTable} (
+          site_ref TEXT NOT NULL,invocation_ref UUID NOT NULL,authorization_handle TEXT NOT NULL,
+          execution_manifest_ref TEXT NOT NULL,authorization_segment_ref UUID NOT NULL,
+          logical_call_ref TEXT NOT NULL,attempt_ref TEXT NOT NULL,producer_context TEXT NOT NULL,
+          producer_generation BIGINT NOT NULL,request_digest CHAR(64) NOT NULL,
+          request_envelope JSONB NOT NULL,gateway_model TEXT NOT NULL,maximum_dimensions JSONB NOT NULL,
+          attempt_authorization_ref UUID NOT NULL,fence_epoch BIGINT NOT NULL,state TEXT NOT NULL,
+          response_envelope JSONB,evidence_ref UUID,source_digest CHAR(64),owner_evidence_ref TEXT,
+          dispatch_owner_ref TEXT,dispatch_fence BIGINT NOT NULL,dispatch_lease_expires_at TIMESTAMPTZ,
+          last_frame_sequence BIGINT NOT NULL,last_frame_digest CHAR(64) NOT NULL,
+          frame_count INTEGER NOT NULL,total_frame_bytes BIGINT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL,updated_at TIMESTAMPTZ NOT NULL,
+          PRIMARY KEY (site_ref,invocation_ref)
+        )`,
+      );
+      await bootstrap.query(
+        `CREATE TABLE ${frameTable} (
+          site_ref TEXT NOT NULL,invocation_ref UUID NOT NULL,sequence BIGINT NOT NULL,
+          previous_frame_digest CHAR(64) NOT NULL,frame_digest CHAR(64) NOT NULL,
+          frame_envelope JSONB NOT NULL,plaintext_bytes INTEGER NOT NULL,terminal BOOLEAN NOT NULL,
+          PRIMARY KEY (site_ref,invocation_ref,sequence)
+        )`,
+      );
+      await bootstrap.query(
+        `INSERT INTO ${invocationTable}
+         (site_ref,invocation_ref,authorization_handle,execution_manifest_ref,
+          authorization_segment_ref,logical_call_ref,attempt_ref,producer_context,
+          producer_generation,request_digest,request_envelope,gateway_model,maximum_dimensions,
+          attempt_authorization_ref,fence_epoch,state,response_envelope,evidence_ref,
+          source_digest,owner_evidence_ref,dispatch_owner_ref,dispatch_fence,
+          dispatch_lease_expires_at,last_frame_sequence,last_frame_digest,frame_count,
+          total_frame_bytes,created_at,updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1,repeat('a',64),'{}'::jsonb,'chat-primary',
+                 '[{"dimensionKey":"output_tokens","sourceUnit":"token","quantity":"1"}]'::jsonb,
+                 $9,1,'dispatching',NULL,NULL,NULL,NULL,'model-gateway:original-owner',1,
+                 clock_timestamp()+INTERVAL '1 hour',2,repeat('b',64),2,2,
+                 clock_timestamp(),clock_timestamp())`,
+        [siteRef, invocationRef, authorizationHandle, `manifest:${suffix}`,
+          authorizationSegmentRef, logicalCallRef, `attempt:${suffix}`, `producer:${suffix}`,
+          attemptAuthorizationRef],
+      );
+      for (const [sequence, previous, digest] of [
+        [1, "0", "a"],
+        [2, "a", "b"],
+      ] as const) {
+        await bootstrap.query(
+          `INSERT INTO ${frameTable}
+           (site_ref,invocation_ref,sequence,previous_frame_digest,frame_digest,
+            frame_envelope,plaintext_bytes,terminal)
+           VALUES ($1,$2,$3,repeat($4,64),repeat($5,64),'{}'::jsonb,1,FALSE)`,
+          [siteRef, invocationRef, sequence, previous, digest],
+        );
+      }
+      await bootstrap.query(
+        `CREATE TRIGGER ${probeTrigger} BEFORE UPDATE ON ${invocationTable}
+         FOR EACH ROW EXECUTE FUNCTION platform.guard_model_gateway_invocation_transition()`,
+      );
+      await bootstrap.query(
+        `GRANT SELECT,INSERT,UPDATE ON TABLE ${invocationTable},${frameTable}
+           TO ${quoteIdentifier(modelGatewayUser)}`,
+      );
+      await bootstrap.query("COMMIT");
+
+      await bootstrap.query("BEGIN");
+      await bootstrap.query(oldGuard);
+      await bootstrap.query("COMMIT");
+
+      await gateway.query("BEGIN");
+      await setGatewayContext();
+      const oldMutation = await gateway.query(
+        `UPDATE ${invocationTable}
+            SET dispatch_owner_ref='model-gateway:replacement-owner',
+                updated_at=updated_at+INTERVAL '1 millisecond'
+          WHERE site_ref=$1 AND invocation_ref=$2`,
+        [siteRef, invocationRef],
+      );
+      expect(oldMutation.rowCount).toBe(1);
+      await gateway.query("ROLLBACK");
+
+      await bootstrap.query("BEGIN");
+      await bootstrap.query("DROP INDEX platform.model_gateway_frame_one_terminal_idx");
+      await bootstrap.query(forwardIndex);
+      await bootstrap.query(forwardGuard);
+      await bootstrap.query(forwardRevoke);
+      await bootstrap.query(
+        `CREATE UNIQUE INDEX ${probeTerminalIndex}
+         ON ${frameTable}(site_ref,invocation_ref) WHERE terminal`,
+      );
+      await bootstrap.query("COMMIT");
+      const installedIndex = await bootstrap.query<{ indexdef: string }>(
+        `SELECT indexdef FROM pg_indexes
+          WHERE schemaname='platform' AND indexname='model_gateway_frame_one_terminal_idx'`,
+      );
+      expect(installedIndex.rows).toEqual([{
+        indexdef: expect.stringContaining(
+          "ON platform.model_gateway_frame USING btree (site_ref, invocation_ref) WHERE terminal",
+        ),
+      }]);
+
+      await gateway.query("BEGIN");
+      await setGatewayContext();
+      const heartbeat = await gateway.query(
+        `UPDATE ${invocationTable}
+            SET dispatch_lease_expires_at=dispatch_lease_expires_at+INTERVAL '1 second',
+                updated_at=updated_at+INTERVAL '1 millisecond'
+          WHERE site_ref=$1 AND invocation_ref=$2`,
+        [siteRef, invocationRef],
+      );
+      expect(heartbeat.rowCount).toBe(1);
+      await rejected(
+        `UPDATE ${invocationTable}
+            SET dispatch_owner_ref='model-gateway:replacement-owner',
+                updated_at=updated_at+INTERVAL '1 millisecond'
+          WHERE site_ref=$1 AND invocation_ref=$2`,
+        "MODEL_GATEWAY_INVOCATION_DISPATCH_AUTHORITY_INVALID",
+      );
+      await rejected(
+        `UPDATE ${invocationTable}
+            SET dispatch_fence=dispatch_fence+1,updated_at=updated_at+INTERVAL '1 millisecond'
+          WHERE site_ref=$1 AND invocation_ref=$2`,
+        "MODEL_GATEWAY_INVOCATION_DISPATCH_AUTHORITY_INVALID",
+      );
+      await rejected(
+        `UPDATE ${invocationTable}
+            SET dispatch_lease_expires_at=dispatch_lease_expires_at-INTERVAL '1 millisecond',
+                updated_at=updated_at+INTERVAL '1 millisecond'
+          WHERE site_ref=$1 AND invocation_ref=$2`,
+        "MODEL_GATEWAY_INVOCATION_DISPATCH_AUTHORITY_INVALID",
+      );
+
+      const terminal = await gateway.query(
+        `UPDATE ${invocationTable}
+            SET state='succeeded',response_envelope='{"algorithm":"A256GCM"}'::jsonb,
+                evidence_ref=$3,source_digest=repeat('c',64),fence_epoch=fence_epoch+1,
+                updated_at=updated_at+INTERVAL '1 millisecond'
+          WHERE site_ref=$1 AND invocation_ref=$2`,
+        [siteRef, invocationRef, evidenceRef],
+      );
+      expect(terminal.rowCount).toBe(1);
+      await rejected(
+        `UPDATE ${invocationTable}
+            SET dispatch_owner_ref='model-gateway:terminal-owner-drift',
+                updated_at=updated_at+INTERVAL '1 millisecond'
+          WHERE site_ref=$1 AND invocation_ref=$2`,
+        "MODEL_GATEWAY_INVOCATION_DISPATCH_AUTHORITY_INVALID",
+      );
+      await rejected(
+        `UPDATE ${invocationTable}
+            SET dispatch_fence=dispatch_fence+1,updated_at=updated_at+INTERVAL '1 millisecond'
+          WHERE site_ref=$1 AND invocation_ref=$2`,
+        "MODEL_GATEWAY_INVOCATION_DISPATCH_AUTHORITY_INVALID",
+      );
+      for (const statement of [
+        `UPDATE ${invocationTable}
+            SET response_envelope='{"algorithm":"rewritten"}'::jsonb,
+                updated_at=updated_at+INTERVAL '1 millisecond'
+          WHERE site_ref=$1 AND invocation_ref=$2`,
+        `UPDATE ${invocationTable}
+            SET evidence_ref='00000000-0000-4000-8000-000000000001',
+                updated_at=updated_at+INTERVAL '1 millisecond'
+          WHERE site_ref=$1 AND invocation_ref=$2`,
+        `UPDATE ${invocationTable}
+            SET source_digest=repeat('d',64),updated_at=updated_at+INTERVAL '1 millisecond'
+          WHERE site_ref=$1 AND invocation_ref=$2`,
+        `UPDATE ${invocationTable}
+            SET owner_evidence_ref='rewritten-owner-evidence',
+                updated_at=updated_at+INTERVAL '1 millisecond'
+          WHERE site_ref=$1 AND invocation_ref=$2`,
+        `UPDATE ${invocationTable}
+            SET dispatch_lease_expires_at=NULL,updated_at=updated_at+INTERVAL '1 millisecond'
+          WHERE site_ref=$1 AND invocation_ref=$2`,
+      ]) await rejected(statement, "MODEL_GATEWAY_INVOCATION_TERMINAL_IMMUTABLE");
+
+      await rejected(
+        `UPDATE ${invocationTable}
+            SET last_frame_sequence=last_frame_sequence+1,last_frame_digest=repeat('e',64),
+                total_frame_bytes=total_frame_bytes+1,
+                updated_at=updated_at+INTERVAL '1 millisecond'
+          WHERE site_ref=$1 AND invocation_ref=$2`,
+        "MODEL_GATEWAY_INVOCATION_TERMINAL_FRAME_INVALID",
+      );
+      await rejected(
+        `UPDATE ${invocationTable}
+            SET last_frame_sequence=last_frame_sequence+1,last_frame_digest=last_frame_digest,
+                frame_count=frame_count+1,total_frame_bytes=total_frame_bytes,
+                updated_at=updated_at+INTERVAL '1 millisecond'
+          WHERE site_ref=$1 AND invocation_ref=$2`,
+        "MODEL_GATEWAY_INVOCATION_TERMINAL_FRAME_INVALID",
+      );
+
+      const tail = await gateway.query(
+        `UPDATE ${invocationTable}
+            SET last_frame_sequence=last_frame_sequence+1,last_frame_digest=repeat('e',64),
+                frame_count=frame_count+1,total_frame_bytes=total_frame_bytes+1,
+                updated_at=updated_at+INTERVAL '1 millisecond'
+          WHERE site_ref=$1 AND invocation_ref=$2`,
+        [siteRef, invocationRef],
+      );
+      expect(tail.rowCount).toBe(1);
+      await gateway.query(
+        `INSERT INTO ${frameTable}
+         (site_ref,invocation_ref,sequence,previous_frame_digest,frame_digest,
+          frame_envelope,plaintext_bytes,terminal)
+         VALUES ($1,$2,3,repeat('b',64),repeat('e',64),'{}'::jsonb,1,TRUE)`,
+        [siteRef, invocationRef],
+      );
+
+      await gateway.query("SAVEPOINT model_gateway_second_terminal");
+      await gateway.query(
+        `UPDATE ${invocationTable}
+            SET last_frame_sequence=last_frame_sequence+1,last_frame_digest=repeat('f',64),
+                frame_count=frame_count+1,total_frame_bytes=total_frame_bytes+1,
+                updated_at=updated_at+INTERVAL '1 millisecond'
+          WHERE site_ref=$1 AND invocation_ref=$2`,
+        [siteRef, invocationRef],
+      );
+      let duplicateTerminal: unknown;
+      try {
+        await gateway.query(
+          `INSERT INTO ${frameTable}
+           (site_ref,invocation_ref,sequence,previous_frame_digest,frame_digest,
+            frame_envelope,plaintext_bytes,terminal)
+           VALUES ($1,$2,4,repeat('e',64),repeat('f',64),'{}'::jsonb,1,TRUE)`,
+          [siteRef, invocationRef],
+        );
+      } catch (error) {
+        duplicateTerminal = error;
+      }
+      await gateway.query("ROLLBACK TO SAVEPOINT model_gateway_second_terminal");
+      await gateway.query("RELEASE SAVEPOINT model_gateway_second_terminal");
+      expect(duplicateTerminal).toMatchObject({ code: "23505" });
+      const durableTail = await gateway.query<{
+        sequence: string;
+        frameCount: number;
+        terminalFrames: string;
+      }>(
+        `SELECT invocation.last_frame_sequence::text AS sequence,
+                invocation.frame_count AS "frameCount",
+                (SELECT count(*)::text FROM ${frameTable} frame
+                  WHERE frame.site_ref=invocation.site_ref
+                    AND frame.invocation_ref=invocation.invocation_ref AND frame.terminal)
+                  AS "terminalFrames"
+           FROM ${invocationTable} invocation
+          WHERE invocation.site_ref=$1 AND invocation.invocation_ref=$2`,
+        [siteRef, invocationRef],
+      );
+      expect(durableTail.rows).toEqual([{ sequence: "3", frameCount: 3, terminalFrames: "1" }]);
+      await gateway.query("ROLLBACK");
+    } finally {
+      await Promise.allSettled([gateway.query("ROLLBACK"), bootstrap.query("ROLLBACK")]);
+      let cleanupFailure: unknown;
+      try {
+        await bootstrap.query("BEGIN");
+        await bootstrap.query(forwardGuard);
+        await bootstrap.query(forwardRevoke);
+        await bootstrap.query("COMMIT");
+      } catch (error) {
+        cleanupFailure = error;
+        await bootstrap.query("ROLLBACK").catch(() => undefined);
+      }
+      try {
+        await bootstrap.query(`DROP TABLE IF EXISTS ${frameTable},${invocationTable} CASCADE`);
+      } catch (error) {
+        cleanupFailure ??= error;
+      }
+      await Promise.allSettled([bootstrap.end(), gateway.end()]);
+      if (cleanupFailure !== undefined) throw cleanupFailure;
     }
   }, 60_000);
 
