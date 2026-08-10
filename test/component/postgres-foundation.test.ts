@@ -837,6 +837,7 @@ describe("Platform PostgreSQL foundation", () => {
   }, 60_000);
 
   it("upgrades the Model Gateway dispatch guard and freezes its terminal frame once", async () => {
+    const canonicalGuardFunction = "platform.guard_model_gateway_invocation_transition";
     const original = await readFile(
       "prisma/migrations/20260802_1200_model_gateway_attempt_producer/migration.sql",
       "utf8",
@@ -892,32 +893,72 @@ describe("Platform PostgreSQL foundation", () => {
     )}`;
     const probeTrigger = quoteIdentifier(`model_gateway_upgrade_${probeSuffix}`);
     const probeTerminalIndex = quoteIdentifier(`model_gateway_terminal_${probeSuffix}`);
+    const probeGuardFunction = `platform.${quoteIdentifier(
+      `guard_model_gateway_invocation_upgrade_${probeSuffix}`,
+    )}`;
+    const probeOldGuard = oldGuard.replaceAll(canonicalGuardFunction, probeGuardFunction);
+    const probeForwardGuard = forwardGuard.replaceAll(canonicalGuardFunction, probeGuardFunction);
+    const probeForwardRevoke = forwardRevoke.replaceAll(
+      canonicalGuardFunction,
+      probeGuardFunction,
+    );
+    const probeForwardIndex = forwardIndex
+      .replace("model_gateway_frame_one_terminal_idx", probeTerminalIndex)
+      .replace("platform.model_gateway_frame", frameTable);
+    if (
+      [probeOldGuard, probeForwardGuard, probeForwardRevoke, probeForwardIndex]
+        .some((statement) => statement.includes(canonicalGuardFunction))
+    ) {
+      throw new Error("MODEL_GATEWAY_UPGRADE_PROBE_ISOLATION_INVALID");
+    }
     const bootstrap = new Client({ connectionString: bootstrapDatabaseUrl });
     const gateway = new Client({ connectionString: modelGatewayDatabaseUrl });
     await Promise.all([bootstrap.connect(), gateway.connect()]);
-
-    const setGatewayContext = async (): Promise<void> => {
-      await gateway.query(
-        `SELECT set_config('app.site_id',$1,true),
-                set_config('app.workload_kind','platform_model_gateway',true)`,
-        [siteRef],
-      );
-    };
-    const rejected = async (statement: string, expected: string): Promise<void> => {
-      await gateway.query("SAVEPOINT model_gateway_rejection");
-      let cause: unknown;
-      try {
-        await gateway.query(statement, [siteRef, invocationRef]);
-      } catch (error) {
-        cause = error;
-      }
-      await gateway.query("ROLLBACK TO SAVEPOINT model_gateway_rejection");
-      await gateway.query("RELEASE SAVEPOINT model_gateway_rejection");
-      expect(cause).toMatchObject({ message: expected });
-    };
-
+    let cleanupFailure: unknown;
     try {
+      const installedGuard = await bootstrap.query<{ definition: string }>(
+        `SELECT pg_get_functiondef(
+           'platform.guard_model_gateway_invocation_transition()'::regprocedure
+         ) AS definition`,
+      );
+      const canonicalGuardDefinition = installedGuard.rows[0]?.definition;
+      expect(canonicalGuardDefinition).toContain(
+        "MODEL_GATEWAY_INVOCATION_DISPATCH_AUTHORITY_INVALID",
+      );
+      expect(canonicalGuardDefinition).toContain("MODEL_GATEWAY_INVOCATION_TERMINAL_IMMUTABLE");
+      expect(canonicalGuardDefinition).toContain("MODEL_GATEWAY_INVOCATION_TERMINAL_FRAME_INVALID");
+      const installedIndex = await bootstrap.query<{ indexdef: string }>(
+        `SELECT indexdef FROM pg_indexes
+          WHERE schemaname='platform' AND indexname='model_gateway_frame_one_terminal_idx'`,
+      );
+      expect(installedIndex.rows).toEqual([{
+        indexdef: expect.stringContaining(
+          "ON platform.model_gateway_frame USING btree (site_ref, invocation_ref) WHERE terminal",
+        ),
+      }]);
+
+      const setGatewayContext = async (): Promise<void> => {
+        await gateway.query(
+          `SELECT set_config('app.site_id',$1,true),
+                  set_config('app.workload_kind','platform_model_gateway',true)`,
+          [siteRef],
+        );
+      };
+      const rejected = async (statement: string, expected: string): Promise<void> => {
+        await gateway.query("SAVEPOINT model_gateway_rejection");
+        let cause: unknown;
+        try {
+          await gateway.query(statement, [siteRef, invocationRef]);
+        } catch (error) {
+          cause = error;
+        }
+        await gateway.query("ROLLBACK TO SAVEPOINT model_gateway_rejection");
+        await gateway.query("RELEASE SAVEPOINT model_gateway_rejection");
+        expect(cause).toMatchObject({ message: expected });
+      };
+
       await bootstrap.query("BEGIN");
+      await bootstrap.query(probeOldGuard);
       await bootstrap.query(
         `CREATE TABLE ${invocationTable} (
           site_ref TEXT NOT NULL,invocation_ref UUID NOT NULL,authorization_handle TEXT NOT NULL,
@@ -974,16 +1015,12 @@ describe("Platform PostgreSQL foundation", () => {
       }
       await bootstrap.query(
         `CREATE TRIGGER ${probeTrigger} BEFORE UPDATE ON ${invocationTable}
-         FOR EACH ROW EXECUTE FUNCTION platform.guard_model_gateway_invocation_transition()`,
+         FOR EACH ROW EXECUTE FUNCTION ${probeGuardFunction}()`,
       );
       await bootstrap.query(
         `GRANT SELECT,INSERT,UPDATE ON TABLE ${invocationTable},${frameTable}
            TO ${quoteIdentifier(modelGatewayUser)}`,
       );
-      await bootstrap.query("COMMIT");
-
-      await bootstrap.query("BEGIN");
-      await bootstrap.query(oldGuard);
       await bootstrap.query("COMMIT");
 
       await gateway.query("BEGIN");
@@ -999,24 +1036,10 @@ describe("Platform PostgreSQL foundation", () => {
       await gateway.query("ROLLBACK");
 
       await bootstrap.query("BEGIN");
-      await bootstrap.query("DROP INDEX platform.model_gateway_frame_one_terminal_idx");
-      await bootstrap.query(forwardIndex);
-      await bootstrap.query(forwardGuard);
-      await bootstrap.query(forwardRevoke);
-      await bootstrap.query(
-        `CREATE UNIQUE INDEX ${probeTerminalIndex}
-         ON ${frameTable}(site_ref,invocation_ref) WHERE terminal`,
-      );
+      await bootstrap.query(probeForwardGuard);
+      await bootstrap.query(probeForwardRevoke);
+      await bootstrap.query(probeForwardIndex);
       await bootstrap.query("COMMIT");
-      const installedIndex = await bootstrap.query<{ indexdef: string }>(
-        `SELECT indexdef FROM pg_indexes
-          WHERE schemaname='platform' AND indexname='model_gateway_frame_one_terminal_idx'`,
-      );
-      expect(installedIndex.rows).toEqual([{
-        indexdef: expect.stringContaining(
-          "ON platform.model_gateway_frame USING btree (site_ref, invocation_ref) WHERE terminal",
-        ),
-      }]);
 
       await gateway.query("BEGIN");
       await setGatewayContext();
@@ -1167,26 +1190,29 @@ describe("Platform PostgreSQL foundation", () => {
       );
       expect(durableTail.rows).toEqual([{ sequence: "3", frameCount: 3, terminalFrames: "1" }]);
       await gateway.query("ROLLBACK");
+      expect((await bootstrap.query<{ definition: string }>(
+        `SELECT pg_get_functiondef(
+           'platform.guard_model_gateway_invocation_transition()'::regprocedure
+         ) AS definition`,
+      )).rows).toEqual(installedGuard.rows);
+      expect((await bootstrap.query<{ indexdef: string }>(
+        `SELECT indexdef FROM pg_indexes
+          WHERE schemaname='platform' AND indexname='model_gateway_frame_one_terminal_idx'`,
+      )).rows).toEqual(installedIndex.rows);
     } finally {
       await Promise.allSettled([gateway.query("ROLLBACK"), bootstrap.query("ROLLBACK")]);
-      let cleanupFailure: unknown;
       try {
         await bootstrap.query("BEGIN");
-        await bootstrap.query(forwardGuard);
-        await bootstrap.query(forwardRevoke);
+        await bootstrap.query(`DROP TABLE IF EXISTS ${frameTable},${invocationTable} CASCADE`);
+        await bootstrap.query(`DROP FUNCTION IF EXISTS ${probeGuardFunction}()`);
         await bootstrap.query("COMMIT");
       } catch (error) {
         cleanupFailure = error;
         await bootstrap.query("ROLLBACK").catch(() => undefined);
       }
-      try {
-        await bootstrap.query(`DROP TABLE IF EXISTS ${frameTable},${invocationTable} CASCADE`);
-      } catch (error) {
-        cleanupFailure ??= error;
-      }
       await Promise.allSettled([bootstrap.end(), gateway.end()]);
-      if (cleanupFailure !== undefined) throw cleanupFailure;
     }
+    if (cleanupFailure !== undefined) throw cleanupFailure;
   }, 60_000);
 
   it("enforces Memory feature-off identities and exact worker purge authority", async () => {

@@ -7,6 +7,7 @@ const originalMigrationPath =
   "prisma/migrations/20260802_1200_model_gateway_attempt_producer/migration.sql";
 const dispatchAuthorityMigrationPath =
   "prisma/migrations/20260826_model_gateway_dispatch_authority_fence/migration.sql";
+const postgresFoundationTestPath = "test/component/postgres-foundation.test.ts";
 
 describe("Model Gateway owned schema", () => {
   it("keeps opaque authorization, invocation, encrypted response, usage fact and outbox durable", async () => {
@@ -101,5 +102,38 @@ describe("Model Gateway owned schema", () => {
     expect(forward).toContain(
       "ON platform.model_gateway_frame(site_ref,invocation_ref) WHERE terminal",
     );
+  });
+
+  it("keeps the PostgreSQL upgrade probe isolated from canonical Model Gateway objects", async () => {
+    const component = await readFile(resolve(postgresFoundationTestPath), "utf8");
+    const start = component.indexOf(
+      'it("upgrades the Model Gateway dispatch guard and freezes its terminal frame once"',
+    );
+    const end = component.indexOf('it("enforces Memory feature-off identities', start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const probe = component.slice(start, end);
+
+    expect(probe).not.toContain(
+      "DROP INDEX platform.model_gateway_frame_one_terminal_idx",
+    );
+    expect(probe).not.toContain("await bootstrap.query(oldGuard)");
+    expect(probe).not.toContain("await bootstrap.query(forwardGuard)");
+    expect(probe).not.toContain(
+      "EXECUTE FUNCTION platform.guard_model_gateway_invocation_transition()",
+    );
+    expect(probe).toContain("probeGuardFunction");
+    expect(probe).toContain("probeForwardIndex");
+    expect(probe).toContain("pg_get_functiondef");
+    const connected = probe.indexOf(
+      "await Promise.all([bootstrap.connect(), gateway.connect()]);",
+    );
+    const protectedByCleanup = probe.indexOf("try {", connected);
+    const canonicalInspection = probe.indexOf("const installedGuard", connected);
+    expect(connected).toBeGreaterThanOrEqual(0);
+    expect(protectedByCleanup).toBeGreaterThan(connected);
+    expect(protectedByCleanup).toBeLessThan(canonicalInspection);
+    expect(probe).toContain("DROP FUNCTION IF EXISTS ${probeGuardFunction}()");
+    expect(probe).toContain("Promise.allSettled([bootstrap.end(), gateway.end()])");
   });
 });
