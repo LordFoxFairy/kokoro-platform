@@ -507,6 +507,19 @@ describe("Platform migrator", () => {
       "GRANT INSERT ON TABLE platform.model_gateway_execution_authorization TO \"kt_pg_platformadmission_fixture\"",
     );
     expect(grants).toContain(
+      "GRANT SELECT(site_ref,execution_manifest_ref,state,authorization_handle), " +
+        "UPDATE(state,updated_at) ON TABLE platform.model_gateway_execution_authorization " +
+        "TO \"kt_pg_platformadmission_fixture\"",
+    );
+    expect(grants).not.toContain(
+      "GRANT SELECT ON TABLE platform.model_gateway_execution_authorization " +
+        "TO \"kt_pg_platformadmission_fixture\"",
+    );
+    expect(grants).not.toContain(
+      "GRANT UPDATE ON TABLE platform.model_gateway_execution_authorization " +
+        "TO \"kt_pg_platformadmission_fixture\"",
+    );
+    expect(grants).toContain(
       "GRANT EXECUTE ON FUNCTION platform.enqueue_asset_upload_completion_event(UUID,TEXT,JSONB,CHAR(64),TEXT,TEXT) TO \"platform_asset_data_plane\"",
     );
     expect(grants).toContain(
@@ -630,6 +643,7 @@ describe("Platform migrator", () => {
     expect(mediaAdminSelectFence).toContain("'site_release_media_definition'");
     expect(authoritySql).toContain('AS "canReadCommerceCatalogEpoch"');
     expect(authoritySql).toContain('AS "canUpdateCommerceCatalogEpoch"');
+    expect(authoritySql).toContain('AS "admissionModelGatewayAuthorityExact"');
     expect(authoritySql).toMatch(
       /runtime_role\.rolname=\$3 AND \([\s\S]+grant_row\.table_name LIKE 'identity\\_%'/u,
     );
@@ -867,7 +881,8 @@ describe("Platform migrator", () => {
     ["platform_api", "canUpdateCommerceCatalogEpoch", true],
     ["platform_admin", "canReadCommerceCatalogEpoch", false],
     ["platform_admin", "canUpdateCommerceCatalogEpoch", false],
-  ] as const)("fails closed when %s has the wrong catalog epoch authority (%s)",
+    [leasedAdmissionRole, "admissionModelGatewayAuthorityExact", false],
+  ] as const)("fails closed when %s has the wrong exact authority (%s)",
     async (roleName, field, value) => {
       const lockClient: MigrationLockClient = {
         async connect() {},
@@ -1275,6 +1290,7 @@ function authority(
     canUpdateCommerceCatalogEpoch: roleName === "platform_admin",
     canExecuteAdminAuthorityChange: false,
     admissionRoleIdentityExact: roleName === admissionRoleName,
+    admissionModelGatewayAuthorityExact: roleName === admissionRoleName,
     hasRequiredAdmissionExecutionRootFunctions: roleName === admissionRoleName,
     hasRequiredModelOptionFunctions: true,
     hasRequiredProductCatalogPrivileges: true,

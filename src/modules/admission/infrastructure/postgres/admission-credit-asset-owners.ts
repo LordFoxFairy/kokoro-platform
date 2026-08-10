@@ -230,41 +230,39 @@ export class PostgresAdmissionBudgetOwner implements AdmissionBudgetOwnerPort {
     const sql = resolvePlatformTransaction(transaction);
     await sql.query(
       `SELECT platform.record_admission_verified_terminal_evidence(
-         $1,$2,$3,$4,$5,$6,$7,$8)`,
+         $1,$2,$3,$4,$5,$6,$7,$8)::text AS "recorded"`,
       [input.siteId, input.runId, input.manifestRef, input.sessionId, input.launchId,
         input.terminalEvidenceRef, input.terminalOutcome, input.terminalEvidenceDigest],
     );
-    const [evidenceRows, priorRows] = await Promise.all([
-      sql.query<UsageEvidenceRefRow>(
-        `SELECT evidence.evidence_ref::text AS "evidenceRef"
-           FROM platform.credit_attempt_usage_evidence evidence
-           JOIN platform.credit_usage_attempt_intent intent
-             ON intent.site_ref=evidence.site_ref
-            AND intent.attempt_authorization_ref=evidence.attempt_authorization_ref
-          WHERE evidence.site_ref=$1 AND evidence.authorization_segment_ref=$2::uuid
-            AND intent.state='finalized'
-            AND intent.owner_evidence_ref=evidence.evidence_ref::text
-            AND NOT EXISTS (
-              SELECT 1 FROM platform.credit_attempt_usage_evidence later
-               WHERE later.site_ref=evidence.site_ref
-                 AND later.producer_kind=evidence.producer_kind
-                 AND later.producer_context=evidence.producer_context
-                 AND later.producer_generation=evidence.producer_generation
-                 AND later.attempt_ref=evidence.attempt_ref
-                 AND later.revision>evidence.revision
-            )
-          ORDER BY evidence.producer_kind,evidence.producer_context,
-                   evidence.producer_generation,evidence.attempt_ref`,
-        [input.siteId, input.authorizationSegmentRef],
-      ),
-      sql.query<PriorClosureRow>(
-        `SELECT closure_ref::text AS "closureRef",closure_revision::text AS "closureRevision"
-           FROM platform.credit_usage_segment_closure
-          WHERE site_ref=$1 AND authorization_segment_ref=$2::uuid
-          ORDER BY closure_revision DESC LIMIT 1`,
-        [input.siteId, input.authorizationSegmentRef],
-      ),
-    ]);
+    const evidenceRows = await sql.query<UsageEvidenceRefRow>(
+      `SELECT evidence.evidence_ref::text AS "evidenceRef"
+         FROM platform.credit_attempt_usage_evidence evidence
+         JOIN platform.credit_usage_attempt_intent intent
+           ON intent.site_ref=evidence.site_ref
+          AND intent.attempt_authorization_ref=evidence.attempt_authorization_ref
+        WHERE evidence.site_ref=$1 AND evidence.authorization_segment_ref=$2::uuid
+          AND intent.state='finalized'
+          AND intent.owner_evidence_ref=evidence.evidence_ref::text
+          AND NOT EXISTS (
+            SELECT 1 FROM platform.credit_attempt_usage_evidence later
+             WHERE later.site_ref=evidence.site_ref
+               AND later.producer_kind=evidence.producer_kind
+               AND later.producer_context=evidence.producer_context
+               AND later.producer_generation=evidence.producer_generation
+               AND later.attempt_ref=evidence.attempt_ref
+               AND later.revision>evidence.revision
+          )
+        ORDER BY evidence.producer_kind,evidence.producer_context,
+                 evidence.producer_generation,evidence.attempt_ref`,
+      [input.siteId, input.authorizationSegmentRef],
+    );
+    const priorRows = await sql.query<PriorClosureRow>(
+      `SELECT closure_ref::text AS "closureRef",closure_revision::text AS "closureRevision"
+         FROM platform.credit_usage_segment_closure
+        WHERE site_ref=$1 AND authorization_segment_ref=$2::uuid
+        ORDER BY closure_revision DESC LIMIT 1`,
+      [input.siteId, input.authorizationSegmentRef],
+    );
     const evidenceRefs = evidenceRows.map((row) => {
       if (!ownerRef(row.evidenceRef)) throw new Error("ADMISSION_USAGE_EVIDENCE_CORRUPT");
       return row.evidenceRef;

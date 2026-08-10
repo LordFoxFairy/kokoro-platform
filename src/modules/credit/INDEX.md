@@ -109,6 +109,11 @@ entries contribute `customer_consumed` as credit minus debit to the deferred Gra
 immutable Usage closure/settlement facts but creates no Journal, allocation revision, Hold mutation or fence advance. The later
 execution-root closure still owns the only trusted atomic terminal edge.
 
+`UsageSettlementService` issues its closure evidence, open-attempt, prior closure, prior settlement, and
+HoldAllocation reads in order. They share one transaction-scoped node-postgres client, so application code
+must not fan them out with `Promise.all`; ordered reads preserve the same snapshot and avoid unsupported
+concurrent-query behavior on a single client.
+
 `interfaces/connect/admin-credit-service.ts` is the dedicated typed operator provider. Every request resolves an exact Site
 through the shared Admin control plane and every database read uses `adminSiteQueryTransaction`, which sets the same exact Site
 for PostgreSQL RLS. Pagination tokens are HMAC-authenticated and bind the verified operator generation, security,

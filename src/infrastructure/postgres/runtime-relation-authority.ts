@@ -88,6 +88,18 @@ export const MODEL_GATEWAY_ADMISSION_RELATIONS = [
   "model_gateway_execution_authorization",
 ] as const;
 
+export const ADMISSION_MODEL_GATEWAY_SELECT_COLUMNS = [
+  "site_ref",
+  "execution_manifest_ref",
+  "state",
+  "authorization_handle",
+] as const;
+
+export const ADMISSION_MODEL_GATEWAY_UPDATE_COLUMNS = [
+  "state",
+  "updated_at",
+] as const;
+
 export const SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS = [
   "command_receipt",
   "site_project_binding",

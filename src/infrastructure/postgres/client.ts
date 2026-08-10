@@ -28,6 +28,8 @@ import {
   ADMIN_INSERT_RELATIONS,
   ADMIN_UPDATE_RELATIONS,
   ADMISSION_INSERT_RELATIONS,
+  ADMISSION_MODEL_GATEWAY_SELECT_COLUMNS,
+  ADMISSION_MODEL_GATEWAY_UPDATE_COLUMNS,
   ADMISSION_RELATIONS,
   ADMISSION_SELECT_RELATIONS,
   ADMISSION_UPDATE_RELATIONS,
@@ -1226,6 +1228,7 @@ interface RuntimeIdentity {
   canUpdateCommerceCatalogEpoch: boolean;
   canExecuteAdminAuthorityChange: boolean;
   admissionRoleIdentityExact: boolean;
+  admissionModelGatewayAuthorityExact: boolean;
   hasRequiredAdmissionExecutionRootFunctions: boolean;
   hasRequiredModelOptionFunctions: boolean;
   hasRequiredProductCatalogPrivileges: boolean;
@@ -1313,6 +1316,10 @@ const ADMISSION_RELATIONS_SQL = sqlLiterals(ADMISSION_RELATIONS);
 const ADMISSION_SELECT_RELATIONS_SQL = sqlLiterals(ADMISSION_SELECT_RELATIONS);
 const ADMISSION_INSERT_RELATIONS_SQL = sqlLiterals(ADMISSION_INSERT_RELATIONS);
 const ADMISSION_UPDATE_RELATIONS_SQL = sqlLiterals(ADMISSION_UPDATE_RELATIONS);
+const ADMISSION_MODEL_GATEWAY_SELECT_COLUMNS_SQL =
+  sqlLiterals(ADMISSION_MODEL_GATEWAY_SELECT_COLUMNS);
+const ADMISSION_MODEL_GATEWAY_UPDATE_COLUMNS_SQL =
+  sqlLiterals(ADMISSION_MODEL_GATEWAY_UPDATE_COLUMNS);
 const CREDIT_USAGE_RELATIONS_SQL = sqlLiterals(CREDIT_USAGE_RELATIONS);
 const MODEL_GATEWAY_ADMISSION_RELATIONS_SQL = sqlLiterals(MODEL_GATEWAY_ADMISSION_RELATIONS);
 const MEDIA_CONTROL_ADMIN_RELATIONS_SQL = sqlLiterals(MEDIA_CONTROL_ADMIN_RELATIONS);
@@ -1580,6 +1587,8 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_table_privilege(current_user, 'platform.asset_version', 'SELECT')
            AND has_table_privilege(current_user, 'platform.asset_eligibility_projection', 'SELECT')
            AND has_table_privilege(current_user, 'platform.model_gateway_execution_authorization', 'INSERT')
+           AND has_column_privilege(current_user, 'platform.model_gateway_execution_authorization', 'site_ref', 'SELECT')
+           AND has_column_privilege(current_user, 'platform.model_gateway_execution_authorization', 'execution_manifest_ref', 'SELECT')
            AND has_column_privilege(current_user, 'platform.model_gateway_execution_authorization', 'authorization_handle', 'SELECT')
            AND has_column_privilege(current_user, 'platform.model_gateway_execution_authorization', 'state', 'SELECT')
            AND has_column_privilege(current_user, 'platform.model_gateway_execution_authorization', 'state', 'UPDATE')
@@ -1915,6 +1924,57 @@ const RUNTIME_IDENTITY_SQL = `
              current_user,'platform.admission_role_identity_is_active()','EXECUTE'
            ) THEN platform.admission_role_identity_is_active() ELSE FALSE END
          ELSE FALSE END AS "admissionRoleIdentityExact",
+         CASE WHEN $2='admission' THEN
+           has_table_privilege(
+             current_user,'platform.model_gateway_execution_authorization','INSERT'
+           )
+           AND NOT has_table_privilege(
+             current_user,'platform.model_gateway_execution_authorization','SELECT'
+           )
+           AND NOT has_table_privilege(
+             current_user,'platform.model_gateway_execution_authorization','UPDATE'
+           )
+           AND (
+             SELECT count(*) FROM unnest(ARRAY[${ADMISSION_MODEL_GATEWAY_SELECT_COLUMNS_SQL}])
+               AS expected(column_name)
+              WHERE has_column_privilege(
+                current_user,'platform.model_gateway_execution_authorization',
+                expected.column_name,'SELECT'
+              )
+           )=cardinality(ARRAY[${ADMISSION_MODEL_GATEWAY_SELECT_COLUMNS_SQL}])
+           AND NOT EXISTS (
+             SELECT 1 FROM pg_attribute candidate_column
+              WHERE candidate_column.attrelid=
+                    'platform.model_gateway_execution_authorization'::regclass
+                AND candidate_column.attnum>0 AND NOT candidate_column.attisdropped
+                AND candidate_column.attname<>ALL(
+                  ARRAY[${ADMISSION_MODEL_GATEWAY_SELECT_COLUMNS_SQL}]
+                )
+                AND has_column_privilege(
+                  current_user,candidate_column.attrelid,candidate_column.attnum,'SELECT'
+                )
+           )
+           AND (
+             SELECT count(*) FROM unnest(ARRAY[${ADMISSION_MODEL_GATEWAY_UPDATE_COLUMNS_SQL}])
+               AS expected(column_name)
+              WHERE has_column_privilege(
+                current_user,'platform.model_gateway_execution_authorization',
+                expected.column_name,'UPDATE'
+              )
+           )=cardinality(ARRAY[${ADMISSION_MODEL_GATEWAY_UPDATE_COLUMNS_SQL}])
+           AND NOT EXISTS (
+             SELECT 1 FROM pg_attribute candidate_column
+              WHERE candidate_column.attrelid=
+                    'platform.model_gateway_execution_authorization'::regclass
+                AND candidate_column.attnum>0 AND NOT candidate_column.attisdropped
+                AND candidate_column.attname<>ALL(
+                  ARRAY[${ADMISSION_MODEL_GATEWAY_UPDATE_COLUMNS_SQL}]
+                )
+                AND has_column_privilege(
+                  current_user,candidate_column.attrelid,candidate_column.attnum,'UPDATE'
+                )
+           )
+         ELSE FALSE END AS "admissionModelGatewayAuthorityExact",
          CASE WHEN $2='admission' THEN
            has_function_privilege(current_user,
              'platform.admission_role_identity_is_active()','EXECUTE')
@@ -2596,6 +2656,7 @@ function validRuntimeIdentity(
     identity.canUpdateCommerceCatalogEpoch === (config.role === "admin") &&
     identity.canExecuteAdminAuthorityChange === (config.role === "admin-worker") &&
     identity.admissionRoleIdentityExact === (config.role === "admission") &&
+    identity.admissionModelGatewayAuthorityExact === (config.role === "admission") &&
     identity.hasRequiredAdmissionExecutionRootFunctions === (config.role === "admission") &&
     identity.hasRequiredModelOptionFunctions &&
     identity.hasRequiredProductCatalogPrivileges &&

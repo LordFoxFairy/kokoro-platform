@@ -144,6 +144,29 @@ describe("UsageSettlementService", () => {
     }
   });
 
+  it("serializes reads that share one transaction-scoped PostgreSQL client", async () => {
+    const repository = new SerializedReadUsageRepository();
+    repository.evidenceSet = [persistedEvidence(), {
+      ...persistedEvidence(), evidenceRef: "evidence-2",
+      evidence: { ...persistedEvidence().evidence, attemptRef: "attempt-2", sourceDigest: "b".repeat(64) },
+    }];
+    const lease = transactionLease();
+    try {
+      await expect(usageService(repository).settleUsageSegment(lease.transaction, settleCommand()))
+        .resolves.toMatchObject({ kind: "accepted", value: { customerAmount: 14n } });
+      expect(repository.maximumConcurrentReads).toBe(1);
+      expect(repository.readOrder).toEqual([
+        "closure_evidence",
+        "open_attempt_count",
+        "prior_closure",
+        "prior_settlement",
+        "hold_allocations",
+      ]);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
   it("keeps unavailable Usage committed under reconciliation instead of settling zero", async () => {
     const repository = new RecordingUsageRepository();
     repository.evidenceSet = [{
@@ -323,6 +346,41 @@ class RecordingUsageRepository {
     if (record.segment !== undefined) this.context = { ...this.context, segment: record.segment,
       executionBudgetRootState: "reconciliation_required", creditHoldState: "reconciliation_required" };
     return { kind: "reconciliation_required" as const, value: { authorizationSegmentRef: "segment-1", code: record.code } };
+  }
+}
+
+class SerializedReadUsageRepository extends RecordingUsageRepository {
+  readonly readOrder: string[] = [];
+  maximumConcurrentReads = 0;
+  #concurrentReads = 0;
+
+  override loadClosureEvidence() {
+    return this.#read("closure_evidence", this.evidenceSet);
+  }
+
+  override loadOpenAttemptCount() {
+    return this.#read("open_attempt_count", this.openAttemptCount);
+  }
+
+  override loadPriorClosure() {
+    return this.#read("prior_closure", this.priorClosure);
+  }
+
+  override loadPriorSettlement() {
+    return this.#read("prior_settlement", this.priorSettlement);
+  }
+
+  override loadHoldAllocationsAfterFinancialLock() {
+    return this.#read("hold_allocations", this.holdAllocations);
+  }
+
+  async #read<Value>(label: string, value: Value): Promise<Value> {
+    this.readOrder.push(label);
+    this.#concurrentReads += 1;
+    this.maximumConcurrentReads = Math.max(this.maximumConcurrentReads, this.#concurrentReads);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    this.#concurrentReads -= 1;
+    return value;
   }
 }
 

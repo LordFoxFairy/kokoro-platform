@@ -1,6 +1,17 @@
+import { create } from "@bufbuild/protobuf";
 import { Client } from "pg";
 import { beforeAll, describe, expect, it } from "vitest";
+import { ReconcileRunAuthorizationEffectSchema } from
+  "../../src/generated/proto/kokoro/platform/admission/v1/admission_pb.js";
+import {
+  createPlatformDatabaseClient,
+  loadPlatformDatabaseConfig,
+} from "../../src/infrastructure/postgres/client.js";
 import { runPlatformMigrations } from "../../src/infrastructure/postgres/migrator.js";
+import type { AdmissionProductionOwnerPorts } from
+  "../../src/process/admission-composition.js";
+import { createPlatformAdmissionOwnerAuthority } from
+  "../../src/process/admission-composition.js";
 import {
   creditRootClosureFixture,
   creditRootClosureRequest,
@@ -11,6 +22,7 @@ import {
   readCreditUsageCorrectionInventory,
   seedCreditRootClosure,
   settleCreditUsageRevision,
+  type CreditRootClosureFixture,
 } from "./support/credit-execution-root-closure-fixture.js";
 
 const bootstrapDatabaseUrl = leased(process.env.DATABASE_URL_PLATFORM_BOOTSTRAP_TEST);
@@ -602,6 +614,176 @@ describe("Credit execution-root closure PostgreSQL authority", () => {
     }
   });
 
+  it("keeps the leased Admission gateway projection authority column-exact", async () => {
+    const bootstrap = new Client({ connectionString: bootstrapDatabaseUrl });
+    const admission = new Client({ connectionString: admissionDatabaseUrl });
+    await Promise.all([bootstrap.connect(), admission.connect()]);
+    const admissionRole = new URL(admissionDatabaseUrl).username;
+    try {
+      const authority = await bootstrap.query<{
+        canInsert: boolean;
+        canSelectTable: boolean;
+        canUpdateTable: boolean;
+        selectedColumns: string[];
+        updatedColumns: string[];
+      }>(
+        `SELECT has_table_privilege($1,'platform.model_gateway_execution_authorization','INSERT')
+                  AS "canInsert",
+                has_table_privilege($1,'platform.model_gateway_execution_authorization','SELECT')
+                  AS "canSelectTable",
+                has_table_privilege($1,'platform.model_gateway_execution_authorization','UPDATE')
+                  AS "canUpdateTable",
+                ARRAY(SELECT attribute.attname::text
+                  FROM pg_attribute attribute
+                 WHERE attribute.attrelid='platform.model_gateway_execution_authorization'::regclass
+                   AND attribute.attnum>0 AND NOT attribute.attisdropped
+                   AND has_column_privilege($1,attribute.attrelid,attribute.attnum,'SELECT')
+                 ORDER BY attribute.attnum)
+                  AS "selectedColumns",
+                ARRAY(SELECT attribute.attname::text
+                  FROM pg_attribute attribute
+                 WHERE attribute.attrelid='platform.model_gateway_execution_authorization'::regclass
+                   AND attribute.attnum>0 AND NOT attribute.attisdropped
+                   AND has_column_privilege($1,attribute.attrelid,attribute.attnum,'UPDATE')
+                 ORDER BY attribute.attnum)
+                  AS "updatedColumns"`,
+        [admissionRole],
+      );
+      expect(authority.rows).toEqual([{
+        canInsert: true,
+        canSelectTable: false,
+        canUpdateTable: false,
+        selectedColumns: [
+          "authorization_handle",
+          "site_ref",
+          "execution_manifest_ref",
+          "state",
+        ],
+        updatedColumns: ["state", "updated_at"],
+      }]);
+
+      await admission.query("BEGIN");
+      await admission.query("SELECT platform.begin_admission_transaction('admission.command')");
+      await expect(admission.query(
+        "SELECT provider_model FROM platform.model_gateway_execution_authorization LIMIT 1",
+      )).rejects.toMatchObject({ code: "42501" });
+      await admission.query("ROLLBACK");
+
+      await admission.query("BEGIN");
+      await admission.query("SELECT platform.begin_admission_transaction('admission.command')");
+      await expect(admission.query(
+        `UPDATE platform.model_gateway_execution_authorization
+            SET expires_at=expires_at
+          WHERE authorization_handle=$1`,
+        [`model-authorization:sha256:${"0".repeat(64)}`],
+      )).rejects.toMatchObject({ code: "42501" });
+      await admission.query("ROLLBACK");
+    } finally {
+      await Promise.allSettled([bootstrap.end(), admission.end()]);
+    }
+  });
+
+  it("settles terminal Usage, root Credit, Gateway authorization, and Admission lifecycle atomically", async () => {
+    const fixture = creditRootClosureFixture({ capturedAmount: 25n });
+    const bootstrap = new Client({ connectionString: bootstrapDatabaseUrl });
+    const database = admissionProductionDatabase();
+    await bootstrap.connect();
+    try {
+      await seedCreditRootClosure(bootstrap, fixture, {
+        usageState: "committed",
+        admissionLifecycle: { gatewayState: "active" },
+      });
+      await database.connect();
+      await database.checkHealth();
+      const owner = terminalAdmissionOwner(database, fixture);
+      const command = terminalReconcileCommand(fixture);
+
+      const settled = await owner.authority.reconcileRunAuthorization(command);
+      expect(settled).toMatchObject({
+        kind: "settled",
+        result: {
+          authorizationSegmentRef: fixture.authorizationSegmentRef,
+          segmentVersion: 4n,
+          settledUsage: {
+            ratedAmount: "25",
+            currencyOrCreditUnit: "credit_micros",
+            usageEvidenceRefs: [fixture.evidenceRef],
+          },
+        },
+      });
+      expect(owner.executionEvidenceReads()).toBe(1);
+      await expect(owner.authority.reconcileRunAuthorization(command)).resolves.toMatchObject({
+        kind: "settled",
+        result: {
+          authorizationSegmentRef: fixture.authorizationSegmentRef,
+          segmentVersion: 4n,
+        },
+      });
+      expect(owner.executionEvidenceReads()).toBe(1);
+      await expect(readAdmissionTerminalInventory(bootstrap, fixture)).resolves.toEqual({
+        manifestState: "settled",
+        manifestVersion: "4",
+        gatewayState: "revoked",
+        segmentState: "settled",
+        segmentVersion: "4",
+        allocationRevision: "4",
+        rootState: "settled",
+        rootVersion: "2",
+        holdState: "settled",
+        holdFence: "3",
+        capturedAmount: "25",
+        releasedAmount: "75",
+        usageSettlementCount: "1",
+        rootClosureCount: "1",
+        rootOutcomeCount: "1",
+        verifiedTerminalEvidenceCount: "1",
+      });
+    } finally {
+      await Promise.allSettled([database.disconnect(), bootstrap.end()]);
+    }
+  });
+
+  it("rolls terminal Credit back when the lifecycle projection CAS fails", async () => {
+    const fixture = creditRootClosureFixture({ capturedAmount: 25n });
+    const bootstrap = new Client({ connectionString: bootstrapDatabaseUrl });
+    const database = admissionProductionDatabase();
+    await bootstrap.connect();
+    try {
+      await seedCreditRootClosure(bootstrap, fixture, {
+        usageState: "committed",
+        admissionLifecycle: { gatewayState: "expired" },
+      });
+      await database.connect();
+      const owner = terminalAdmissionOwner(database, fixture);
+      const failure = await owner.authority
+        .reconcileRunAuthorization(terminalReconcileCommand(fixture))
+        .then(() => null, (error: unknown) => error);
+      expect(failure).toMatchObject({ name: "AdmissionOwnerNoEffectError" });
+      expect((failure as Error & { cause: unknown }).cause)
+        .toMatchObject({ message: "ADMISSION_MODEL_GATEWAY_AUTHORIZATION_CAS_LOST" });
+      await expect(readAdmissionTerminalInventory(bootstrap, fixture)).resolves.toEqual({
+        manifestState: "committed",
+        manifestVersion: "2",
+        gatewayState: "expired",
+        segmentState: "committed",
+        segmentVersion: "2",
+        allocationRevision: "2",
+        rootState: "open",
+        rootVersion: "1",
+        holdState: "open",
+        holdFence: "1",
+        capturedAmount: "0",
+        releasedAmount: "0",
+        usageSettlementCount: "0",
+        rootClosureCount: "0",
+        rootOutcomeCount: "0",
+        verifiedTerminalEvidenceCount: "0",
+      });
+    } finally {
+      await Promise.allSettled([database.disconnect(), bootstrap.end()]);
+    }
+  });
+
   it("preserves exact Media and Admission closure routine ACLs across the forward migration", async () => {
     const bootstrap = new Client({ connectionString: bootstrapDatabaseUrl });
     await bootstrap.connect();
@@ -655,4 +837,145 @@ function leased(value: string | undefined): string {
     throw new Error("DATABASE_URL_PLATFORM_TEST_MUST_BE_LEASED");
   }
   return value;
+}
+
+function admissionProductionDatabase() {
+  const url = new URL(admissionDatabaseUrl);
+  return createPlatformDatabaseClient(loadPlatformDatabaseConfig("admission", {
+    DATABASE_URL_PLATFORM: admissionDatabaseUrl,
+    PLATFORM_DATABASE_CREDENTIAL_CLASS: "admission",
+    PLATFORM_DATABASE_ADMISSION_ROLE: url.username,
+    PLATFORM_DATABASE_MIGRATOR_ROLE: new URL(
+      leased(process.env.DATABASE_URL_PLATFORM_MIGRATOR_TEST),
+    ).username,
+    PLATFORM_DATABASE_EXPECTED_DATABASE: url.pathname.slice(1),
+  }));
+}
+
+function terminalAdmissionOwner(
+  database: ReturnType<typeof admissionProductionDatabase>,
+  fixture: CreditRootClosureFixture,
+) {
+  let executionEvidenceReads = 0;
+  const unavailable = async (): Promise<never> => {
+    throw new Error("UNEXPECTED_ADMISSION_OWNER_CALL");
+  };
+  const ownerPorts: AdmissionProductionOwnerPorts = {
+    session: { resolve: unavailable, verifyFinalizeReceipts: unavailable },
+    mediaProjection: { issueReservation: unavailable },
+    dispatchEvidence: { get: unavailable },
+    executionEvidence: {
+      resolve: async (input) => {
+        executionEvidenceReads += 1;
+        if (
+          input.siteId !== fixture.siteId || input.sessionId !== fixture.sessionRef ||
+          input.launchId !== fixture.launchRef || input.runId !== fixture.runRef ||
+          input.terminalOwnerEvidenceRef !== fixture.terminalEvidenceRef
+        ) throw new Error("TERMINAL_EXECUTION_EVIDENCE_SCOPE_INVALID");
+        return Object.freeze({
+          kind: "terminal_observed" as const,
+          terminalEvidenceRef: fixture.terminalEvidenceRef,
+          terminalEvidenceDigest: fixture.terminalEvidenceDigest,
+          terminalOutcome: "completed" as const,
+          safeStatusRef: fixture.terminalEvidenceRef,
+        });
+      },
+    },
+  };
+  return Object.freeze({
+    authority: createPlatformAdmissionOwnerAuthority({
+      database,
+      ownerPorts,
+      mediaAccessKey: new Uint8Array(32).fill(7),
+      clock: () => new Date("2026-08-10T12:00:00.000Z"),
+    }),
+    executionEvidenceReads: () => executionEvidenceReads,
+  });
+}
+
+function terminalReconcileCommand(fixture: CreditRootClosureFixture) {
+  return Object.freeze({
+    caller: Object.freeze({
+      identity: "spiffe://kokoro/session",
+      environment: "production",
+      region: "us-east-1",
+    }),
+    siteId: fixture.siteId,
+    commandId: `terminal-reconcile-${fixture.runRef}`,
+    requestDigest: "e".repeat(64),
+    effect: create(ReconcileRunAuthorizationEffectSchema, {
+      manifestRef: fixture.manifestRef,
+      authorizationSegmentRef: fixture.authorizationSegmentRef,
+      expectedSegmentVersion: 2n,
+      terminalOwnerEvidenceRef: fixture.terminalEvidenceRef,
+    }),
+  });
+}
+
+type AdmissionTerminalInventory = Readonly<{
+  manifestState: string;
+  manifestVersion: string;
+  gatewayState: string;
+  segmentState: string;
+  segmentVersion: string;
+  allocationRevision: string;
+  rootState: string;
+  rootVersion: string;
+  holdState: string;
+  holdFence: string;
+  capturedAmount: string;
+  releasedAmount: string;
+  usageSettlementCount: string;
+  rootClosureCount: string;
+  rootOutcomeCount: string;
+  verifiedTerminalEvidenceCount: string;
+}>;
+
+async function readAdmissionTerminalInventory(
+  client: Client,
+  fixture: CreditRootClosureFixture,
+): Promise<AdmissionTerminalInventory> {
+  const result = await client.query<AdmissionTerminalInventory>(
+    `SELECT manifest.state AS "manifestState",manifest.segment_version::text AS "manifestVersion",
+            gateway.state AS "gatewayState",segment.state AS "segmentState",
+            segment.aggregate_version::text AS "segmentVersion",
+            allocation.current_revision::text AS "allocationRevision",
+            root.state AS "rootState",root.aggregate_version::text AS "rootVersion",
+            hold.state AS "holdState",hold.fence_epoch::text AS "holdFence",
+            hold.captured_amount::text AS "capturedAmount",
+            hold.released_amount::text AS "releasedAmount",
+            (SELECT count(*)::text FROM platform.credit_usage_settlement settlement
+              WHERE settlement.site_ref=$1 AND settlement.authorization_segment_ref=$2::uuid)
+              AS "usageSettlementCount",
+            (SELECT count(*)::text FROM platform.credit_execution_root_closure_receipt closure
+              WHERE closure.site_ref=$1 AND closure.execution_budget_root_ref=$3::uuid)
+              AS "rootClosureCount",
+            (SELECT count(*)::text FROM platform.credit_execution_root_outcome outcome
+              WHERE outcome.site_ref=$1 AND outcome.source_kind='admission_run'
+                AND outcome.source_ref=$5)
+              AS "rootOutcomeCount",
+            (SELECT count(*)::text FROM platform.admission_verified_terminal_evidence evidence
+              WHERE evidence.site_ref=$1 AND evidence.manifest_ref=$4)
+              AS "verifiedTerminalEvidenceCount"
+       FROM platform.admission_execution_manifest manifest
+       JOIN platform.model_gateway_execution_authorization gateway
+         ON gateway.site_ref=manifest.site_id
+        AND gateway.execution_manifest_ref=manifest.manifest_ref
+       JOIN platform.credit_authorization_segment segment
+         ON segment.site_ref=manifest.site_id
+        AND segment.authorization_segment_ref=manifest.authorization_segment_ref
+       JOIN platform.credit_execution_budget_root root
+         ON root.site_ref=manifest.site_id
+        AND root.execution_budget_root_ref=manifest.execution_budget_root_ref
+       JOIN platform.credit_hold hold
+         ON hold.site_ref=root.site_ref AND hold.credit_hold_ref=root.credit_hold_ref
+       JOIN platform.credit_budget_allocation allocation
+         ON allocation.site_ref=root.site_ref
+        AND allocation.budget_allocation_ref=root.root_allocation_ref
+      WHERE manifest.site_id=$1 AND manifest.authorization_segment_ref=$2::uuid`,
+    [fixture.siteId, fixture.authorizationSegmentRef, fixture.rootRef, fixture.manifestRef,
+      fixture.runRef],
+  );
+  if (result.rows.length !== 1) throw new Error("ADMISSION_TERMINAL_INVENTORY_INVALID");
+  return result.rows[0]!;
 }

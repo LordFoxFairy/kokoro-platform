@@ -289,16 +289,17 @@ export class UsageSettlementService {
     if (context.executionManifestRef !== input.executionManifestRef) {
       return { kind: "invalid_state", code: "CREDIT_USAGE_MANIFEST_MISMATCH" };
     }
-    const [evidenceSet, openAttemptCount, priorClosure, priorSettlement, holdAllocations] = await Promise.all([
-      this.dependencies.repository.loadClosureEvidence(transaction, input),
-      this.dependencies.repository.loadOpenAttemptCount(transaction, input),
-      this.dependencies.repository.loadPriorClosure(transaction, input),
-      this.dependencies.repository.loadPriorSettlement(transaction, input),
-      this.dependencies.repository.loadHoldAllocationsAfterFinancialLock(transaction, {
+    // Every repository read below shares the same transaction-scoped `pg` Client.
+    // Keep them ordered: node-postgres does not support concurrent queries on one Client.
+    const evidenceSet = await this.dependencies.repository.loadClosureEvidence(transaction, input);
+    const openAttemptCount = await this.dependencies.repository.loadOpenAttemptCount(transaction, input);
+    const priorClosure = await this.dependencies.repository.loadPriorClosure(transaction, input);
+    const priorSettlement = await this.dependencies.repository.loadPriorSettlement(transaction, input);
+    const holdAllocations =
+      await this.dependencies.repository.loadHoldAllocationsAfterFinancialLock(transaction, {
         siteId: input.siteId,
         creditHoldRef: context.creditHoldRef,
-      }),
-    ]);
+      });
     if (openAttemptCount !== 0n) {
       return { kind: "invalid_state", code: "CREDIT_USAGE_ATTEMPTS_NOT_FINALIZED" };
     }

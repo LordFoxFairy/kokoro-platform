@@ -50,6 +50,15 @@ epoch before owner SQL. `platform_admission` remains only the trusted transactio
 role name/OID together with the exact `admission.command`, workload kind, and Site transaction context
 in both RLS `USING` and `WITH CHECK`.
 
+The Model Gateway authorization projection is a cross-owner lifecycle seam with an exact column ACL.
+The leased Admission role may insert the projection, select only
+`site_ref`, `execution_manifest_ref`, `state`, and `authorization_handle`, and update only `state` and
+`updated_at`; it has neither table-wide `SELECT`/`UPDATE` nor read access to provider routing columns. Those
+predicate reads are required for the lifecycle owner's Site/manifest/state CAS, and both migration
+postflight and runtime startup verify the complete allowlist with no extra column authority.
+Terminal reconciliation also issues its usage-evidence and prior-closure reads in order because both use
+the same transaction-scoped PostgreSQL client; this owner path must not fan those reads out concurrently.
+
 The native Site owner resolves only an active exact Site, active release, active project, and allowlisted locale; it has no default-Site fallback and does not own GA runtime policy. The native Model owner resolves only an option published by that immutable release. Its admission-only security-definer projection excludes provider account and secret references, preserves the option's declared orchestration primary/fallback order, and chooses a healthy binding deterministically before any effect. Production constructs both adapters itself.
 
 `src/process/admission.ts` is the dedicated secure-listener lifecycle host: database connect/readiness precedes listen, health is no-store, new requests are rejected during drain, active HTTP/2 sessions receive GOAWAY, and server/database shutdown is deadline bounded. Production composition wires the Root-generated Session dispatch-evidence client, native Site/runtime-policy/Model/Capability/Asset/Credit owners, capability publication provider and Asset Eligibility provider. Startup fails closed when any required owner contract, key ring, peer identity or database authority is absent. There is no placeholder owner implementation, browser-header authentication, default Site/runtime policy or dual path.

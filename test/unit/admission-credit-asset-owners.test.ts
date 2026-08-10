@@ -80,6 +80,36 @@ class OwnerSql implements PlatformSqlTransaction {
   async execute(): Promise<number> { throw new Error("not used"); }
 }
 
+class SerializedTerminalReadSql extends OwnerSql {
+  readonly terminalReadOrder: string[] = [];
+  activeTerminalReads = 0;
+  maximumActiveTerminalReads = 0;
+
+  override async query<Row extends Record<string, unknown>>(
+    statement: string,
+    values: readonly unknown[] = [],
+  ): Promise<readonly Row[]> {
+    const terminalRead = statement.includes("credit_attempt_usage_evidence")
+      ? "usage_evidence"
+      : statement.includes("credit_usage_segment_closure")
+        ? "prior_closure"
+        : undefined;
+    if (terminalRead === undefined) return super.query<Row>(statement, values);
+    this.terminalReadOrder.push(terminalRead);
+    this.activeTerminalReads += 1;
+    this.maximumActiveTerminalReads = Math.max(
+      this.maximumActiveTerminalReads,
+      this.activeTerminalReads,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    try {
+      return await super.query<Row>(statement, values);
+    } finally {
+      this.activeTerminalReads -= 1;
+    }
+  }
+}
+
 function fakeCredit(): RunBudgetAuthority {
   return {
     reserveRootBudget: vi.fn(async () => ({
@@ -164,7 +194,8 @@ describe("native Admission Credit and Asset owners", () => {
   });
 
   it("delegates authorization CAS and terminal rating to the canonical Credit owners", async () => {
-    const lease = issuePlatformTransaction(new OwnerSql());
+    const sql = new OwnerSql();
+    const lease = issuePlatformTransaction(sql);
     const credit = fakeCredit();
     const usageSettlement = { settleUsageSegment: vi.fn(async () => ({
       kind: "accepted" as const,
@@ -233,6 +264,38 @@ describe("native Admission Credit and Asset owners", () => {
           kind: "direct_root", authorizationSegmentVersion: 4n, reservedCeiling: 100000n,
         }),
       }));
+      expect(sql.calls.find(({ statement }) =>
+        statement.includes("record_admission_verified_terminal_evidence"))?.statement)
+        .toContain(')::text AS "recorded"');
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("serializes terminal reconciliation reads on the transaction-scoped SQL client", async () => {
+    const sql = new SerializedTerminalReadSql();
+    const lease = issuePlatformTransaction(sql);
+    const credit = fakeCredit();
+    const owner = new PostgresAdmissionBudgetOwner({
+      runBudget: credit,
+      usageSettlement: {
+        settleUsageSegment: vi.fn(async () => ({
+          kind: "invalid_state" as const,
+          code: "CREDIT_USAGE_ATTEMPTS_NOT_FINALIZED",
+        })),
+      },
+      executionRootClosure: fakeRootClosure(),
+    });
+    try {
+      await expect(owner.reconcileRoot(lease.transaction, {
+        siteId: "site-a", rootHoldRef: "hold-a", authorizationSegmentRef: "segment-a",
+        manifestRef: "manifest-a", expectedSegmentVersion: 1n, commandId: "command-a",
+        requestDigest: "d".repeat(64), terminalEvidenceRef: "terminal-a",
+        terminalEvidenceDigest: "e".repeat(64), terminalOutcome: "completed",
+        sessionId: "session-a", launchId: "launch-a", runId: "run-a",
+      })).resolves.toEqual({ kind: "reconciliation_required", segmentVersion: 2n });
+      expect(sql.terminalReadOrder).toEqual(["usage_evidence", "prior_closure"]);
+      expect(sql.maximumActiveTerminalReads).toBe(1);
     } finally {
       revokePlatformTransaction(lease);
     }

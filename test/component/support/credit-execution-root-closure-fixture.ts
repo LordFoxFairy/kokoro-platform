@@ -50,6 +50,9 @@ export type CreditRootClosureFixture = Readonly<{
   terminalEvidenceRef: string;
   terminalEvidenceDigest: string;
   businessOperationKey: string;
+  configurationRevisionRef: string;
+  bindingRef: string;
+  modelAuthorizationHandle: string;
   capturedAmount: bigint;
   allocationCapturedAmount: bigint;
 }>;
@@ -119,6 +122,8 @@ export function creditRootClosureFixture(input: Readonly<{
   allocationCapturedAmount?: bigint;
 }>): CreditRootClosureFixture {
   const suffix = randomUUID();
+  const modelAuthorizationHandle =
+    `model-authorization:sha256:${digest(`model-authorization:${suffix}`)}`;
   return Object.freeze({
     siteId: `credit-root-close-${suffix}`,
     billingAccountId: `billing-root-close-${suffix}`,
@@ -146,6 +151,9 @@ export function creditRootClosureFixture(input: Readonly<{
     terminalEvidenceRef: `terminal-root-close-${suffix}`,
     terminalEvidenceDigest: createHash("sha256").update(`terminal:${suffix}`).digest("hex"),
     businessOperationKey: `close-root-${suffix}`,
+    configurationRevisionRef: `release-root-close-${suffix}`,
+    bindingRef: `binding-root-close-${suffix}`,
+    modelAuthorizationHandle,
     capturedAmount: input.capturedAmount,
     allocationCapturedAmount: input.allocationCapturedAmount ?? input.capturedAmount,
   });
@@ -283,7 +291,10 @@ export async function executeCreditRootClosure(
 export async function seedCreditRootClosure(
   client: Client,
   fixture: CreditRootClosureFixture,
-  options: Readonly<{ usageState?: "committed" | "settled" }> = {},
+  options: Readonly<{
+    usageState?: "committed" | "settled";
+    admissionLifecycle?: Readonly<{ gatewayState: "active" | "expired" }>;
+  }> = {},
 ): Promise<void> {
   const usageState = options.usageState ?? "settled";
   const scopePolicy = Object.freeze({
@@ -337,6 +348,36 @@ export async function seedCreditRootClosure(
   try {
     await client.query("SELECT set_config('app.site_id',$1,true)", [fixture.siteId]);
     await client.query("SET CONSTRAINTS ALL DEFERRED");
+    if (options.admissionLifecycle !== undefined) {
+      await client.query(
+        `INSERT INTO platform.site
+         (site_ref,site_key,state,active_release_ref)
+         VALUES ($1,$2,'active',$3)`,
+        [fixture.siteId, `root-close-${fixture.siteId.slice(-24).replaceAll("-", "")}`,
+          fixture.configurationRevisionRef],
+      );
+      await client.query(
+        `INSERT INTO platform.site_release
+         (release_ref,site_ref,state,web_artifact_digest,release_manifest_digest,
+          certification_digest,launch_profile_ref,site_config_revision_ref,legal_revision_ref,
+          feature_policy_revision,model_option_catalog_ref,agent_catalog_ref,identity_issuer_label,
+          identity_auth_strength_policy_revision,enabled_surface_ids,locale_policy)
+         VALUES ($1,$2,'active',$3,$3,$3,'launch-profile-component','site-config-component',
+                 'legal-component','feature-component','model-catalog-component',
+                 'agent-catalog-component','issuer-component','auth-strength-component',
+                 '[]'::jsonb,'{}'::jsonb)`,
+        [fixture.configurationRevisionRef, fixture.siteId, digest(`site-release:${fixture.siteId}`)],
+      );
+      await client.query(
+        `INSERT INTO platform.admission_session_execution_binding
+         (site_id,session_id,binding_ref,namespace,thread_id,capability_snapshot_ref,
+          configuration_revision_id,binding_digest)
+         VALUES ($1,$2,$3,$4,$5,'capability-component',$6,$7)`,
+        [fixture.siteId, fixture.sessionRef, fixture.bindingRef,
+          `namespace-${fixture.siteId}`, `thread-${fixture.siteId}`,
+          fixture.configurationRevisionRef, digest(`binding:${fixture.siteId}`)],
+      );
+    }
     await client.query(
       `INSERT INTO platform.authorization_site
        (site_ref,state,security_epoch,policy_epoch,revocation_epoch)
@@ -482,6 +523,36 @@ export async function seedCreditRootClosure(
         usageState === "settled" ? "4" : "2", usageState === "settled" ? "4" : "2",
         now, usageState === "settled" ? now : null],
     );
+    if (options.admissionLifecycle !== undefined) {
+      const manifestDigest = digest(`manifest:${fixture.siteId}`);
+      await client.query(
+        `INSERT INTO platform.admission_execution_manifest
+         (site_id,manifest_ref,manifest_digest,session_id,launch_id,run_id,command_id,
+          request_digest,trigger_message_id,binding_ref,model_option_revision_ref,resolved_runtime,
+          execution_budget_root_ref,root_hold_ref,authorization_segment_ref,segment_version,
+          expires_at,maximum_expires_at,capability_snapshot_ref,configuration_revision_id,
+          attachment_refs,state)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'message-component',$9,'model-option-component',
+                 $10::jsonb,$11::uuid,$12::uuid,$13::uuid,2,
+                 '2026-08-27T13:00:00.000Z','2026-08-27T13:00:00.000Z',
+                 'capability-component',$14,'[]'::jsonb,'committed')`,
+        [fixture.siteId, fixture.manifestRef, manifestDigest, fixture.sessionRef,
+          fixture.launchRef, fixture.runRef, `prepare-${fixture.runRef}`,
+          digest(`prepare:${fixture.siteId}`), fixture.bindingRef,
+          JSON.stringify({ model: { authorization_handle: fixture.modelAuthorizationHandle } }),
+          fixture.rootRef, fixture.holdRef, fixture.authorizationSegmentRef,
+          fixture.configurationRevisionRef],
+      );
+      await client.query(
+        `INSERT INTO platform.model_gateway_execution_authorization
+         (authorization_handle,site_ref,execution_manifest_ref,authorization_segment_ref,
+          gateway_model,provider_model,adapter_kind,expires_at,state)
+         VALUES ($1,$2,$3,$4::uuid,'chat-component','provider-component','direct',
+                 '2026-08-27T13:00:00.000Z',$5)`,
+        [fixture.modelAuthorizationHandle, fixture.siteId, fixture.manifestRef,
+          fixture.authorizationSegmentRef, options.admissionLifecycle.gatewayState],
+      );
+    }
     await client.query(
       `INSERT INTO platform.credit_usage_attempt_intent
        (attempt_authorization_ref,site_ref,execution_budget_root_ref,budget_allocation_ref,

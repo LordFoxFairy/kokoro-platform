@@ -4,6 +4,8 @@ import {
   ADMIN_INSERT_RELATIONS,
   ADMIN_UPDATE_RELATIONS,
   ADMISSION_INSERT_RELATIONS,
+  ADMISSION_MODEL_GATEWAY_SELECT_COLUMNS,
+  ADMISSION_MODEL_GATEWAY_UPDATE_COLUMNS,
   ADMISSION_RELATIONS,
   ADMISSION_UPDATE_RELATIONS,
   CREDIT_USAGE_RELATIONS,
@@ -36,6 +38,9 @@ describe("PostgreSQL runtime relation authority contract", () => {
       expect(implementation).toContain("SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS_SQL");
       expect(implementation).toContain("SITE_PUBLICATION_ADMISSION_INSERT_RELATIONS_SQL");
       expect(implementation).toContain("SITE_PUBLICATION_ADMISSION_UPDATE_RELATIONS_SQL");
+      expect(implementation).toContain("ADMISSION_MODEL_GATEWAY_SELECT_COLUMNS_SQL");
+      expect(implementation).toContain("ADMISSION_MODEL_GATEWAY_UPDATE_COLUMNS_SQL");
+      expect(implementation).toContain('AS "admissionModelGatewayAuthorityExact"');
     }
   });
 
@@ -52,6 +57,13 @@ describe("PostgreSQL runtime relation authority contract", () => {
   });
 
   it("gives Admission only the relations needed by the machine Evidence authority", () => {
+    expect(ADMISSION_MODEL_GATEWAY_SELECT_COLUMNS).toEqual([
+      "site_ref",
+      "execution_manifest_ref",
+      "state",
+      "authorization_handle",
+    ]);
+    expect(ADMISSION_MODEL_GATEWAY_UPDATE_COLUMNS).toEqual(["state", "updated_at"]);
     expect(SITE_PUBLICATION_ADMISSION_SELECT_RELATIONS).toEqual([
       "command_receipt",
       "site_project_binding",
