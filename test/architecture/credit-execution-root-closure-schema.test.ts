@@ -1,11 +1,18 @@
-import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile, readdir } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import {
+  ADMISSION_INSERT_RELATIONS,
+  ADMISSION_SELECT_RELATIONS,
+  ADMISSION_UPDATE_RELATIONS,
+} from "../../src/infrastructure/postgres/runtime-relation-authority.js";
 
 const migrationPath = "prisma/migrations/20260812_credit_execution_root_closure/migration.sql";
 const admissionAuthorityMigrationPath =
   "prisma/migrations/20260822_admission_execution_root_role_authority/migration.sql";
 const closureTransitionFixMigrationPath =
   "prisma/migrations/20260827_credit_execution_root_closure_transition_fix/migration.sql";
+const usageCorrectionMigration = "20260828_credit_usage_correction_net_authority";
 
 describe("Credit execution root closure schema", () => {
   it("persists one recoverable Admission lease transition and fences every transaction epoch", async () => {
@@ -303,5 +310,65 @@ describe("Credit execution root closure schema", () => {
     expect(migration).toContain("CURRENT_USER IS DISTINCT FROM relation_owner");
     expect(migration.match(/FROM pg_catalog\.pg_class relation WHERE relation\.oid=TG_RELID/gu))
       .toHaveLength(2);
+  });
+
+  it("advances corrected Usage as a signed net capture without weakening terminal closure", async () => {
+    const [migrations, immutableSources, client, migrator] = await Promise.all([
+      readdir("prisma/migrations"),
+      Promise.all([
+        "prisma/migrations/20260729_wave_2a_commerce_core/migration.sql",
+        "prisma/migrations/20260801_credit_usage_settlement/migration.sql",
+        "prisma/migrations/20260812_credit_execution_root_closure/migration.sql",
+        closureTransitionFixMigrationPath,
+      ].map(async (path) => readFile(path))),
+      readFile("src/infrastructure/postgres/client.ts", "utf8"),
+      readFile("src/infrastructure/postgres/migrator.ts", "utf8"),
+    ]);
+    expect(immutableSources.map((source) => createHash("sha256").update(source).digest("hex")))
+      .toEqual([
+        "9b7185619519229bf58ea136f938f0bfbbe47c928c3852666de0798d6038eec6",
+        "cf56feac589b45d4cbb549d107156e15b6bcfa867628e53b60f9a056d8d6322c",
+        "08fdb51babecb21e59dda1ee2f0db2f4f957f398e8c512558c3af1739df67d1e",
+        "346a04ab4142f7b0bd42d5519428acadce95c422d8966c46f726bdce0a56fa91",
+      ]);
+    expect(migrations).toContain(usageCorrectionMigration);
+    expect(ADMISSION_SELECT_RELATIONS).toContain("credit_hold_allocation");
+    expect(ADMISSION_INSERT_RELATIONS).toContain("credit_hold_allocation");
+    expect(ADMISSION_UPDATE_RELATIONS).not.toContain("credit_hold_allocation");
+    for (const healthAuthority of [client, migrator]) {
+      expect(healthAuthority).toContain(
+        "has_table_privilege(runtime_role.rolname, candidate.oid, 'UPDATE')",
+      );
+      expect(healthAuthority).toContain(
+        "has_any_column_privilege(runtime_role.rolname, candidate.oid, 'UPDATE')",
+      );
+    }
+    if (!migrations.includes(usageCorrectionMigration)) return;
+    const migration = await readFile(
+      `prisma/migrations/${usageCorrectionMigration}/migration.sql`,
+      "utf8",
+    );
+    for (const routine of [
+      "advance_credit_budget_allocation_revision",
+      "guard_credit_hold_transition",
+      "assert_credit_journal_cross_fact_conservation",
+    ]) {
+      expect(migration).toContain(`CREATE OR REPLACE FUNCTION platform.${routine}()`);
+      expect(migration).toContain(`REVOKE ALL ON FUNCTION platform.${routine}() FROM PUBLIC`);
+    }
+    expect(migration).toContain("NEW.captured_cumulative<prior.captured_cumulative");
+    expect(migration).toContain("prior.state NOT IN ('active','reconciliation_required')");
+    expect(migration).toContain("NEW.unassigned_stock-prior.unassigned_stock");
+    expect(migration).toContain("prior.captured_cumulative-NEW.captured_cumulative");
+    expect(migration).toContain("NEW.active_child_reserved_stock<>prior.active_child_reserved_stock");
+    expect(migration).toContain("NEW.committed_stock<>prior.committed_stock");
+    expect(migration).toContain("NEW.returned_to_parent_cumulative<>prior.returned_to_parent_cumulative");
+    expect(migration).toContain("NEW.state<>prior.state");
+    expect(migration).toContain("NEW.allocation_epoch<>head_epoch");
+    expect(migration).toContain("CASE entry.entry_side WHEN 'credit' THEN entry.amount ELSE -entry.amount END");
+    expect(migration).toContain("transaction.operation_kind IN ('hold_capture','correction')");
+    expect(migration).toContain("current_setting('app.credit_execution_root_closure_transition',true)");
+    expect(migration).toContain("CURRENT_USER=SESSION_USER");
+    expect(migration).toContain("CURRENT_USER IS DISTINCT FROM relation_owner");
   });
 });

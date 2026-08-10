@@ -2,6 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { Client } from "pg";
 import { creditJournalEntriesDigest } from
   "../../../src/modules/credit/domain/journal-digest.js";
+import type { AttemptUsageEvidence } from
+  "../../../src/modules/credit/domain/usage-rating.js";
+import { UsageSettlementService } from
+  "../../../src/modules/credit/application/usage-settlement-service.js";
+import { PostgresUsageSettlementRepository } from
+  "../../../src/modules/credit/infrastructure/postgres/usage-settlement-repository.js";
 import {
   deriveExecutionRootClosureRequestDigest,
   ExecutionRootClosureService,
@@ -64,6 +70,50 @@ export type CreditRootClosureInventory = Readonly<{
   releaseJournalCount: string;
 }>;
 
+export type CreditUsageRevisionFixture = Readonly<{
+  evidenceRef: string;
+  revision: bigint;
+  correctionOfEvidenceRef: string | null;
+  amount: bigint;
+  evidence: AttemptUsageEvidence;
+  finalizeBusinessOperationKey: string;
+  finalizeRequestDigest: string;
+  closureRef: string;
+  closureRevision: bigint;
+  correctionOfClosureRef: string | null;
+  settlementBusinessOperationKey: string;
+  settlementRequestDigest: string;
+  closureDigest: string;
+  closedAt: string;
+}>;
+
+export type CreditUsageCorrectionInventory = Readonly<{
+  allocationRevision: string;
+  allocationEpoch: string;
+  creditCeiling: string;
+  unassignedStock: string;
+  activeChildReservedStock: string;
+  committedStock: string;
+  capturedCumulative: string;
+  returnedToParentCumulative: string;
+  allocationState: string;
+  allocationRevisionCount: string;
+  rootState: string;
+  rootVersion: string;
+  holdState: string;
+  holdFence: string;
+  capturedAmount: string;
+  releasedAmount: string;
+  signedCustomerConsumed: string;
+  usageJournalCount: string;
+  correctionJournalCount: string;
+  settlementCount: string;
+  settlementJournalCount: string;
+  settlementSourceCount: string;
+  evidenceCount: string;
+  settleReceiptCount: string;
+}>;
+
 export function creditRootClosureFixture(input: Readonly<{
   capturedAmount: bigint;
   allocationCapturedAmount?: bigint;
@@ -101,10 +151,64 @@ export function creditRootClosureFixture(input: Readonly<{
   });
 }
 
+export function creditUsageRevisionFixture(
+  fixture: CreditRootClosureFixture,
+  input: Readonly<{
+    revision: bigint;
+    correctionOfEvidenceRef: string | null;
+    amount: bigint;
+    closureRevision: bigint;
+    correctionOfClosureRef: string | null;
+    evidenceRef?: string;
+    closureRef?: string;
+  }>,
+): CreditUsageRevisionFixture {
+  const evidenceRef = input.evidenceRef ?? randomUUID();
+  const closureRef = input.closureRef ?? randomUUID();
+  const evidence = creditUsageEvidence(fixture, {
+    evidenceRef,
+    revision: input.revision,
+    correctionOfEvidenceRef: input.correctionOfEvidenceRef,
+    amount: input.amount,
+  }).evidence;
+  return Object.freeze({
+    evidenceRef,
+    revision: input.revision,
+    correctionOfEvidenceRef: input.correctionOfEvidenceRef,
+    amount: input.amount,
+    evidence,
+    finalizeBusinessOperationKey: `finalize-${fixture.attemptAuthorizationRef}-${input.revision}`,
+    finalizeRequestDigest: digest(`finalize:${fixture.siteId}:${input.revision}:${input.amount}`),
+    closureRef,
+    closureRevision: input.closureRevision,
+    correctionOfClosureRef: input.correctionOfClosureRef,
+    settlementBusinessOperationKey: `settle-${fixture.authorizationSegmentRef}-${input.closureRevision}`,
+    settlementRequestDigest: digest(
+      `settle:${fixture.siteId}:${input.closureRevision}:${input.amount}`,
+    ),
+    closureDigest: digest(`closure:${fixture.siteId}:${input.closureRevision}:${input.amount}`),
+    closedAt: new Date(Date.UTC(2026, 7, 27, 12, Number(input.closureRevision), 0)).toISOString(),
+  });
+}
+
 export function creditRootClosureRequest(
   fixture: CreditRootClosureFixture,
-  overrides: Readonly<{ rootAllocationRevision?: bigint }> = {},
+  overrides: Readonly<{
+    rootAllocationRevision?: bigint;
+    settlement?: Readonly<{
+      settlementRef: string;
+      closureRef: string;
+      closureRevision: bigint;
+      customerAmount: bigint;
+    }>;
+  }> = {},
 ): ExecutionRootClosureRequest {
+  const settlement = overrides.settlement ?? Object.freeze({
+    settlementRef: fixture.settlementRef,
+    closureRef: fixture.closureRef,
+    closureRevision: 1n,
+    customerAmount: fixture.capturedAmount,
+  });
   const ownerProof = verifyAdmissionExecutionRootOwnerProof({
     sourceRef: fixture.runRef,
     terminalEvidenceRef: fixture.terminalEvidenceRef,
@@ -131,12 +235,12 @@ export function creditRootClosureRequest(
       unit: "credit_micros",
     }),
     settlement: Object.freeze({
-      settlementRef: fixture.settlementRef,
+      settlementRef: settlement.settlementRef,
       authorizationSegmentRef: fixture.authorizationSegmentRef,
-      closureRef: fixture.closureRef,
-      closureRevision: 1n,
+      closureRef: settlement.closureRef,
+      closureRevision: settlement.closureRevision,
       state: "settled" as const,
-      customerAmount: fixture.capturedAmount,
+      customerAmount: settlement.customerAmount,
       platformExposureAmount: 0n,
     }),
     businessOperationKey: fixture.businessOperationKey,
@@ -179,7 +283,9 @@ export async function executeCreditRootClosure(
 export async function seedCreditRootClosure(
   client: Client,
   fixture: CreditRootClosureFixture,
+  options: Readonly<{ usageState?: "committed" | "settled" }> = {},
 ): Promise<void> {
+  const usageState = options.usageState ?? "settled";
   const scopePolicy = Object.freeze({
     version: 1,
     surfaceRefs: ["chat"],
@@ -200,6 +306,33 @@ export async function seedCreditRootClosure(
     [1, "credit", "customer_consumed", fixture.capturedAmount, fixture.holdRef],
   ]);
   const now = "2026-08-27T11:59:00.000Z";
+  const ratingPolicy = Object.freeze({
+    ratingPolicyRevisionRef: fixture.ratingPolicyRevisionRef,
+    customerUnit: "credit_micros",
+    chargeableAttemptOutcomes: Object.freeze(["succeeded"]),
+    minimumAmount: 0n,
+    rules: Object.freeze([Object.freeze({
+      dimensionKey: "tokens",
+      sourceUnit: "token",
+      quantum: 1n,
+      amountPerQuantum: 1n,
+      required: true,
+    })]),
+  });
+  const ratingPolicyJson = canonical(ratingPolicy);
+  const maximumDimensions = Object.freeze([Object.freeze({
+    dimensionKey: "tokens",
+    sourceUnit: "token",
+    quantity: 100n,
+  })]);
+  const maximumDimensionsJson = canonical(maximumDimensions);
+  const initialEvidence = creditUsageEvidence(fixture, {
+    evidenceRef: fixture.evidenceRef,
+    revision: 1n,
+    correctionOfEvidenceRef: null,
+    amount: fixture.capturedAmount,
+  });
+  const initialEvidenceJson = canonical(initialEvidence.evidence);
   await client.query("BEGIN");
   try {
     await client.query("SELECT set_config('app.site_id',$1,true)", [fixture.siteId]);
@@ -234,9 +367,9 @@ export async function seedCreditRootClosure(
     await client.query(
       `INSERT INTO platform.credit_rating_policy_revision
        (rating_policy_revision_ref,site_ref,unit,policy,policy_digest,state,published_at)
-       VALUES ($1,$2,'credit_micros','{}'::jsonb,$3,'published',$4::timestamptz)`,
+       VALUES ($1,$2,'credit_micros',$3::jsonb,$4,'published',$5::timestamptz)`,
       [fixture.ratingPolicyRevisionRef, fixture.siteId,
-        createHash("sha256").update(`rating:${fixture.siteId}`).digest("hex"), now],
+        ratingPolicyJson, digest(ratingPolicyJson), now],
     );
     await insertRootClosureJournal(client, fixture, {
       journalRef: fixture.issuanceJournalRef,
@@ -267,7 +400,8 @@ export async function seedCreditRootClosure(
        VALUES ($1::uuid,$2::uuid,$3,$4,'credit_micros',100,100,$5::numeric,'open',$6::bigint,
                '2026-08-27T13:00:00.000Z',$7::timestamptz,$7::timestamptz)`,
       [fixture.holdRef, fixture.creditAccountRef, fixture.siteId, fixture.runRef,
-        fixture.capturedAmount.toString(), fixture.capturedAmount === 0n ? "1" : "2", now],
+        usageState === "settled" ? fixture.capturedAmount.toString() : "0",
+        usageState === "settled" && fixture.capturedAmount > 0n ? "2" : "1", now],
     );
     await insertRootClosureJournal(client, fixture, {
       journalRef: fixture.reserveJournalRef,
@@ -304,12 +438,17 @@ export async function seedCreditRootClosure(
       [fixture.allocationRef, fixture.rootRef, fixture.siteId, fixture.billingAccountId,
         fixture.creditAccountRef],
     );
-    for (const revision of [
+    const allocationRevisions = [
       { revision: 1n, unassigned: 100n, committed: 0n, captured: 0n },
       { revision: 2n, unassigned: 0n, committed: 100n, captured: 0n },
-      { revision: 3n, unassigned: 100n - fixture.allocationCapturedAmount, committed: 0n,
-        captured: fixture.allocationCapturedAmount },
-    ] as const) {
+      ...(usageState === "settled" ? [{
+        revision: 3n,
+        unassigned: 100n - fixture.allocationCapturedAmount,
+        committed: 0n,
+        captured: fixture.allocationCapturedAmount,
+      }] : []),
+    ] as const;
+    for (const revision of allocationRevisions) {
       await client.query(
         `INSERT INTO platform.credit_budget_allocation_revision
          (allocation_revision_ref,budget_allocation_ref,execution_budget_root_ref,site_ref,
@@ -332,13 +471,16 @@ export async function seedCreditRootClosure(
         committed_from_allocation_revision,committed_to_allocation_revision,state,resolution_kind,
         resolution_ref,fence_epoch,aggregate_version,expires_at,committed_at,settled_at,created_at,updated_at)
        VALUES ($1::uuid,$2,$3::uuid,$4::uuid,$5::uuid,$6,$7::uuid,'credit_micros',
-               'merchant-component',$8,$9,$10,$11,100,1,1,1,2,'settled','rated',$12,4,4,
-               '2026-08-27T13:00:00.000Z',$13::timestamptz,$13::timestamptz,$13::timestamptz,$13::timestamptz)`,
+               'merchant-component',$8,$9,$10,$11,100,1,1,1,2,$12,$13,$14::uuid,$15::bigint,$16::bigint,
+               '2026-08-27T13:00:00.000Z',$17::timestamptz,$18::timestamptz,$17::timestamptz,$17::timestamptz)`,
       [fixture.authorizationSegmentRef, fixture.siteId, fixture.rootRef, fixture.allocationRef,
         fixture.holdRef, fixture.billingAccountId, fixture.creditAccountRef, fixture.manifestRef,
         fixture.ratingPolicyRevisionRef, `segment-${fixture.authorizationSegmentRef}`,
-        createHash("sha256").update(`segment:${fixture.siteId}`).digest("hex"), fixture.settlementRef,
-        now],
+        createHash("sha256").update(`segment:${fixture.siteId}`).digest("hex"), usageState,
+        usageState === "settled" ? "rated" : null,
+        usageState === "settled" ? fixture.settlementRef : null,
+        usageState === "settled" ? "4" : "2", usageState === "settled" ? "4" : "2",
+        now, usageState === "settled" ? now : null],
     );
     await client.query(
       `INSERT INTO platform.credit_usage_attempt_intent
@@ -348,31 +490,42 @@ export async function seedCreditRootClosure(
         maximum_dimensions,maximum_dimensions_digest,maximum_amount,provisional_customer_amount,
         state,fence_epoch,owner_evidence_ref,committed_at,updated_at)
        VALUES ($1::uuid,$2,$3::uuid,$4::uuid,$5::uuid,$6::uuid,$7::uuid,'credit_micros',$8,
-               'model_gateway',$9,1,$10,$11,'["tokens"]'::jsonb,$12,100,$13::numeric,
-               'finalized',2,$14,$15::timestamptz,$15::timestamptz)`,
+               'model_gateway',$9,1,$10,$11,$12::jsonb,$13,100,$14::numeric,
+               'finalized',2,$15,$16::timestamptz,$16::timestamptz)`,
       [fixture.attemptAuthorizationRef, fixture.siteId, fixture.rootRef, fixture.allocationRef,
         fixture.authorizationSegmentRef, fixture.holdRef, fixture.creditAccountRef, fixture.manifestRef,
         `producer-${fixture.siteId}`, fixture.attemptRef, `effect-${fixture.siteId}`,
-        createHash("sha256").update("[\"tokens\"]").digest("hex"),
-        fixture.capturedAmount.toString(), fixture.evidenceRef, now],
+        maximumDimensionsJson, digest(maximumDimensionsJson), fixture.capturedAmount.toString(),
+        fixture.evidenceRef, now],
     );
     await client.query(
       `INSERT INTO platform.credit_attempt_usage_evidence
        (evidence_ref,attempt_authorization_ref,site_ref,execution_budget_root_ref,budget_allocation_ref,
         authorization_segment_ref,credit_hold_ref,credit_account_ref,unit,execution_manifest_ref,
         producer_kind,producer_context,producer_generation,attempt_ref,logical_effect_ref,revision,
-        evidence_kind,attempt_outcome,source_digest,evidence,evidence_digest,occurred_at,observed_at)
+        correction_of_evidence_ref,evidence_kind,attempt_outcome,source_digest,evidence,evidence_digest,
+        occurred_at,observed_at)
        VALUES ($1::uuid,$2::uuid,$3,$4::uuid,$5::uuid,$6::uuid,$7::uuid,$8::uuid,
-               'credit_micros',$9,'model_gateway',$10,1,$11,$12,1,$13,'succeeded',$14,
-               '{}'::jsonb,$15,$16::timestamptz,$16::timestamptz)`,
+               'credit_micros',$9,'model_gateway',$10,1,$11,$12,1,NULL,$13,'succeeded',$14,
+               $15::jsonb,$16,$17::timestamptz,$17::timestamptz)`,
       [fixture.evidenceRef, fixture.attemptAuthorizationRef, fixture.siteId, fixture.rootRef,
         fixture.allocationRef, fixture.authorizationSegmentRef, fixture.holdRef,
         fixture.creditAccountRef, fixture.manifestRef, `producer-${fixture.siteId}`,
         fixture.attemptRef, `effect-${fixture.siteId}`,
-        fixture.capturedAmount === 0n ? "zero" : "measured",
-        createHash("sha256").update(`source:${fixture.siteId}`).digest("hex"),
-        createHash("sha256").update(`evidence:${fixture.siteId}`).digest("hex"), now],
+        initialEvidence.evidence.evidenceKind, initialEvidence.evidence.sourceDigest,
+        initialEvidenceJson, digest(initialEvidenceJson), now],
     );
+    const initialEvidenceReceipt = canonical({ evidenceRef: fixture.evidenceRef, revision: 1n });
+    await client.query(
+      `INSERT INTO platform.credit_usage_command_receipt
+       (receipt_ref,site_ref,operation_kind,business_operation_key,request_digest,outcome_kind,
+        result,result_digest,completed_at)
+       VALUES ($1::uuid,$2,'finalize_attempt',$3,$4,'accepted',$5::jsonb,$6,$7::timestamptz)`,
+      [randomUUID(), fixture.siteId, `finalize-${fixture.attemptAuthorizationRef}-1`,
+        digest(`finalize:${fixture.siteId}:1:${fixture.capturedAmount}`), initialEvidenceReceipt,
+        digest(initialEvidenceReceipt), now],
+    );
+    if (usageState === "settled") {
     await client.query(
       `INSERT INTO platform.credit_usage_segment_closure
        (closure_ref,site_ref,execution_budget_root_ref,budget_allocation_ref,
@@ -394,10 +547,9 @@ export async function seedCreditRootClosure(
       `INSERT INTO platform.credit_rating_snapshot
        (rating_snapshot_ref,site_ref,authorization_segment_ref,rating_policy_revision_ref,
         unit,snapshot,snapshot_digest,created_at)
-       VALUES ($1::uuid,$2,$3::uuid,$4,'credit_micros','{}'::jsonb,$5,$6::timestamptz)`,
+       VALUES ($1::uuid,$2,$3::uuid,$4,'credit_micros',$5::jsonb,$6,$7::timestamptz)`,
       [fixture.ratingSnapshotRef, fixture.siteId, fixture.authorizationSegmentRef,
-        fixture.ratingPolicyRevisionRef,
-        createHash("sha256").update(`snapshot:${fixture.siteId}`).digest("hex"), now],
+        fixture.ratingPolicyRevisionRef, ratingPolicyJson, digest(ratingPolicyJson), now],
     );
     if (fixture.captureJournalRef !== null) {
       await insertRootClosureJournal(client, fixture, {
@@ -432,11 +584,192 @@ export async function seedCreditRootClosure(
           fixture.capturedAmount.toString()],
       );
     }
+    }
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
     throw error;
   }
+}
+
+export async function finalizeCreditUsageRevision(
+  modelGateway: Client,
+  fixture: CreditRootClosureFixture,
+  revision: CreditUsageRevisionFixture,
+  expectedFenceEpoch: bigint,
+) {
+  return creditTransaction(modelGateway, fixture.siteId, false, async (transaction) =>
+    new UsageSettlementService({
+      repository: new PostgresUsageSettlementRepository(),
+      clock: () => new Date(revision.closedAt),
+    }).finalizeAttempt(transaction, Object.freeze({
+      siteId: fixture.siteId,
+      attemptAuthorizationRef: fixture.attemptAuthorizationRef,
+      expectedFenceEpoch,
+      evidenceRef: revision.evidenceRef,
+      businessOperationKey: revision.finalizeBusinessOperationKey,
+      requestDigest: revision.finalizeRequestDigest,
+      evidence: revision.evidence,
+    })),
+  );
+}
+
+export async function settleCreditUsageRevision(
+  settlementOwner: Client,
+  fixture: CreditRootClosureFixture,
+  revision: CreditUsageRevisionFixture,
+) {
+  return creditTransaction(settlementOwner, fixture.siteId, true, async (transaction) =>
+    new UsageSettlementService({
+      repository: new PostgresUsageSettlementRepository(),
+      clock: () => new Date(revision.closedAt),
+    }).settleUsageSegment(transaction, Object.freeze({
+      siteId: fixture.siteId,
+      authorizationSegmentRef: fixture.authorizationSegmentRef,
+      executionManifestRef: fixture.manifestRef,
+      closureRef: revision.closureRef,
+      closureRevision: revision.closureRevision,
+      correctionOfClosureRef: revision.correctionOfClosureRef,
+      evidenceRefs: Object.freeze([revision.evidenceRef]),
+      businessOperationKey: revision.settlementBusinessOperationKey,
+      requestDigest: revision.settlementRequestDigest,
+      closureDigest: revision.closureDigest,
+      closedAt: revision.closedAt,
+    })),
+  );
+}
+
+export async function readCreditUsageCorrectionInventory(
+  client: Client,
+  fixture: CreditRootClosureFixture,
+): Promise<CreditUsageCorrectionInventory> {
+  await client.query("BEGIN");
+  try {
+    await client.query("SELECT set_config('app.site_id',$1,true)", [fixture.siteId]);
+    const result = await client.query<CreditUsageCorrectionInventory>(
+      `SELECT allocation.current_revision::text AS "allocationRevision",
+              allocation.current_allocation_epoch::text AS "allocationEpoch",
+              revision.credit_ceiling::text AS "creditCeiling",
+              revision.unassigned_stock::text AS "unassignedStock",
+              revision.active_child_reserved_stock::text AS "activeChildReservedStock",
+              revision.committed_stock::text AS "committedStock",
+              revision.captured_cumulative::text AS "capturedCumulative",
+              revision.returned_to_parent_cumulative::text AS "returnedToParentCumulative",
+              revision.state AS "allocationState",
+              (SELECT count(*)::text FROM platform.credit_budget_allocation_revision history
+                WHERE history.site_ref=$1 AND history.budget_allocation_ref=$2::uuid)
+                AS "allocationRevisionCount",
+              root.state AS "rootState",root.aggregate_version::text AS "rootVersion",
+              hold.state AS "holdState",hold.fence_epoch::text AS "holdFence",
+              hold.captured_amount::text AS "capturedAmount",
+              hold.released_amount::text AS "releasedAmount",
+              COALESCE((SELECT sum(CASE entry.entry_side WHEN 'credit' THEN entry.amount ELSE -entry.amount END)::text
+                FROM platform.credit_journal_entry entry
+               WHERE entry.site_ref=$1 AND entry.credit_hold_ref=$3::uuid
+                 AND entry.account_type='customer_consumed'),'0') AS "signedCustomerConsumed",
+              (SELECT count(DISTINCT transaction.journal_transaction_ref)::text
+                 FROM platform.credit_journal_transaction transaction
+                 JOIN platform.credit_journal_entry entry
+                   ON entry.journal_transaction_ref=transaction.journal_transaction_ref
+                WHERE transaction.site_ref=$1 AND entry.credit_hold_ref=$3::uuid
+                  AND transaction.operation_kind IN ('hold_capture','correction')) AS "usageJournalCount",
+              (SELECT count(DISTINCT transaction.journal_transaction_ref)::text
+                 FROM platform.credit_journal_transaction transaction
+                 JOIN platform.credit_journal_entry entry
+                   ON entry.journal_transaction_ref=transaction.journal_transaction_ref
+                WHERE transaction.site_ref=$1 AND entry.credit_hold_ref=$3::uuid
+                  AND transaction.operation_kind='correction') AS "correctionJournalCount",
+              (SELECT count(*)::text FROM platform.credit_usage_settlement settlement
+                WHERE settlement.site_ref=$1 AND settlement.authorization_segment_ref=$4::uuid)
+                AS "settlementCount",
+              (SELECT count(*)::text FROM platform.credit_usage_settlement settlement
+                WHERE settlement.site_ref=$1 AND settlement.authorization_segment_ref=$4::uuid
+                  AND settlement.journal_transaction_ref IS NOT NULL) AS "settlementJournalCount",
+              (SELECT count(*)::text FROM platform.credit_usage_settlement_source source
+                WHERE source.site_ref=$1 AND source.authorization_segment_ref=$4::uuid)
+                AS "settlementSourceCount",
+              (SELECT count(*)::text FROM platform.credit_attempt_usage_evidence evidence
+                WHERE evidence.site_ref=$1 AND evidence.authorization_segment_ref=$4::uuid)
+                AS "evidenceCount",
+              (SELECT count(*)::text FROM platform.credit_usage_command_receipt receipt
+                WHERE receipt.site_ref=$1 AND receipt.operation_kind='settle_usage'
+                  AND receipt.result->>'authorizationSegmentRef'=$4::text) AS "settleReceiptCount"
+         FROM platform.credit_execution_budget_root root
+         JOIN platform.credit_hold hold ON hold.credit_hold_ref=root.credit_hold_ref
+           AND hold.site_ref=root.site_ref
+         JOIN platform.credit_budget_allocation allocation
+           ON allocation.budget_allocation_ref=root.root_allocation_ref
+           AND allocation.site_ref=root.site_ref
+         JOIN platform.credit_budget_allocation_revision revision
+           ON revision.budget_allocation_ref=allocation.budget_allocation_ref
+           AND revision.revision=allocation.current_revision
+        WHERE root.site_ref=$1 AND root.root_allocation_ref=$2::uuid
+          AND hold.credit_hold_ref=$3::uuid`,
+      [fixture.siteId, fixture.allocationRef, fixture.holdRef, fixture.authorizationSegmentRef],
+    );
+    if (result.rows.length !== 1) throw new Error("CREDIT_USAGE_CORRECTION_INVENTORY_INVALID");
+    return result.rows[0]!;
+  } finally {
+    await client.query("ROLLBACK").catch(() => undefined);
+  }
+}
+
+async function creditTransaction<Result>(
+  client: Client,
+  siteId: string,
+  admission: boolean,
+  work: (transaction: ReturnType<typeof issuePlatformTransaction>["transaction"]) => Promise<Result>,
+): Promise<Result> {
+  await client.query("BEGIN");
+  let lease: ReturnType<typeof issuePlatformTransaction> | null = null;
+  try {
+    if (admission) {
+      await client.query("SELECT platform.begin_admission_transaction('admission.command')");
+    }
+    await client.query("SELECT set_config('app.site_id',$1,true)", [siteId]);
+    lease = issuePlatformTransaction(pgTransaction(client));
+    const result = await work(lease.transaction);
+    revokePlatformTransaction(lease);
+    lease = null;
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    if (lease !== null) revokePlatformTransaction(lease);
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  }
+}
+
+function creditUsageEvidence(
+  fixture: CreditRootClosureFixture,
+  input: Readonly<{
+    evidenceRef: string;
+    revision: bigint;
+    correctionOfEvidenceRef: string | null;
+    amount: bigint;
+  }>,
+): Readonly<{ evidenceRef: string; evidence: AttemptUsageEvidence }> {
+  const base = Object.freeze({
+    producerKind: "model_gateway" as const,
+    producerContext: `producer-${fixture.siteId}`,
+    producerGeneration: 1n,
+    attemptRef: fixture.attemptRef,
+    logicalEffectRef: `effect-${fixture.siteId}`,
+    authorizationSegmentRef: fixture.authorizationSegmentRef,
+    executionManifestRef: fixture.manifestRef,
+    revision: input.revision,
+    correctionOfEvidenceRef: input.correctionOfEvidenceRef,
+    attemptOutcome: "succeeded" as const,
+    occurredAt: new Date(Date.UTC(2026, 7, 27, 12, Number(input.revision), 0)).toISOString(),
+    sourceDigest: digest(`source:${fixture.siteId}:${input.revision}:${input.amount}`),
+  });
+  const evidence: AttemptUsageEvidence = input.amount === 0n
+    ? Object.freeze({ ...base, evidenceKind: "zero", zeroReason: "provider_reported_zero",
+      dimensions: Object.freeze([]) as readonly [] })
+    : Object.freeze({ ...base, evidenceKind: "measured", dimensions: Object.freeze([
+      Object.freeze({ dimensionKey: "tokens", sourceUnit: "token", quantity: input.amount }),
+    ]) });
+  return Object.freeze({ evidenceRef: input.evidenceRef, evidence });
 }
 
 type RootClosureJournalEntry = Readonly<{
@@ -567,4 +900,19 @@ function pgTransaction(client: Client): PlatformSqlTransaction {
       return (await client.query(statement, values as unknown[] | undefined)).rowCount ?? 0;
     },
   };
+}
+
+function canonical(value: unknown): string {
+  if (typeof value === "bigint") return JSON.stringify(value.toString());
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (typeof value === "object" && value !== null) {
+    const record = value as Readonly<Record<string, unknown>>;
+    return `{${Object.keys(record).sort()
+      .map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+function digest(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
 }

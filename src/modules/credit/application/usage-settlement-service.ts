@@ -294,7 +294,7 @@ export class UsageSettlementService {
       this.dependencies.repository.loadOpenAttemptCount(transaction, input),
       this.dependencies.repository.loadPriorClosure(transaction, input),
       this.dependencies.repository.loadPriorSettlement(transaction, input),
-      this.dependencies.repository.lockHoldAllocations(transaction, {
+      this.dependencies.repository.loadHoldAllocationsAfterFinancialLock(transaction, {
         siteId: input.siteId,
         creditHoldRef: context.creditHoldRef,
       }),

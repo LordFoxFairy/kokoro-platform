@@ -98,7 +98,16 @@ Usage producers and the settlement owner share one transaction-scoped advisory f
 loads Segment, allocation, Root, Hold and latest evidence through plain `SELECT` under that fence, so producer roles need no UPDATE
 privilege on Credit financial or evidence tables. Settlement keeps the existing Root/Hold/Segment row locks and CAS mutations after
 acquiring the same fence; each non-zero settlement capture also advances the Hold fence exactly once from the locked epoch, as
-required by the immutable Hold transition guard. Credit segment mutation commands use that fence as well.
+required by the immutable Hold transition guard. Its HoldAllocation source rows are insert-once facts, so settlement reads their
+ordered net amounts without requesting UPDATE privilege after acquiring the Segment/financial fences. Credit segment mutation
+commands use that fence as well.
+
+Usage corrections project one signed net customer-consumed amount across Journal, Hold and allocation. An active or
+reconciliation-required decrease moves exactly the captured decrease back to the same allocation's unassigned stock without changing
+its epoch, other stock, cumulative return or state; the Hold decreases by the same correction under its next fence. Correction Journal
+entries contribute `customer_consumed` as credit minus debit to the deferred Grant/Hold conservation check. A zero delta appends
+immutable Usage closure/settlement facts but creates no Journal, allocation revision, Hold mutation or fence advance. The later
+execution-root closure still owns the only trusted atomic terminal edge.
 
 `interfaces/connect/admin-credit-service.ts` is the dedicated typed operator provider. Every request resolves an exact Site
 through the shared Admin control plane and every database read uses `adminSiteQueryTransaction`, which sets the same exact Site

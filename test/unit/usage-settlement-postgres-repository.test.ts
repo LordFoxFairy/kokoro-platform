@@ -59,6 +59,25 @@ describe("PostgresUsageSettlementRepository", () => {
     }
   });
 
+  it("reads immutable HoldAllocation sources without requiring UPDATE privilege", async () => {
+    const sql = new RecordingSql();
+    const lease = issuePlatformTransaction(sql);
+    try {
+      await repository().loadHoldAllocationsAfterFinancialLock(lease.transaction, {
+        siteId: "site-1",
+        creditHoldRef: "00000000-0000-7000-8000-000000000201",
+      });
+      expect(sql.reads).toHaveLength(1);
+      expect(sql.reads[0]?.statement).toContain("platform.credit_hold_allocation allocation");
+      expect(sql.reads[0]?.statement).toContain("ORDER BY allocation.allocation_ordinal");
+      expect(sql.reads[0]?.statement).not.toMatch(
+        /FOR\s+(?:NO\s+KEY\s+)?UPDATE|FOR\s+(?:KEY\s+)?SHARE/iu,
+      );
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
   it("settles a first closure through rating_pending, exact allocation capture and balanced source journal", async () => {
     const sql = new RecordingSql();
     const lease = issuePlatformTransaction(sql);

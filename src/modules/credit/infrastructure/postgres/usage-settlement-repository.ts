@@ -343,18 +343,11 @@ export class PostgresUsageSettlementRepository implements UsageSettlementReposit
     });
   }
 
-  async lockHoldAllocations(
+  async loadHoldAllocationsAfterFinancialLock(
     transaction: PlatformTransaction,
-    input: Parameters<UsageSettlementRepository["lockHoldAllocations"]>[1],
+    input: Parameters<UsageSettlementRepository["loadHoldAllocationsAfterFinancialLock"]>[1],
   ) {
     const sql = resolvePlatformTransaction(transaction);
-    await sql.query(
-      `SELECT credit_grant_id
-         FROM platform.credit_hold_allocation
-        WHERE site_ref=$1 AND credit_hold_ref=$2::uuid
-        ORDER BY allocation_ordinal FOR UPDATE`,
-      [input.siteId, input.creditHoldRef],
-    );
     const rows = await sql.query<HoldAllocationRow>(
       `SELECT allocation.credit_grant_id AS "creditGrantId",allocation.allocation_ordinal AS ordinal,
               allocation.allocated_amount::text AS "allocatedAmount",

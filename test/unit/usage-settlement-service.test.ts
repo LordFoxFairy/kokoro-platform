@@ -307,7 +307,7 @@ class RecordingUsageRepository {
   async loadOpenAttemptCount() { return this.openAttemptCount; }
   async loadPriorSettlement() { return this.priorSettlement; }
   async loadPriorClosure() { return this.priorClosure; }
-  async lockHoldAllocations() { return this.holdAllocations; }
+  async loadHoldAllocationsAfterFinancialLock() { return this.holdAllocations; }
   async persistSettlement(_transaction: unknown, record: Record<string, unknown>) {
     this.savedSettlement = record;
     return { kind: "accepted" as const, value: record.receipt };

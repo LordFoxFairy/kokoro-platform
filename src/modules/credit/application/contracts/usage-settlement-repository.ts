@@ -220,7 +220,7 @@ export interface UsageSettlementRepository {
     siteId: string;
     authorizationSegmentRef: string;
   }>): Promise<PriorUsageClosure | null>;
-  lockHoldAllocations(transaction: PlatformTransaction, input: Readonly<{
+  loadHoldAllocationsAfterFinancialLock(transaction: PlatformTransaction, input: Readonly<{
     siteId: string;
     creditHoldRef: string;
   }>): Promise<readonly HoldAllocationAvailability[]>;
