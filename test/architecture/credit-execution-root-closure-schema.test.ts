@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 const migrationPath = "prisma/migrations/20260812_credit_execution_root_closure/migration.sql";
 const admissionAuthorityMigrationPath =
   "prisma/migrations/20260822_admission_execution_root_role_authority/migration.sql";
+const closureTransitionFixMigrationPath =
+  "prisma/migrations/20260827_credit_execution_root_closure_transition_fix/migration.sql";
 
 describe("Credit execution root closure schema", () => {
   it("persists one recoverable Admission lease transition and fences every transaction epoch", async () => {
@@ -249,5 +251,57 @@ describe("Credit execution root closure schema", () => {
     expect(lock).not.toContain("platform.admission_execution_manifest");
     expect(lock).toContain("segment.aggregate_version");
     expect(lock).toContain("root.execution_root_ref=p_owner_proof->>'sourceRef'");
+  });
+
+  it("upgrades the closure routines without rewriting their immutable source migration", async () => {
+    const migration = await readFile(closureTransitionFixMigrationPath, "utf8");
+    expect(migration).toContain(
+      "CREATE OR REPLACE FUNCTION platform.commit_execution_root_closure(p_record JSONB)",
+    );
+    expect(migration).toContain(
+      "CREATE OR REPLACE FUNCTION platform.mark_execution_root_reconciliation(p_record JSONB)",
+    );
+    expect(migration).toContain(
+      "CREATE OR REPLACE FUNCTION platform.guard_credit_execution_budget_root_transition()",
+    );
+    expect(migration).toContain(
+      "CREATE OR REPLACE FUNCTION platform.guard_credit_hold_transition()",
+    );
+    expect(migration).toContain(
+      "CREATE OR REPLACE FUNCTION platform.credit_direct_root_lock_outcome(",
+    );
+    expect(migration).not.toContain("chr(0)");
+    expect(migration).toContain(
+      "platform.credit_direct_root_framed_digest(VARIADIC ARRAY[",
+    );
+
+    const commit = migration.slice(
+      migration.indexOf("CREATE OR REPLACE FUNCTION platform.commit_execution_root_closure"),
+      migration.indexOf("CREATE OR REPLACE FUNCTION platform.mark_execution_root_reconciliation"),
+    );
+    const reconciliation = migration.slice(
+      migration.indexOf("CREATE OR REPLACE FUNCTION platform.mark_execution_root_reconciliation"),
+    );
+    expect(commit).not.toContain("UPDATE platform.credit_budget_allocation SET current_revision");
+    expect(commit).not.toContain("concat_ws('|'");
+    expect(commit).toContain("octet_length(posting.ordinal)::TEXT||':'||posting.ordinal");
+    expect(reconciliation).not.toContain(
+      "UPDATE platform.credit_budget_allocation SET current_revision",
+    );
+    expect(migration).toContain(
+      "OLD.state='open' AND NEW.state NOT IN ('closing','settled','reconciliation_required')",
+    );
+    expect(migration).toContain(
+      "OLD.state='open' AND NEW.state NOT IN ('open','closing','settled','released','expired','reconciliation_required')",
+    );
+    expect(migration).toContain("NEW.aggregate_version<>OLD.aggregate_version+1");
+    expect(migration).toContain("NEW.fence_epoch<>OLD.fence_epoch+1");
+    expect(migration).toContain(
+      "set_config('app.credit_execution_root_closure_transition','commit',true)",
+    );
+    expect(migration).toContain("CURRENT_USER=SESSION_USER");
+    expect(migration).toContain("CURRENT_USER IS DISTINCT FROM relation_owner");
+    expect(migration.match(/FROM pg_catalog\.pg_class relation WHERE relation\.oid=TG_RELID/gu))
+      .toHaveLength(2);
   });
 });

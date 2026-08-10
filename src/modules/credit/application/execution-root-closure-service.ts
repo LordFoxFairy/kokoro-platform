@@ -10,6 +10,7 @@ import {
   ExecutionRootClosureAuthority,
   type StoredExecutionRootClosure,
 } from "./execution-root-closure-authority.js";
+import { creditJournalEntriesDigest } from "../domain/journal-digest.js";
 import type { PlatformTransaction } from "../../../shared/unit-of-work/index.js";
 
 export type ExecutionRootClosureRequest = Readonly<{
@@ -209,16 +210,16 @@ function stableUuid(kind: ReferenceKind, stableSeed: string): string {
 }
 function digestJournalPostings(current: StoredExecutionRootClosureContext,
   releases: readonly Readonly<{ creditGrantId: string; ordinal: number; amount: bigint }>[]): string {
-  const rows: string[] = [];
-  for (const release of releases) {
-    for (const [side, accountType] of [["debit", "customer_reserved"],
-      ["credit", "customer_available"]] as const) {
-      rows.push([rows.length, current.siteId, current.creditAccountId.toLowerCase(),
-        current.settlement.unit, side, accountType, release.amount.toString(),
-        release.creditGrantId.toLowerCase(), current.creditHoldRef.toLowerCase()].join("|"));
-    }
-  }
-  return createHash("sha256").update(rows.join("\n")).digest("hex");
+  return creditJournalEntriesDigest(releases.flatMap((release, index) => ([
+    { ordinal: index * 2, siteId: current.siteId, creditAccountId: current.creditAccountId,
+      unit: current.settlement.unit, side: "debit" as const, accountType: "customer_reserved",
+      amount: release.amount, creditGrantId: release.creditGrantId,
+      creditHoldRef: current.creditHoldRef },
+    { ordinal: index * 2 + 1, siteId: current.siteId, creditAccountId: current.creditAccountId,
+      unit: current.settlement.unit, side: "credit" as const, accountType: "customer_available",
+      amount: release.amount, creditGrantId: release.creditGrantId,
+      creditHoldRef: current.creditHoldRef },
+  ])));
 }
 function executionRootReceiptDigest(receipt: Omit<ExecutionRootClosureReceipt, "receiptDigest">): string {
   return framedDigest("kokoro.platform.credit.execution-root.receipt.v1", [

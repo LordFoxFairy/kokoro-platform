@@ -47,7 +47,7 @@
     "test:admin-control": "vitest run test/unit/admin-*.test.ts test/unit/outbox.test.ts",
     "test:identity": "vitest run test/unit/identity-*.test.ts test/unit/platform-worker-identity.test.ts test/unit/secret-files.test.ts",
     "test:security": "vitest run test/security/*.test.ts",
-    "test:component:postgres": "vitest run test/component/postgres-foundation.test.ts test/component/memory-public-authority.test.ts test/component/product-catalog-publication-authority.test.ts test/component/site-publication-runtime-authority.test.ts test/component/commerce-administration-authority.test.ts test/component/commerce-redemption-credit-authority.test.ts --no-file-parallelism",
+    "test:component:postgres": "vitest run test/component/postgres-foundation.test.ts test/component/credit-execution-root-closure-authority.test.ts test/component/memory-public-authority.test.ts test/component/product-catalog-publication-authority.test.ts test/component/site-publication-runtime-authority.test.ts test/component/commerce-administration-authority.test.ts test/component/commerce-redemption-credit-authority.test.ts --no-file-parallelism",
     "test:component:credit-media-child-concurrency": "vitest run test/component/postgres-foundation.test.ts --no-file-parallelism -t 'serializes Media child authority'",
     "test": "pnpm run test:repository && pnpm run test:platform && pnpm run test:unit && pnpm run test:security && pnpm -r test",
     "test:integration": "pnpm --filter @kokoro/hub test:integration",

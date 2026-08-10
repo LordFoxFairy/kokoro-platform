@@ -14,7 +14,7 @@ import {
   lockCreditAccountAuthority,
   type LockedCreditAccount,
 } from "./credit-account-lock.js";
-import { creditJournalEntriesDigest } from "./credit-journal-digest.js";
+import { creditJournalEntriesDigest } from "../../domain/journal-digest.js";
 
 type PreparedState = {
   transaction: PlatformTransaction;

@@ -39,7 +39,7 @@ import {
   MEDIA_CHILD_ALLOCATION_FRESH_LOAD_SQL,
   PARENT_ALLOCATION_FRESH_LOAD_SQL,
 } from "./media-child-allocation-sql.js";
-import { creditJournalEntriesDigest } from "./credit-journal-digest.js";
+import { creditJournalEntriesDigest } from "../../domain/journal-digest.js";
 
 type ReceiptRow = Record<string, unknown>;
 

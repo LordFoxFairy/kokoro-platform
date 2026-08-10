@@ -14,7 +14,7 @@ import { runPlatformMigrations } from "../../src/infrastructure/postgres/migrato
 import { lockCreditFinancialAuthority } from
   "../../src/modules/credit/infrastructure/postgres/credit-financial-lock.js";
 import { creditJournalEntriesDigest } from
-  "../../src/modules/credit/infrastructure/postgres/credit-journal-digest.js";
+  "../../src/modules/credit/domain/journal-digest.js";
 import {
   issuePlatformTransaction,
   resolvePlatformTransaction,

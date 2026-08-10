@@ -4,7 +4,7 @@ import { resolvePlatformTransaction } from "../../../../shared/unit-of-work/plat
 import type { PlatformTransaction } from "../../../../shared/unit-of-work/index.js";
 import type { AttemptUsageEvidence, RatingPolicyRevision } from "../../domain/usage-rating.js";
 import { PostgresCreditAuthorityRepository } from "./credit-authority-repository.js";
-import { creditJournalEntriesDigest } from "./credit-journal-digest.js";
+import { creditJournalEntriesDigest } from "../../domain/journal-digest.js";
 import type {
   StoredAttemptUsageEvidence,
   StoredUsageAttemptIntent,

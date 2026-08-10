@@ -44,6 +44,8 @@ second return.
 All Credit financial mutations use one lock order: allocation rows in UUID order, then the exact execution budget root, then the
 exact Hold named by that root. Mutable revision, root, Hold, Segment, and prior-return facts are fresh-loaded only after those locks.
 Derive, return, Usage settlement, and reconciliation share this order rather than relying on a multi-relation `FOR UPDATE` plan.
+Journal entry digests have one pure domain codec in `domain/journal-digest.ts`; reservation, capture, release, grant issuance and
+execution-root closure all use the same UTF-8 byte-length framing that PostgreSQL verifies at deferred commit.
 
 This pre-release Media child schema is a fresh-data hard cut. Its first migration operation rejects legacy audience=`job` allocations
 or any pre-existing allocation reservation/return receipts with
@@ -66,6 +68,9 @@ as an allocation revision UUID.
 It decides from locked Credit and Rating facts only: source-specific terminal proof, receipt encoding and database fencing stay in
 adapters. The Media adapter maps that one decision into its existing worker-lease and security-definer protocol; it does not own a
 second release planner. Agent/Admission integration must use this same authority rather than introduce another financial mutation.
+The allocation-revision insert trigger alone advances the mutable allocation head. Atomic `open` to `settled` Root/Hold edges are
+accepted only inside the exact closure security-definer call, under a transaction-local marker and effective-user/table-owner fence;
+raw Admission or Media updates remain rejected even when a caller spoofs the marker.
 
 The Postgres repository reuses the branded
 `PlatformTransaction`, existing allocation lineage/conservation triggers, reservation/return receipt tables, and local operation
