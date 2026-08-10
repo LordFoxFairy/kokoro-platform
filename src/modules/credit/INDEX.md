@@ -92,7 +92,8 @@ consumed by Commerce.
 Usage producers and the settlement owner share one transaction-scoped advisory fence per Site/Segment. Producer prepare/finalize
 loads Segment, allocation, Root, Hold and latest evidence through plain `SELECT` under that fence, so producer roles need no UPDATE
 privilege on Credit financial or evidence tables. Settlement keeps the existing Root/Hold/Segment row locks and CAS mutations after
-acquiring the same fence; Credit segment mutation commands use that fence as well.
+acquiring the same fence; each non-zero settlement capture also advances the Hold fence exactly once from the locked epoch, as
+required by the immutable Hold transition guard. Credit segment mutation commands use that fence as well.
 
 `interfaces/connect/admin-credit-service.ts` is the dedicated typed operator provider. Every request resolves an exact Site
 through the shared Admin control plane and every database read uses `adminSiteQueryTransaction`, which sets the same exact Site

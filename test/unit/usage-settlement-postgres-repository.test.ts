@@ -73,6 +73,12 @@ describe("PostgresUsageSettlementRepository", () => {
       expect(statements).toContain("credit_usage_settlement_source");
       expect(statements).toContain("credit_rated_usage");
       expect(sql.writes.filter((write) => write.statement.includes("credit_journal_entry"))).toHaveLength(2);
+      const holdCapture = sql.writes.find((write) =>
+        write.statement.includes("UPDATE platform.credit_hold") &&
+        write.statement.includes("captured_amount=captured_amount"));
+      expect(holdCapture?.statement).toContain("fence_epoch=fence_epoch+1");
+      expect(holdCapture?.statement).toContain("AND fence_epoch=$5::bigint");
+      expect(holdCapture?.values?.[4]).toBe("7");
       const journal = sql.writes.find((write) =>
         write.statement.includes("INSERT INTO platform.credit_journal_transaction"));
       expect(journal?.values?.[7]).toBe(databaseJournalDigest([
@@ -229,7 +235,7 @@ function settlementRecord(): UsageSettlementRecord {
     executionBudgetRootRef: "00000000-0000-7000-8000-000000000202",
     executionBudgetRootState: "open" as const, executionBudgetRootVersion: 1n,
     creditHoldRef: "00000000-0000-7000-8000-000000000201", creditHoldState: "open" as const,
-    creditHoldFenceEpoch: 1n, budgetAllocationRef: "00000000-0000-7000-8000-000000000203",
+    creditHoldFenceEpoch: 7n, budgetAllocationRef: "00000000-0000-7000-8000-000000000203",
     authorizationSegmentRef: "00000000-0000-7000-8000-000000000205",
     executionManifestRef: "manifest-1", expiresAt: NOW,
     consumptionScope: { surfaceRef: "chat", capabilityKey: "chat.general", agentRef: null },

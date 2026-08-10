@@ -959,7 +959,6 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         );
       }
       if (executionEvidence.kind === "terminal_observed") {
-        markEffectStarted();
         const budget = await this.#ports.budget.reconcileRoot(transaction, {
           siteId: command.siteId,
           rootHoldRef: locked.rootHoldRef,
@@ -979,18 +978,22 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
           ? await this.#ports.lifecycle.settle(transaction, locked, budget.segmentVersion)
           : await this.#ports.lifecycle.requireReconciliation(transaction, locked,
               budget.segmentVersion);
-        return reconciliation(
+        const decision = reconciliation(
           budget.kind === "settled" ? "settled" : "reconciliation_required",
           changed,
           this.#date(),
           executionEvidence.safeStatusRef,
           budget.kind === "settled" ? budget.settlement : undefined,
         );
+        // The local Credit and lifecycle effects are still rollback-safe until
+        // this callback returns. From this point, an execute() failure can be a
+        // lost commit response and must remain outcome_unknown.
+        markEffectStarted();
+        return decision;
       }
       if (dispatchEvidence === undefined) {
         throw new Error("ADMISSION_RECONCILIATION_OWNER_EVIDENCE_REQUIRED");
       }
-      markEffectStarted();
       const budget = await this.#ports.budget.reconcileRoot(transaction, {
         siteId: command.siteId,
         rootHoldRef: locked.rootHoldRef,
@@ -1008,7 +1011,9 @@ export class PlatformAdmissionOwnerAuthority implements AdmissionOwnerAuthority 
         ? await this.#ports.lifecycle.settle(transaction, locked, budget.segmentVersion)
         : await this.#ports.lifecycle.requireReconciliation(transaction, locked,
             budget.segmentVersion);
-      return reconciliation("reconciliation_required", changed, this.#date());
+      const decision = reconciliation("reconciliation_required", changed, this.#date());
+      markEffectStarted();
+      return decision;
     });
   }
 

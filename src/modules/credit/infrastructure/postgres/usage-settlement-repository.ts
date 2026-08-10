@@ -648,11 +648,14 @@ async function insertJournal(
     (source.direction === "decrease" ? -source.amount : source.amount), 0n);
   if (holdDelta !== 0n) await one(sql.execute(
     `UPDATE platform.credit_hold
-        SET captured_amount=captured_amount+$1::numeric,updated_at=$2::timestamptz
+        SET captured_amount=captured_amount+$1::numeric,fence_epoch=fence_epoch+1,
+            updated_at=$2::timestamptz
       WHERE credit_hold_ref=$3::uuid AND site_ref=$4 AND state IN ('open','closing','reconciliation_required')
+        AND fence_epoch=$5::bigint
         AND captured_amount+$1::numeric>=0
         AND captured_amount+released_amount+$1::numeric<=reserved_amount`,
-    [holdDelta.toString(), record.settledAt, record.context.creditHoldRef, record.context.siteId],
+    [holdDelta.toString(), record.settledAt, record.context.creditHoldRef, record.context.siteId,
+      record.context.creditHoldFenceEpoch.toString()],
   ), "CREDIT_USAGE_HOLD_CAPTURE_CAS_LOST");
 }
 

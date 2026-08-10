@@ -79,6 +79,61 @@ function reconcileEffect() {
   });
 }
 
+function outcomeUnknownReconcileEffect() {
+  return create(ReconcileRunAuthorizationEffectSchema, {
+    manifestRef: "manifest-1",
+    authorizationSegmentRef: "segment-1",
+    expectedSegmentVersion: 1n,
+    sessionDispatchReceiptRef: "dispatch-unknown-1",
+  });
+}
+
+function terminalExecutionEvidence() {
+  return {
+    kind: "terminal_observed" as const,
+    terminalEvidenceRef: "terminal-evidence-1",
+    terminalEvidenceDigest: "f".repeat(64),
+    terminalOutcome: "completed" as const,
+    safeStatusRef: "terminal-evidence-1",
+  };
+}
+
+function settledReconciliationBudget() {
+  return {
+    kind: "settled" as const,
+    segmentVersion: 2n,
+    settlement: {
+      settlementRef: "settlement-1",
+      closureRef: "closure-1",
+      ratedAmount: "1",
+      currencyOrCreditUnit: "credit_micros",
+      ratingSnapshotRef: "rating-snapshot-1",
+      usageEvidenceRefs: ["usage-evidence-1"],
+    },
+  };
+}
+
+function outcomeUnknownDispatchEvidence() {
+  return {
+    kind: "found" as const,
+    evidence: {
+      evidenceRef: "dispatch-unknown-1",
+      evidenceVersion: "1" as const,
+      kind: "outcome_unknown" as const,
+      siteId: "site-1",
+      sessionId: "session-1",
+      dispatchId: "dispatch-1",
+      launchId: "launch-1",
+      runId: "run-1",
+      authorizationSegmentRef: "segment-1",
+      authorizationSegmentVersion: "1",
+      leaseGeneration: "1",
+      payloadSha256: "c".repeat(64),
+      recordedAt: now.toISOString(),
+    },
+  };
+}
+
 function ports(events: string[] = []): PlatformAdmissionOwnerPorts {
   const transaction = Object.freeze({}) as PlatformTransaction;
   let transactionActive = false;
@@ -772,6 +827,204 @@ describe("Platform Admission owner authority", () => {
     expect(dependencies.budget.reconcileRoot).not.toHaveBeenCalled();
   });
 
+  it("marks a terminal reconciliation transaction abort as retryable until the callback reaches commit", async () => {
+    const dependencies = ports();
+    const transient = new Error("terminal credit transaction aborted");
+    vi.mocked(dependencies.executionEvidence.resolve).mockResolvedValue(terminalExecutionEvidence());
+    vi.mocked(dependencies.budget.reconcileRoot)
+      .mockRejectedValueOnce(transient)
+      .mockResolvedValueOnce(settledReconciliationBudget());
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+    const command = {
+      caller,
+      siteId: "site-1",
+      commandId: "command-reconcile-transaction-retry",
+      requestDigest: "e".repeat(64),
+      effect: reconcileEffect(),
+    };
+
+    await expect(authority.reconcileRunAuthorization(command))
+      .rejects.toMatchObject({
+        name: "AdmissionOwnerNoEffectError",
+        cause: transient,
+      });
+    await expect(authority.reconcileRunAuthorization(command))
+      .resolves.toMatchObject({ kind: "settled" });
+
+    expect(dependencies.executionEvidence.resolve).toHaveBeenCalledTimes(2);
+    expect(dependencies.dispatchEvidence.get).not.toHaveBeenCalled();
+    expect(dependencies.budget.reconcileRoot).toHaveBeenCalledTimes(2);
+    expect(dependencies.lifecycle.settle).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a terminal lifecycle transaction abort retryable until the callback completes", async () => {
+    const dependencies = ports();
+    const transient = new Error("terminal lifecycle transaction aborted");
+    vi.mocked(dependencies.executionEvidence.resolve).mockResolvedValue(terminalExecutionEvidence());
+    vi.mocked(dependencies.budget.reconcileRoot).mockResolvedValue(settledReconciliationBudget());
+    vi.mocked(dependencies.lifecycle.settle)
+      .mockRejectedValueOnce(transient)
+      .mockResolvedValueOnce({
+        siteId: "site-1",
+        manifestRef: "manifest-1",
+        manifestDigest: "a".repeat(64),
+        sessionId: "session-1",
+        launchId: "launch-1",
+        runId: "run-1",
+        rootHoldRef: "hold-1",
+        authorizationSegmentRef: "segment-1",
+        segmentVersion: 2n,
+        state: "settled",
+        expiresAt: "2026-07-29T12:04:00.000Z",
+      });
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+    const command = {
+      caller,
+      siteId: "site-1",
+      commandId: "command-reconcile-lifecycle-retry",
+      requestDigest: "e".repeat(64),
+      effect: reconcileEffect(),
+    };
+
+    await expect(authority.reconcileRunAuthorization(command))
+      .rejects.toMatchObject({
+        name: "AdmissionOwnerNoEffectError",
+        cause: transient,
+      });
+    await expect(authority.reconcileRunAuthorization(command))
+      .resolves.toMatchObject({ kind: "settled" });
+
+    expect(dependencies.executionEvidence.resolve).toHaveBeenCalledTimes(2);
+    expect(dependencies.budget.reconcileRoot).toHaveBeenCalledTimes(2);
+    expect(dependencies.lifecycle.settle).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps terminal decision construction rollback-confirmed until the callback returns", async () => {
+    const dependencies = ports();
+    const transient = new Error("terminal decision clock unavailable");
+    vi.mocked(dependencies.executionEvidence.resolve).mockResolvedValue(terminalExecutionEvidence());
+    vi.mocked(dependencies.budget.reconcileRoot).mockResolvedValue(settledReconciliationBudget());
+    const clock = vi.fn(() => now);
+    clock.mockImplementationOnce(() => { throw transient; });
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock });
+    const command = {
+      caller,
+      siteId: "site-1",
+      commandId: "command-reconcile-decision-retry",
+      requestDigest: "e".repeat(64),
+      effect: reconcileEffect(),
+    };
+
+    await expect(authority.reconcileRunAuthorization(command))
+      .rejects.toMatchObject({
+        name: "AdmissionOwnerNoEffectError",
+        cause: transient,
+      });
+    await expect(authority.reconcileRunAuthorization(command))
+      .resolves.toMatchObject({ kind: "settled" });
+
+    expect(clock).toHaveBeenCalledTimes(2);
+    expect(dependencies.budget.reconcileRoot).toHaveBeenCalledTimes(2);
+    expect(dependencies.lifecycle.settle).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps an outcome-unknown reconciliation callback abort retryable", async () => {
+    const dependencies = ports();
+    const transient = new Error("reconciliation lifecycle transaction aborted");
+    vi.mocked(dependencies.dispatchEvidence.get).mockResolvedValue(outcomeUnknownDispatchEvidence());
+    vi.mocked(dependencies.lifecycle.requireReconciliation)
+      .mockRejectedValueOnce(transient)
+      .mockImplementationOnce(async (_transaction, record, segmentVersion) => ({
+        ...record,
+        state: "reconciliation_required" as const,
+        segmentVersion,
+      }));
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+    const command = {
+      caller,
+      siteId: "site-1",
+      commandId: "command-reconcile-outcome-unknown-retry",
+      requestDigest: "e".repeat(64),
+      effect: outcomeUnknownReconcileEffect(),
+    };
+
+    await expect(authority.reconcileRunAuthorization(command))
+      .rejects.toMatchObject({
+        name: "AdmissionOwnerNoEffectError",
+        cause: transient,
+      });
+    await expect(authority.reconcileRunAuthorization(command))
+      .resolves.toMatchObject({ kind: "reconciliation_required" });
+
+    expect(dependencies.dispatchEvidence.get).toHaveBeenCalledTimes(2);
+    expect(dependencies.executionEvidence.resolve).toHaveBeenCalledTimes(2);
+    expect(dependencies.budget.reconcileRoot).toHaveBeenCalledTimes(2);
+    expect(dependencies.lifecycle.requireReconciliation).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps outcome-unknown decision construction rollback-confirmed until the callback returns", async () => {
+    const dependencies = ports();
+    const transient = new Error("outcome-unknown decision clock unavailable");
+    vi.mocked(dependencies.dispatchEvidence.get).mockResolvedValue(outcomeUnknownDispatchEvidence());
+    const clock = vi.fn(() => now);
+    clock.mockImplementationOnce(() => { throw transient; });
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock });
+    const command = {
+      caller,
+      siteId: "site-1",
+      commandId: "command-reconcile-outcome-unknown-decision-retry",
+      requestDigest: "e".repeat(64),
+      effect: outcomeUnknownReconcileEffect(),
+    };
+
+    await expect(authority.reconcileRunAuthorization(command))
+      .rejects.toMatchObject({
+        name: "AdmissionOwnerNoEffectError",
+        cause: transient,
+      });
+    await expect(authority.reconcileRunAuthorization(command))
+      .resolves.toMatchObject({ kind: "reconciliation_required" });
+
+    expect(clock).toHaveBeenCalledTimes(2);
+    expect(dependencies.budget.reconcileRoot).toHaveBeenCalledTimes(2);
+    expect(dependencies.lifecycle.requireReconciliation).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps an outcome-unknown reconciliation commit response loss ambiguous", async () => {
+    const dependencies = ports();
+    const ambiguous = new Error("outcome-unknown reconciliation commit response lost");
+    let unitOfWorkCalls = 0;
+    const baseExecute = dependencies.unitOfWork.execute;
+    dependencies.unitOfWork.execute = async <Result>(
+      command: AdmissionAuthorityCommand,
+      work: (transaction: PlatformTransaction) => Promise<Result>,
+    ): Promise<Result> => {
+      const result = await baseExecute(command, work);
+      unitOfWorkCalls += 1;
+      if (unitOfWorkCalls === 2) throw ambiguous;
+      return result;
+    };
+    vi.mocked(dependencies.dispatchEvidence.get).mockResolvedValue(outcomeUnknownDispatchEvidence());
+    const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
+      mediaProjectionRecoveryKey, clock: () => now });
+
+    await expect(authority.reconcileRunAuthorization({
+      caller,
+      siteId: "site-1",
+      commandId: "command-reconcile-outcome-unknown-ambiguous",
+      requestDigest: "e".repeat(64),
+      effect: outcomeUnknownReconcileEffect(),
+    })).rejects.toBe(ambiguous);
+
+    expect(dependencies.budget.reconcileRoot).toHaveBeenCalledOnce();
+    expect(dependencies.lifecycle.requireReconciliation).toHaveBeenCalledOnce();
+  });
+
   it("keeps a reconciliation UoW commit failure ambiguous after the credit effect", async () => {
     const dependencies = ports();
     const ambiguous = new Error("owner commit response lost");
@@ -787,27 +1040,10 @@ describe("Platform Admission owner authority", () => {
       if (ownerUnitOfWorkCalls === 2) throw ambiguous;
       return result;
     };
-    vi.mocked(dependencies.executionEvidence.resolve).mockResolvedValue({
-      kind: "terminal_observed",
-      terminalEvidenceRef: "terminal-evidence-1",
-      terminalEvidenceDigest: "f".repeat(64),
-      terminalOutcome: "completed",
-      safeStatusRef: "terminal-evidence-1",
-    });
+    vi.mocked(dependencies.executionEvidence.resolve).mockResolvedValue(terminalExecutionEvidence());
     vi.mocked(dependencies.budget.reconcileRoot).mockImplementation(async () => {
       creditEffects += 1;
-      return {
-        kind: "settled",
-        segmentVersion: 2n,
-        settlement: {
-          settlementRef: "settlement-1",
-          closureRef: "closure-1",
-          ratedAmount: "1",
-          currencyOrCreditUnit: "credit_micros",
-          ratingSnapshotRef: "rating-snapshot-1",
-          usageEvidenceRefs: ["usage-evidence-1"],
-        },
-      };
+      return settledReconciliationBudget();
     });
     const authority = new PlatformAdmissionOwnerAuthority({ ports: dependencies,
       mediaProjectionRecoveryKey, clock: () => now });
@@ -822,16 +1058,7 @@ describe("Platform Admission owner authority", () => {
 
   it("advances outcome-unknown reconciliation through Credit before Admission", async () => {
     const dependencies = ports();
-    vi.mocked(dependencies.dispatchEvidence.get).mockResolvedValue({
-      kind: "found",
-      evidence: {
-        evidenceRef: "dispatch-unknown-1", evidenceVersion: "1", kind: "outcome_unknown",
-        siteId: "site-1", sessionId: "session-1", dispatchId: "dispatch-1",
-        launchId: "launch-1", runId: "run-1", authorizationSegmentRef: "segment-1",
-        authorizationSegmentVersion: "1", leaseGeneration: "1", payloadSha256: "c".repeat(64),
-        recordedAt: now.toISOString(),
-      },
-    });
+    vi.mocked(dependencies.dispatchEvidence.get).mockResolvedValue(outcomeUnknownDispatchEvidence());
     vi.mocked(dependencies.lifecycle.requireReconciliation).mockImplementation(
       async (_transaction, record, segmentVersion) => ({ ...record,
         state: "reconciliation_required" as const, segmentVersion }),
@@ -841,10 +1068,7 @@ describe("Platform Admission owner authority", () => {
 
     const decision = await authority.reconcileRunAuthorization({ caller, siteId: "site-1",
       commandId: "command-reconcile", requestDigest: "e".repeat(64),
-      effect: create(ReconcileRunAuthorizationEffectSchema, {
-        manifestRef: "manifest-1", authorizationSegmentRef: "segment-1",
-        expectedSegmentVersion: 1n, sessionDispatchReceiptRef: "dispatch-unknown-1",
-      }) });
+      effect: outcomeUnknownReconcileEffect() });
 
     expect(decision.kind).toBe("reconciliation_required");
     expect(dependencies.budget.reconcileRoot).toHaveBeenCalledWith(expect.anything(),
