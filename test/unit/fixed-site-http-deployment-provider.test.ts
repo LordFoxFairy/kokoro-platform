@@ -52,19 +52,25 @@ describe("FixedSiteHttpDeploymentProvider", () => {
     expect(count).toBe(2);
   });
 
-  it.each<readonly [string, Record<string, unknown>]>([
-    ["siteId", { siteId: "site:other" }],
-    ["siteReleaseRef", { siteReleaseRef: "release:other" }],
-    ["webArtifactDigest", { webArtifactDigest: "d".repeat(64) }],
-    ["extra field", { extra: true }],
-  ])("rejects mismatched or malformed %s metadata", async (_name, change) => {
+  it.each<readonly [string, Record<string, unknown>, string]>([
+    ["siteId", { siteId: "site:other" }, "FIXED_SITE_METADATA_BINDING_MISMATCH"],
+    ["siteReleaseRef", { siteReleaseRef: "release:other" },
+      "FIXED_SITE_METADATA_BINDING_MISMATCH"],
+    ["webArtifactDigest", { webArtifactDigest: "d".repeat(64) },
+      "FIXED_SITE_METADATA_BINDING_MISMATCH"],
+    ["extra field", { extra: true }, "FIXED_SITE_METADATA_INVALID"],
+    ["slash deploymentRef", { deploymentRef: "deployment/core/1" },
+      "FIXED_SITE_METADATA_INVALID"],
+    ["129-character deploymentRef", { deploymentRef: "d".repeat(129) },
+      "FIXED_SITE_METADATA_INVALID"],
+  ])("rejects mismatched or malformed %s metadata", async (_name, change, code) => {
     const endpoint = await fixture((_request, response) => {
       response.setHeader("content-type", "application/json"); response.end(JSON.stringify(metadata(change)));
     });
     const provider = new FixedSiteHttpDeploymentProvider({ namespace: "core.fixed", metadataEndpoint: endpoint,
       timeoutMs: 1000 });
     await expect(provider.promote(command, new AbortController().signal))
-      .rejects.toMatchObject({ code: Object.hasOwn(change, "extra") ? "FIXED_SITE_METADATA_INVALID" : "FIXED_SITE_METADATA_BINDING_MISMATCH" });
+      .rejects.toMatchObject({ code });
   });
 
   it("rejects non-2xx, redirects and malformed JSON", async () => {

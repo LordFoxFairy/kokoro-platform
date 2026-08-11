@@ -248,6 +248,18 @@ export interface PlatformTransactionalDatabaseClient
     fence: Readonly<AdminWorkloadAxes & { credentialDigest: string }>,
     work: (transaction: PlatformTransaction) => Promise<Result>,
   ): Promise<Result>;
+  coreBootstrapRecoveryTransaction<Result>(
+    fence: CoreBootstrapRecoveryFence,
+    work: (transaction: PlatformTransaction) => Promise<Result>,
+  ): Promise<Result>;
+}
+
+export interface CoreBootstrapRecoveryFence {
+  readonly bootstrapId: string;
+  readonly siteRef: string;
+  readonly makerSubjectRef: string;
+  readonly environment: "staging" | "production";
+  readonly region: string;
 }
 
 export interface AdminIdentityTransactionFence {
@@ -969,6 +981,48 @@ export function createPlatformDatabaseClient(
         },
       );
     },
+    coreBootstrapRecoveryTransaction: async <Result>(
+      fence: CoreBootstrapRecoveryFence,
+      work: (transaction: PlatformTransaction) => Promise<Result>,
+    ) => {
+      if (config.role !== "admin") throw new Error("CORE_BOOTSTRAP_RECOVERY_ROLE_FORBIDDEN");
+      assertCoreBootstrapRecoveryFence(fence);
+      return prisma.$transaction(
+        async (databaseTransaction) => {
+          await databaseTransaction.$executeRawUnsafe("SET TRANSACTION READ ONLY");
+          await databaseTransaction.$queryRawUnsafe(
+            `SELECT set_config('app.operation','core.single-site.bootstrap.recover',true),
+                    set_config('app.site_id',$1,true),
+                    set_config('app.environment',$2,true),set_config('app.region',$3,true),
+                    set_config('app.workload_kind','admin_workload',true),
+                    set_config('app.actor_kind','operator',true),
+                    set_config('app.subject_id',$4,true),set_config('app.subject_generation','1',true),
+                    set_config('app.purpose','core.single-site.bootstrap.recover',true),
+                    set_config('app.scopes','["core.single-site.bootstrap:recover"]',true)`,
+            fence.siteRef,
+            fence.environment,
+            fence.region,
+            fence.makerSubjectRef,
+          );
+          const lease = issuePlatformTransaction({
+            query: (statement, values = []) =>
+              databaseTransaction.$queryRawUnsafe(statement, ...values),
+            execute: (statement, values = []) =>
+              databaseTransaction.$executeRawUnsafe(statement, ...values),
+          });
+          try {
+            return await work(lease.transaction);
+          } finally {
+            revokePlatformTransaction(lease);
+          }
+        },
+        {
+          isolationLevel: config.transaction.isolationLevel,
+          maxWait: config.transaction.maxWaitMs,
+          timeout: config.transaction.timeoutMs,
+        },
+      );
+    },
     transaction: async <Result>(
       fence: Parameters<PlatformTransactionHost["transaction"]>[0],
       work: Parameters<PlatformTransactionHost["transaction"]>[1],
@@ -1033,6 +1087,24 @@ export function createPlatformDatabaseClient(
         },
       ),
   };
+}
+
+function assertCoreBootstrapRecoveryFence(fence: CoreBootstrapRecoveryFence): void {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
+      .test(fence.bootstrapId) ||
+      !boundedBootstrapValue(fence.siteRef, 3, 256) ||
+      !boundedBootstrapValue(fence.makerSubjectRef, 3, 256) ||
+      !boundedBootstrapValue(fence.region, 2, 64) ||
+      (fence.environment !== "staging" && fence.environment !== "production")) {
+    throw new Error("CORE_BOOTSTRAP_RECOVERY_FENCE_INVALID");
+  }
+}
+
+function boundedBootstrapValue(value: string, minimum: number, maximum: number): boolean {
+  return value.length >= minimum && value.length <= maximum && [...value].every((character) => {
+    const point = character.codePointAt(0) ?? 0;
+    return point >= 32 && point !== 127;
+  });
 }
 
 function assertAdminIdentityFence(fence: AdminIdentityTransactionFence): void {
@@ -1231,6 +1303,7 @@ interface RuntimeIdentity {
   admissionModelGatewayAuthorityExact: boolean;
   hasRequiredAdmissionExecutionRootFunctions: boolean;
   hasRequiredModelOptionFunctions: boolean;
+  hasRequiredCoreBootstrapReadbackFunctions: boolean;
   hasRequiredProductCatalogPrivileges: boolean;
   hasRequiredSitePublicationPrivileges: boolean;
   canSelectModelCatalogTable: boolean;
@@ -2003,6 +2076,37 @@ const RUNTIME_IDENTITY_SQL = `
            AND has_function_privilege(current_user,'platform.materialize_model_options(uuid,text,text,text,text,jsonb,text)','EXECUTE')
            AND has_function_privilege(current_user,'platform.publish_site_release_model_catalog(uuid,jsonb,text)','EXECUTE')
          ELSE TRUE END AS "hasRequiredModelOptionFunctions",
+         ((SELECT count(*)=2 AND bool_and(
+              routine.proowner=platform_schema.nspowner
+              AND routine.prosecdef
+              AND routine.provolatile='s'::"char"
+              AND COALESCE(cardinality(routine.proconfig),0)=1
+              AND EXISTS (
+                SELECT 1
+                FROM unnest(COALESCE(routine.proconfig,ARRAY[]::text[])) setting(value)
+                WHERE replace(setting.value,' ','')='search_path=pg_catalog,platform'
+              )
+            )
+            FROM pg_proc routine
+            WHERE routine.oid=ANY(ARRAY[
+              to_regprocedure('platform.core_single_site_bootstrap_identity_ready(text,uuid,text,text,text,text,text,text)'),
+              to_regprocedure('platform.core_single_site_bootstrap_model_catalog_ready(text,text,text)')
+            ]))
+          AND CASE WHEN $2='admin' THEN
+            has_function_privilege(current_user,
+              'platform.core_single_site_bootstrap_identity_ready(text,uuid,text,text,text,text,text,text)',
+              'EXECUTE')
+            AND has_function_privilege(current_user,
+              'platform.core_single_site_bootstrap_model_catalog_ready(text,text,text)',
+              'EXECUTE')
+          ELSE
+            NOT has_function_privilege(current_user,
+              'platform.core_single_site_bootstrap_identity_ready(text,uuid,text,text,text,text,text,text)',
+              'EXECUTE')
+            AND NOT has_function_privilege(current_user,
+              'platform.core_single_site_bootstrap_model_catalog_ready(text,text,text)',
+              'EXECUTE')
+          END) AS "hasRequiredCoreBootstrapReadbackFunctions",
          CASE WHEN $2='admin' THEN
            has_column_privilege(current_user,'platform.model_inventory_import','import_id','SELECT')
            AND has_column_privilege(current_user,'platform.model_inventory_import','source_digest','SELECT')
@@ -2552,7 +2656,9 @@ const RUNTIME_IDENTITY_SQL = `
                  to_regprocedure('platform.commerce_safe_label_is_valid(text)'),
                  to_regprocedure('platform.commerce_iana_zone_is_valid(text)'),
                  to_regprocedure('platform.site_evidence_resolver_role_is_current()'),
-                 to_regprocedure('platform.site_evidence_owner_role_is_current()')
+                 to_regprocedure('platform.site_evidence_owner_role_is_current()'),
+                 to_regprocedure('platform.core_single_site_bootstrap_identity_ready(text,uuid,text,text,text,text,text,text)'),
+                 to_regprocedure('platform.core_single_site_bootstrap_model_catalog_ready(text,text,text)')
                ]))
                OR ($2 = 'api' AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.resolve_model_candidates(text,text,text)'),
@@ -2659,6 +2765,7 @@ function validRuntimeIdentity(
     identity.admissionModelGatewayAuthorityExact === (config.role === "admission") &&
     identity.hasRequiredAdmissionExecutionRootFunctions === (config.role === "admission") &&
     identity.hasRequiredModelOptionFunctions &&
+    identity.hasRequiredCoreBootstrapReadbackFunctions &&
     identity.hasRequiredProductCatalogPrivileges &&
     identity.hasRequiredSitePublicationPrivileges &&
     identity.canSelectModelCatalogTable === (config.role === "admin") &&

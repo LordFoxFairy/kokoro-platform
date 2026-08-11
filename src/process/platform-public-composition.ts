@@ -415,6 +415,7 @@ async function loadAssetUploadCapabilityKeys(
 export async function loadRedemptionSecretCodec(
   path: string,
   fileReader: PlatformApiRuntimeFileReader = DEFAULT_FILE_READER,
+  dependencies: Parameters<typeof createRedemptionSecretCodec>[1] = {},
 ) {
   const root = record(JSON.parse(await fileReader.read(
     "PLATFORM_COMMERCE_REDEMPTION_KEY_RING_FILE",
@@ -437,7 +438,7 @@ export async function loadRedemptionSecretCodec(
     currentPreviewCredentialKeyRevision: root.currentPreviewCredentialKeyRevision,
     previewCredentialKeys: root.previewCredentialKeys.map(redemptionKey),
     requestAuditKey: secretBytes(root.requestAuditKeyBase64url, 32),
-  });
+  }, dependencies);
 }
 
 function redemptionKey(value: unknown) {
@@ -453,7 +454,7 @@ function exactCommerce(value: Record<string, unknown>, names: readonly string[])
   if (Object.keys(value).some((key) => !names.includes(key))) throw new Error("REDEMPTION_KEY_RING_UNKNOWN_FIELD");
 }
 
-async function loadIdentityPasswordHasher(
+export async function loadIdentityPasswordHasher(
   path: string,
   fileReader: PlatformApiRuntimeFileReader = DEFAULT_FILE_READER,
 ) {
@@ -516,7 +517,7 @@ async function loadOpaqueCredentialCodec(
   )).trim(), 32));
 }
 
-async function loadIdentityAuditDigester(
+export async function loadIdentityAuditDigester(
   path: string,
   fileReader: PlatformApiRuntimeFileReader = DEFAULT_FILE_READER,
 ) {

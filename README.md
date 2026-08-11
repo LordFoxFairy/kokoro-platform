@@ -24,6 +24,7 @@ The production artifact has one closed runtime set:
 - `platform-migrator`
 - `@kokoro/hub`
 - `platform-hub-connect`
+- `platform-core-single-site-bootstrap` (one-shot owner composition; no listener)
 
 `kokoro-platform-kit` is the only shared runtime library workspace. Hub reuses the same artifact but
 has two independent processes: `@kokoro/hub` is the package-owned HTTP management surface and
@@ -32,6 +33,21 @@ consumes the repository's one canonical Root-generated tree under `src/generated
 business owners but has no generated mirror or second Connect main. The processes share Mongo/S3
 ownership but never a process or listener. LiteLLM is an external provider gateway, not a package or
 process shipped in this image.
+
+The bootstrap selector is invoked as:
+
+```bash
+node --conditions=kokoro-runtime dist/src/process/core-single-site-bootstrap.js \
+  --file ABS --result ABS --redemption-code ABS \
+  --maker-attestation ABS --maker-public-key ABS \
+  --checker-attestation ABS --checker-public-key ABS
+```
+
+It uses distinct `DATABASE_URL_PLATFORM_{ADMIN,API,SITE_WORKER,IDENTITY_WORKER}` bindings. A matching
+completed receipt is recovered by strict readback before attestation files are opened; new effects
+require fresh maker/checker signatures and the public Site release certification key ring. The result
+path also owns a mode-`0600` `.pair` descriptor that binds the result and redemption-code digests;
+claimed or void codes are verified in place and are never exported again.
 
 Root contracts, protobuf modules and JSON-schema validators are checked in exactly once under
 `src/generated/{contracts,proto,schema}` with `src/generated/provenance.json`. Prisma output alone is

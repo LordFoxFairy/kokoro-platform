@@ -582,6 +582,92 @@ deployables:
     runbookOwner: platform-hub
     releaseOwner: platform
 
+  - id: platform-core-bootstrap
+    command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
+    selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-core-single-site-bootstrap
+    processRole: bootstrap
+    databases:
+      - processRole: admin
+        environmentVariable: DATABASE_URL_PLATFORM_ADMIN
+        expectedUserEnvironmentVariable: PLATFORM_DATABASE_ADMIN_ROLE
+        migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
+        expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
+        credentialClass: admin
+        ddl: forbidden
+      - processRole: api
+        environmentVariable: DATABASE_URL_PLATFORM_API
+        expectedUserEnvironmentVariable: PLATFORM_DATABASE_API_ROLE
+        migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
+        expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
+        credentialClass: api
+        ddl: forbidden
+      - processRole: site-worker
+        environmentVariable: DATABASE_URL_PLATFORM_SITE_WORKER
+        expectedUserEnvironmentVariable: PLATFORM_DATABASE_SITE_WORKER_ROLE
+        migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
+        expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
+        credentialClass: site-worker
+        ddl: forbidden
+      - processRole: identity-worker
+        environmentVariable: DATABASE_URL_PLATFORM_IDENTITY_WORKER
+        expectedUserEnvironmentVariable: PLATFORM_DATABASE_IDENTITY_WORKER_ROLE
+        migratorRoleEnvironmentVariable: PLATFORM_DATABASE_MIGRATOR_ROLE
+        expectedDatabaseEnvironmentVariable: PLATFORM_DATABASE_EXPECTED_DATABASE
+        credentialClass: identity-worker
+        ddl: forbidden
+    requiredEnvironment:
+      - DATABASE_URL_PLATFORM_ADMIN
+      - DATABASE_URL_PLATFORM_API
+      - DATABASE_URL_PLATFORM_SITE_WORKER
+      - DATABASE_URL_PLATFORM_IDENTITY_WORKER
+      - PLATFORM_DATABASE_ADMIN_ROLE
+      - PLATFORM_DATABASE_API_ROLE
+      - PLATFORM_DATABASE_SITE_WORKER_ROLE
+      - PLATFORM_DATABASE_IDENTITY_WORKER_ROLE
+      - PLATFORM_DATABASE_MIGRATOR_ROLE
+      - PLATFORM_DATABASE_EXPECTED_DATABASE
+      - PLATFORM_MODEL_GATEWAY_DIRECT_ENDPOINT
+      - PLATFORM_API_FILE_TRUST_ROOT
+      - PLATFORM_AUTHORIZATION_EVENT_KEY_RING_FILE
+      - PLATFORM_IDENTITY_PASSWORD_PEPPER_RING_FILE
+      - PLATFORM_IDENTITY_AUDIT_DIGEST_KEY_FILE
+      - PLATFORM_SITE_PROVIDER_REGISTRY_FILE
+      - PLATFORM_SITE_RELEASE_CERTIFICATION_KEYS_FILE
+      - PLATFORM_COMMERCE_REDEMPTION_KEY_RING_FILE
+      - PLATFORM_CORE_BOOTSTRAP_HUB_BASE_URL
+      - PLATFORM_CORE_BOOTSTRAP_HUB_SERVER_NAME
+      - PLATFORM_CORE_BOOTSTRAP_HUB_TLS_TRUST_ROOT
+      - PLATFORM_CORE_BOOTSTRAP_HUB_TLS_KEY_FILE
+      - PLATFORM_CORE_BOOTSTRAP_HUB_TLS_CERT_FILE
+      - PLATFORM_CORE_BOOTSTRAP_HUB_TLS_CA_FILE
+    optionalEnvironment:
+      - KOKORO_ENVIRONMENT
+      - PLATFORM_SITE_OUTBOX_CLAIM_LIMIT
+      - PLATFORM_SITE_OUTBOX_LEASE_SECONDS
+      - PLATFORM_CORE_BOOTSTRAP_HUB_REQUEST_TIMEOUT_MS
+      - PLATFORM_CORE_BOOTSTRAP_HUB_PROJECTION_TIMEOUT_MS
+      - PLATFORM_CORE_BOOTSTRAP_HUB_PROJECTION_POLL_MS
+    inboundContracts: []
+    declaredInboundContracts: []
+    outboundContracts: [hub-capability-catalog, site-deployment-provider-https]
+    activationAuthorized: false
+    runtimeTraffic: false
+    secretClasses:
+      [platform-admin-database, platform-api-database, platform-site-worker-database,
+       platform-identity-worker-database, core-bootstrap-document, core-bootstrap-authority,
+       core-bootstrap-owner-password, core-bootstrap-redemption-entropy,
+       core-bootstrap-redemption-code, commerce-redemption-keyring,
+       authorization-event-signing-keyring, identity-password-pepper-keyring,
+       identity-audit-digest-key, site-provider-registry, site-provider-bearer-tokens,
+       site-release-certification-verification-keyring, hub-mtls-client]
+    audience: platform-core-bootstrap
+    scalingKey: singleton-bootstrap-id
+    readiness: one-shot-safe-result
+    drain: transaction-completion
+    sloOwner: platform
+    runbookOwner: platform
+    releaseOwner: platform
+
   - id: platform-migrator
     command: node --conditions=kokoro-runtime deploy/docker/runtime-entrypoint.mjs
     selectorEnvironment: KOKORO_SERVICE_PACKAGE=platform-migrator

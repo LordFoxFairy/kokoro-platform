@@ -882,6 +882,7 @@ describe("Platform migrator", () => {
     ["platform_admin", "canReadCommerceCatalogEpoch", false],
     ["platform_admin", "canUpdateCommerceCatalogEpoch", false],
     [leasedAdmissionRole, "admissionModelGatewayAuthorityExact", false],
+    ["platform_admin", "hasRequiredCoreBootstrapReadbackFunctions", false],
   ] as const)("fails closed when %s has the wrong exact authority (%s)",
     async (roleName, field, value) => {
       const lockClient: MigrationLockClient = {
@@ -1293,6 +1294,7 @@ function authority(
     admissionModelGatewayAuthorityExact: roleName === admissionRoleName,
     hasRequiredAdmissionExecutionRootFunctions: roleName === admissionRoleName,
     hasRequiredModelOptionFunctions: true,
+    hasRequiredCoreBootstrapReadbackFunctions: true,
     hasRequiredProductCatalogPrivileges: true,
     hasRequiredSitePublicationPrivileges: true,
     canSelectModelCatalogTable: roleName === "platform_admin",

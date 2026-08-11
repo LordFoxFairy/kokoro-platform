@@ -2,22 +2,71 @@ import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { SiteDeploymentProviderRegistry } from "../../application/contracts/site-deployment-provider.js";
-import { FixedSiteHttpDeploymentProvider } from "../http/fixed-site-http-deployment-provider.js";
+import {
+  canonicalFixedSiteMetadataEndpoint,
+  FixedSiteHttpDeploymentProvider,
+} from
+  "../http/fixed-site-http-deployment-provider.js";
 import { SiteProviderRpcAdapter } from "./site-provider-rpc.js";
 
 export async function loadSiteProviderRegistry(path: string): Promise<SiteDeploymentProviderRegistry> {
+  const definitions = await readProviderDefinitions(path);
+  const providers = await Promise.all(definitions.map(async (value) => {
+    if (value.kind === "fixed_http") {
+      return new FixedSiteHttpDeploymentProvider({
+        namespace: value.namespace,
+        metadataEndpoint: value.metadataEndpoint,
+        timeoutMs: value.timeoutMs,
+      });
+    }
+    const bearerToken = (await readFile(value.tokenFile, 4096, true)).trim();
+    return new SiteProviderRpcAdapter({ namespace: value.namespace, endpoint: value.endpoint,
+      bearerToken, timeoutMs: value.timeoutMs });
+  }));
+  return new SiteDeploymentProviderRegistry(providers);
+}
+
+export async function assertFixedSiteProviderBinding(
+  path: string,
+  input: Readonly<{ namespace: string; metadataEndpoint: string }>,
+): Promise<void> {
+  const matches = (await readProviderDefinitions(path))
+    .filter(({ namespace }) => namespace === input.namespace);
+  const match = matches[0];
+  if (matches.length !== 1 || match?.kind !== "fixed_http" ||
+      canonicalFixedSiteMetadataEndpoint(match.metadataEndpoint) !==
+        canonicalFixedSiteMetadataEndpoint(input.metadataEndpoint)) {
+    throw new Error("SITE_FIXED_PROVIDER_BINDING_MISMATCH");
+  }
+  new FixedSiteHttpDeploymentProvider(match);
+}
+
+type ProviderDefinition = Readonly<{
+  kind: "fixed_http";
+  namespace: string;
+  metadataEndpoint: string;
+  timeoutMs: number;
+}> | Readonly<{
+  kind: "rpc";
+  namespace: string;
+  endpoint: string;
+  tokenFile: string;
+  timeoutMs: number;
+}>;
+
+async function readProviderDefinitions(path: string): Promise<readonly ProviderDefinition[]> {
   const root = record(JSON.parse(await readFile(path, 64 * 1024, false)) as unknown,
     "SITE_PROVIDER_REGISTRY_INVALID");
   exact(root, ["version", "providers"], "SITE_PROVIDER_REGISTRY_INVALID");
   if (root.version !== 1 || !Array.isArray(root.providers) || root.providers.length < 1 ||
       root.providers.length > 32) throw new Error("SITE_PROVIDER_REGISTRY_INVALID");
-  const providers = await Promise.all(root.providers.map(async (item) => {
+  return Object.freeze(root.providers.map((item): ProviderDefinition => {
     const value = record(item, "SITE_PROVIDER_REGISTRY_INVALID");
     if (value.kind === "fixed_http") {
       exact(value, ["kind", "namespace", "metadataEndpoint", "timeoutMs"], "SITE_PROVIDER_REGISTRY_INVALID");
       if (typeof value.namespace !== "string" || typeof value.metadataEndpoint !== "string" ||
           typeof value.timeoutMs !== "number") throw new Error("SITE_PROVIDER_REGISTRY_INVALID");
-      return new FixedSiteHttpDeploymentProvider({ namespace: value.namespace,
+      return Object.freeze({ kind: "fixed_http" as const, namespace: value.namespace,
         metadataEndpoint: value.metadataEndpoint, timeoutMs: value.timeoutMs });
     }
     if (value.kind !== undefined) throw new Error("SITE_PROVIDER_REGISTRY_INVALID");
@@ -25,11 +74,9 @@ export async function loadSiteProviderRegistry(path: string): Promise<SiteDeploy
     if (typeof value.namespace !== "string" || typeof value.endpoint !== "string" ||
         typeof value.tokenFile !== "string" || !isAbsolute(value.tokenFile) ||
         typeof value.timeoutMs !== "number") throw new Error("SITE_PROVIDER_REGISTRY_INVALID");
-    const bearerToken = (await readFile(value.tokenFile, 4096, true)).trim();
-    return new SiteProviderRpcAdapter({ namespace: value.namespace, endpoint: value.endpoint,
-      bearerToken, timeoutMs: value.timeoutMs });
+    return Object.freeze({ kind: "rpc" as const, namespace: value.namespace,
+      endpoint: value.endpoint, tokenFile: value.tokenFile, timeoutMs: value.timeoutMs });
   }));
-  return new SiteDeploymentProviderRegistry(providers);
 }
 
 async function readFile(path: string, maximum: number, privateFile: boolean): Promise<string> {

@@ -38,6 +38,7 @@
     "start:media-worker": "node --conditions=kokoro-runtime dist/src/process/media-worker.js",
     "start:model-image-worker": "node --conditions=kokoro-runtime dist/src/process/model-image-worker.js",
     "start:authorization-maintenance": "node --conditions=kokoro-runtime dist/src/process/authorization-maintenance.js",
+    "start:core-single-site-bootstrap": "node --conditions=kokoro-runtime dist/src/process/core-single-site-bootstrap.js",
     "test:repository": "node --test test/repository/*.test.mjs",
     "test:platform": "vitest run test/*.test.ts test/architecture/*.test.ts",
     "test:unit": "vitest run test/unit/*.test.ts",

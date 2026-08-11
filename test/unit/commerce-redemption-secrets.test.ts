@@ -37,6 +37,29 @@ describe("Commerce redemption secret codec", () => {
       .toThrow("REDEMPTION_ENTROPY_INVALID");
   });
 
+  it("reconstructs deterministic issuance with the persisted historical key revision", () => {
+    const entropy = () => Buffer.alloc(20, 7);
+    const beforeRotation = createRedemptionSecretCodec({
+      ...config,
+      currentCodeLookupKeyRevision: "code-2026-06",
+    }, { entropySource: entropy }).issueCode(
+      "site-1",
+      "00000000-0000-7000-8000-000000000111",
+    );
+    const afterRotation = createRedemptionSecretCodec(config, { entropySource: entropy }).issueCode(
+      "site-1",
+      "00000000-0000-7000-8000-000000000111",
+      beforeRotation.keyRevision,
+    );
+
+    expect(afterRotation).toEqual(beforeRotation);
+    expect(() => createRedemptionSecretCodec(config, { entropySource: entropy }).issueCode(
+      "site-1",
+      "00000000-0000-7000-8000-000000000111",
+      "code-retired",
+    )).toThrow("REDEMPTION_CODE_KEY_RETIRED");
+  });
+
   it("issues a high-entropy selector/checksum/batch-bound code and resolves exactly one key", () => {
     const issued = codec.issueCode("site-1", "00000000-0000-7000-8000-000000000111");
     expect(issued.code).toMatch(/^KC1-[0-9A-HJKMNP-TV-Z]{8}-[0-9A-HJKMNP-TV-Z]{10}-[0-9A-HJKMNP-TV-Z]{32}-[0-9A-HJKMNP-TV-Z]{8}$/u);

@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { CommerceAdministrationService } from "../../src/modules/commerce/application/services/commerce-administration.js";
+import {
+  canonicalCommerceCreditProgramPayload,
+  commerceAdministrationDigest,
+  CommerceAdministrationService,
+} from "../../src/modules/commerce/application/services/commerce-administration.js";
 import type { CommerceAdministrationRepository } from "../../src/modules/commerce/application/contracts/commerce-administration-repository.js";
 import { issuePlatformTransaction, revokePlatformTransaction } from "../../src/shared/unit-of-work/platform-transaction.js";
 import type { VerifiedRequestSecurityContext } from "../../src/shared/security-context/index.js";
@@ -38,6 +42,18 @@ describe("CommerceAdministrationService", () => {
       })).resolves.toMatchObject({ kind: "committed", creditProgramRevisionRef: "credits-program-v1" });
       expect(persisted[0]).toMatchObject({ windowKind: "none", revisionDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
         scopePolicy: { version: 1, surfaceRefs: ["chat"], capabilityKeys: ["model.chat"] } });
+      expect(persisted[0]?.revisionDigest).toBe(commerceAdministrationDigest({
+        version: 1,
+        ...canonicalCommerceCreditProgramPayload({
+          siteId: "site-1", creditProgramRevisionRef: "credits-program-v1",
+          programRef: "credits-program", revision: "1", uxBucketClass: "permanent",
+          unit: "kokoro-credit", amount: "1000", burnPriority: 1000,
+          scopePolicy: { surfaceRefs: ["chat"], capabilityKeys: ["model.chat"], agentRefs: [],
+            allowUnattributedAgent: true },
+          liabilityMerchantAccountRef: "merchant:main", rolloverPolicy: "none",
+          calendarZone: null, windowAnchor: null, expiresAfterSeconds: null,
+        }),
+      }));
     } finally { revokePlatformTransaction(lease); }
   });
 

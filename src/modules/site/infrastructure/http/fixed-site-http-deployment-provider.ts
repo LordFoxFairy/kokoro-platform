@@ -25,7 +25,7 @@ export class FixedSiteHttpDeploymentProvider implements SiteDeploymentProvider {
       throw new Error("FIXED_SITE_METADATA_TIMEOUT_INVALID");
     }
     this.namespace = input.namespace;
-    this.#metadataEndpoint = metadataEndpoint(input.metadataEndpoint);
+    this.#metadataEndpoint = canonicalFixedSiteMetadataEndpoint(input.metadataEndpoint);
     this.#timeoutMs = input.timeoutMs;
     this.#fetch = input.fetch ?? globalThis.fetch;
   }
@@ -119,7 +119,8 @@ function metadata(input: unknown): Readonly<{ schemaVersion: 1; siteId: string; 
   if (Object.keys(value).length !== keys.length || keys.some((key) => !Object.hasOwn(value, key)) ||
       value.schemaVersion !== 1 || typeof value.siteId !== "string" || typeof value.siteReleaseRef !== "string" ||
       typeof value.webArtifactDigest !== "string" || !SHA256.test(value.webArtifactDigest) ||
-      typeof value.deploymentRef !== "string" || value.deploymentRef.length < 3 || value.deploymentRef.length > 256 ||
+      typeof value.deploymentRef !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/u.test(value.deploymentRef) ||
       !["ready", "not_ready"].includes(String(value.readiness)) ||
       typeof value.observedAt !== "string" || !Number.isFinite(Date.parse(value.observedAt))) {
     throw new SiteProviderEffectError("unknown", "FIXED_SITE_METADATA_INVALID");
@@ -127,7 +128,7 @@ function metadata(input: unknown): Readonly<{ schemaVersion: 1; siteId: string; 
   return value as ReturnType<typeof metadata>;
 }
 
-function metadataEndpoint(raw: string): string {
+export function canonicalFixedSiteMetadataEndpoint(raw: string): string {
   let value: URL;
   try { value = new URL(raw); } catch { throw new Error("FIXED_SITE_METADATA_ENDPOINT_INVALID"); }
   const loopback = value.hostname === "127.0.0.1" || value.hostname === "[::1]";

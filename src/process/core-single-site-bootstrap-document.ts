@@ -4,15 +4,28 @@ import { open } from "node:fs/promises";
 import { isIP } from "node:net";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
+import { normalizeIdentityEmail } from "../modules/identity/domain/identity-email.js";
 
 const MAXIMUM_DOCUMENT_BYTES = 256 * 1024;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const ACCOUNT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[47][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const STABLE_REF = /^[A-Za-z0-9][A-Za-z0-9._:/-]{2,255}$/u;
-const POSITIVE_INTEGER = /^[1-9][0-9]*$/u;
+const SITE_LIFECYCLE_REF = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/u;
+const POSITIVE_DECIMAL_38 = /^[1-9][0-9]{0,37}$/u;
 const PRIVATE_PATH = z.string().refine(isAbsolute);
 const digest = z.string().regex(SHA256);
 const stableRef = z.string().regex(STABLE_REF);
+const operatorRef = z.string().regex(STABLE_REF).max(192);
+const siteLifecycleRef = z.string().regex(SITE_LIFECYCLE_REF);
+const redemptionBaseRef = z.string().regex(STABLE_REF).max(248);
+const identityEmail = z.string().superRefine((value, context) => {
+  try {
+    normalizeIdentityEmail(value);
+  } catch {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "identity_email" });
+  }
+});
 
 export const CORE_SINGLE_SITE_SURFACES = Object.freeze(["account", "chat", "redemption"] as const);
 
@@ -20,16 +33,16 @@ const documentSchema = z.object({
   version: z.literal(1),
   bootstrapId: z.string().regex(UUID),
   environment: z.enum(["staging", "production"]),
-  region: z.string().regex(/^[a-z][a-z0-9-]{1,62}$/u),
-  makerSubjectRef: stableRef,
-  checkerSubjectRef: stableRef,
+  region: z.string().regex(/^[a-z][a-z0-9-]{2,62}$/u),
+  makerSubjectRef: operatorRef,
+  checkerSubjectRef: operatorRef,
   site: z.object({
-    siteId: stableRef,
-    siteKey: z.string().regex(/^[a-z][a-z0-9-]{1,62}$/u),
-    siteReleaseRef: stableRef,
-    siteProjectBindingRef: stableRef,
+    siteId: siteLifecycleRef,
+    siteKey: z.string().regex(/^[a-z][a-z0-9-]{2,62}$/u),
+    siteReleaseRef: siteLifecycleRef,
+    siteProjectBindingRef: siteLifecycleRef,
     workloadIdentityId: z.string().regex(/^spiffe:\/\/[A-Za-z0-9._:/-]{3,240}$/u),
-    workloadBindingEpoch: z.string().regex(POSITIVE_INTEGER),
+    workloadBindingEpoch: z.literal("1"),
     providerNamespace: z.string().regex(/^[a-z][a-z0-9.-]{1,63}$/u),
     providerProjectRef: stableRef,
     metadataEndpoint: z.string().superRefine((value, context) => safeInternalEndpoint(value, context, true)),
@@ -46,47 +59,45 @@ const documentSchema = z.object({
         context.addIssue({ code: z.ZodIssueCode.custom, message: "certification_expiry" });
       }
     }),
-    signedContractFloor: z.object({ ref: stableRef, revision: z.string().regex(POSITIVE_INTEGER), digest }).strict(),
-    audience: stableRef,
-    sessionContractRevision: stableRef,
+    audience: z.string().regex(STABLE_REF).max(255),
+    sessionContractRevision: z.string().regex(STABLE_REF).max(255),
   }).strict(),
   model: z.object({
     provider: z.literal("direct"),
-    providerKey: stableRef,
+    providerKey: z.literal("direct"),
     modelKey: stableRef,
     modelOptionKey: stableRef,
     endpoint: z.string().superRefine((value, context) => safeInternalEndpoint(value, context, false)),
     inventoryRef: stableRef,
-    inventoryRevision: z.string().regex(POSITIVE_INTEGER),
     optionRevisionRef: stableRef,
     catalogRef: stableRef,
   }).strict(),
   rating: z.object({
     policyRevisionRef: stableRef,
-    unit: stableRef,
-    inputTokenAmount: z.string().regex(POSITIVE_INTEGER),
-    outputTokenAmount: z.string().regex(POSITIVE_INTEGER),
+    unit: z.string().regex(STABLE_REF).max(64),
+    inputTokenAmount: z.string().regex(POSITIVE_DECIMAL_38),
+    outputTokenAmount: z.string().regex(POSITIVE_DECIMAL_38),
   }).strict(),
   redemption: z.object({
-    creditProgramRevisionRef: stableRef,
-    productVersionRef: stableRef,
-    fulfillmentProgramRevisionRef: stableRef,
-    programRevisionRef: stableRef,
+    creditProgramRevisionRef: redemptionBaseRef,
+    productVersionRef: redemptionBaseRef,
+    fulfillmentProgramRevisionRef: redemptionBaseRef,
+    programRevisionRef: redemptionBaseRef,
     batchRef: z.string().regex(UUID),
-    amount: z.string().regex(POSITIVE_INTEGER),
+    amount: z.string().regex(POSITIVE_DECIMAL_38),
     liabilityMerchantAccountRef: stableRef,
     entropyKeyFile: PRIVATE_PATH,
   }).strict(),
   identity: z.object({
-    email: z.string().email().max(320),
+    email: identityEmail,
     passwordFile: PRIVATE_PATH,
-    accountRef: stableRef,
+    accountRef: z.string().regex(ACCOUNT_UUID),
     subjectRef: stableRef,
     workspaceRef: stableRef,
     projectRef: stableRef,
     billingAccountRef: stableRef,
     executionSpaceRef: stableRef,
-    executionNamespace: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$/u),
+    executionNamespace: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{31,127}$/u),
   }).strict(),
   externalEmptyAgentCatalogRef: z.string().regex(/^agent-catalog:sha256:[a-f0-9]{64}$/u),
 }).strict().superRefine((value, context) => {
@@ -97,6 +108,11 @@ const documentSchema = z.object({
 
 export type CoreSingleSiteBootstrapDocument = Readonly<z.infer<typeof documentSchema>>;
 export type CoreBootstrapSecretDigests = Readonly<{ password: string; redemptionEntropy: string }>;
+export type CoreSingleSiteBootstrapSecretMaterial = Readonly<{
+  password: string;
+  redemptionEntropySecret: Uint8Array;
+  secretDigests: CoreBootstrapSecretDigests;
+}>;
 
 export async function loadCoreSingleSiteBootstrapDocument(
   path: string,
@@ -160,14 +176,22 @@ export function coreBootstrapIdempotencyKey(bootstrapId: string, step: string): 
 export async function coreBootstrapSecretDigests(
   document: CoreSingleSiteBootstrapDocument,
 ): Promise<CoreBootstrapSecretDigests> {
+  return (await loadCoreSingleSiteBootstrapSecretMaterial(document)).secretDigests;
+}
+
+export async function loadCoreSingleSiteBootstrapSecretMaterial(
+  document: CoreSingleSiteBootstrapDocument,
+): Promise<CoreSingleSiteBootstrapSecretMaterial> {
   const [password, entropy] = await Promise.all([
     readPrivateFile(document.identity.passwordFile, 4096, "secret"),
     readPrivateFile(document.redemption.entropyKeyFile, 4096, "secret"),
   ]);
-  return Object.freeze({
+  const redemptionEntropySecret = new TextEncoder().encode(entropy);
+  const secretDigests = Object.freeze({
     password: createHash("sha256").update(password, "utf8").digest("hex"),
-    redemptionEntropy: createHash("sha256").update(entropy, "utf8").digest("hex"),
+    redemptionEntropy: createHash("sha256").update(redemptionEntropySecret).digest("hex"),
   });
+  return Object.freeze({ password, redemptionEntropySecret, secretDigests });
 }
 
 async function readPrivateFile(path: string, maximum: number, kind: "document" | "secret"): Promise<string> {

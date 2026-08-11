@@ -26,17 +26,8 @@ export class CommerceAdministrationService {
     expiresAfterSeconds: string | null;
   }>) {
     const actor = adminActor(input.context, input.siteId, "commerce.credit-program.publish");
-    const window = creditWindow(input.uxBucketClass, input.rolloverPolicy,
-      input.calendarZone, input.windowAnchor,
-      input.expiresAfterSeconds);
-    const payload = Object.freeze({
-      siteId: boundedSite(input.siteId), creditProgramRevisionRef: bounded(input.creditProgramRevisionRef),
-      programRef: bounded(input.programRef), revision: positiveInteger(input.revision),
-      uxBucketClass: input.uxBucketClass, unit: boundedUnit(input.unit), amount: positiveDecimal(input.amount),
-      burnPriority: signedInteger(input.burnPriority), scopePolicy: creditScopePolicy(input.scopePolicy),
-      liabilityMerchantAccountRef: bounded(input.liabilityMerchantAccountRef), ...window,
-    });
-    const revisionDigest = digest({ version: 1, ...payload });
+    const payload = canonicalCommerceCreditProgramPayload(input);
+    const revisionDigest = commerceAdministrationDigest({ version: 1, ...payload });
     const command = commandIdentity(input, actor.subjectId, "commerce.credit-program.publish", revisionDigest);
     const result = await this.dependencies.unitOfWork.execute(
       { context: input.context, operation: command.operation },
@@ -61,7 +52,7 @@ export class CommerceAdministrationService {
       capabilityKey: capabilityKey(input.capabilityKey), safeLabel: boundedLabel(input.safeLabel),
       expiresAfterSeconds: input.expiresAfterSeconds === null ? null : positiveInteger(input.expiresAfterSeconds),
     });
-    const revisionDigest = digest({ version: 1, ...payload });
+    const revisionDigest = commerceAdministrationDigest({ version: 1, ...payload });
     const command = commandIdentity(input, actor.subjectId, "commerce.entitlement-template.publish", revisionDigest);
     const result = await this.dependencies.unitOfWork.execute(
       { context: input.context, operation: command.operation },
@@ -88,27 +79,16 @@ export class CommerceAdministrationService {
     legalTermRefs: readonly string[];
   }>) {
     const actor = adminActor(input.context, input.siteId, "commerce.offer.publish");
-    const outputs = validateOutputs(input.outputs);
-    const legalTermRefs = uniqueBounded(input.legalTermRefs, 16);
-    const planVersion = validatePlanVersion(input.planVersion);
-    validateProductShape(input.productKind, planVersion, outputs);
-    const payload = Object.freeze({
-      siteId: bounded(input.siteId), productRef: bounded(input.productRef), productKind: input.productKind,
-      productVersionRef: bounded(input.productVersionRef), productRevision: positiveInteger(input.productRevision),
-      safeLabel: boundedLabel(input.safeLabel), planVersion,
-      fulfillmentProgramRevisionRef: bounded(input.fulfillmentProgramRevisionRef),
-      fulfillmentProgramRef: bounded(input.fulfillmentProgramRef),
-      fulfillmentProgramRevision: positiveInteger(input.fulfillmentProgramRevision),
-      outputs, legalTermRefs,
-    });
-    const offerDigest = digest({ version: 1, ...payload });
+    const payload = canonicalCommerceOfferPayload(input);
+    const planVersion = payload.planVersion;
+    const offerDigest = commerceAdministrationDigest({ version: 1, ...payload });
     const command = commandIdentity(input, actor.subjectId, "commerce.offer.publish", offerDigest);
     const result = await this.dependencies.unitOfWork.execute(
       { context: input.context, operation: command.operation },
       (transaction) => this.dependencies.repository.publishOffer(transaction, {
         ...actor, command, ...payload, offerDigest,
         planVersion: planVersion === null ? null : {
-          ...planVersion, revisionDigest: digest({ version: 1, ...planVersion }),
+          ...planVersion, revisionDigest: commerceAdministrationDigest({ version: 1, ...planVersion }),
         },
       }),
     );
@@ -121,16 +101,11 @@ export class CommerceAdministrationService {
     fulfillmentProgramRevisionRef: string; maxRedemptionsPerAccount: number;
   }>) {
     const actor = adminActor(input.context, input.siteId, "commerce.redemption-program.publish");
-    const payload = Object.freeze({
-      siteId: input.siteId, redemptionProgramRevisionRef: bounded(input.redemptionProgramRevisionRef),
-      programRef: bounded(input.programRef), revision: positiveInteger(input.revision),
-      productVersionRef: bounded(input.productVersionRef), fulfillmentProgramRevisionRef: bounded(input.fulfillmentProgramRevisionRef),
-      maxRedemptionsPerAccount: boundedCount(input.maxRedemptionsPerAccount, 10_000),
-    });
-    const command = commandIdentity(input, actor.subjectId, "commerce.redemption-program.publish", digest(payload));
+    const payload = canonicalCommerceRedemptionProgramPayload(input);
+    const command = commandIdentity(input, actor.subjectId, "commerce.redemption-program.publish", commerceAdministrationDigest(payload));
     const result = await this.dependencies.unitOfWork.execute({ context: input.context, operation: command.operation }, (transaction) =>
       this.dependencies.repository.publishProgram(transaction, {
-        ...actor, command, ...payload, programDigest: digest({ version: 1, ...payload }),
+        ...actor, command, ...payload, programDigest: commerceAdministrationDigest({ version: 1, ...payload }),
       }));
     return Object.freeze({ kind: result.kind, command: result.command, recordedAt: result.recordedAt,
       redemptionProgramRevisionRef: result.result.redemptionProgramRevisionRef,
@@ -147,7 +122,7 @@ export class CommerceAdministrationService {
     const startsAt = nullableInstant(input.startsAt); const endsAt = nullableInstant(input.endsAt);
     if (startsAt !== null && endsAt !== null && Date.parse(endsAt) <= Date.parse(startsAt)) throw new Error("CODE_BATCH_WINDOW_INVALID");
     const payload = { siteId: input.siteId, batchRef, redemptionProgramRevisionRef, count, startsAt, endsAt };
-    const command = commandIdentity(input, actor.subjectId, "commerce.code-batch.issue", digest(payload));
+    const command = commandIdentity(input, actor.subjectId, "commerce.code-batch.issue", commerceAdministrationDigest(payload));
     const result = await this.dependencies.unitOfWork.execute({ context: input.context, operation: command.operation }, (transaction) =>
       this.dependencies.repository.issueBatch(transaction, {
         ...actor, command, batchRef, redemptionProgramRevisionRef, count, startsAt, endsAt,
@@ -157,7 +132,7 @@ export class CommerceAdministrationService {
           const batchSelector = one(issued.map((item) => item.batchSelector), "CODE_ISSUANCE_BATCH_SELECTOR_CHANGED");
           const rawCodes = issued.map((item) => item.code);
           return Object.freeze({ keyRevision, batchSelector, rawCodes: Object.freeze(rawCodes),
-            exportDigest: digest({ version: 1, batchRef, codes: rawCodes }),
+            exportDigest: commerceAdministrationDigest({ version: 1, batchRef, codes: rawCodes }),
             codes: Object.freeze(issued.map((item) => Object.freeze({
               codeRef: (this.dependencies.reference ?? randomUUID)(), lookupDigest: item.lookupDigest,
               safeFingerprint: item.safeFingerprint,
@@ -182,7 +157,12 @@ export class CommerceAdministrationService {
 
   async approveBatch(input: CommandInput & Readonly<{ batchRef: string }>) {
     const actor = adminActor(input.context, input.siteId, "commerce.code-batch.approve");
-    const batchRef = uuid(input.batchRef); const approvalDigest = digest({ version: 1, siteId: input.siteId, batchRef, checker: actor.subjectId });
+    const batchRef = uuid(input.batchRef);
+    const approvalDigest = commerceCodeBatchApprovalDigest({
+      siteId: input.siteId,
+      batchRef,
+      checker: actor.subjectId,
+    });
     const command = commandIdentity(input, actor.subjectId, "commerce.code-batch.approve", approvalDigest);
     const result = await this.dependencies.unitOfWork.execute({ context: input.context, operation: command.operation }, (transaction) =>
       this.dependencies.repository.approveBatch(transaction, { ...actor, command, batchRef, approvalDigest }));
@@ -193,7 +173,7 @@ export class CommerceAdministrationService {
   async activateBatch(input: CommandInput & Readonly<{ batchRef: string }>) {
     const actor = adminActor(input.context, input.siteId, "commerce.code-batch.activate");
     const batchRef = uuid(input.batchRef);
-    const command = commandIdentity(input, actor.subjectId, "commerce.code-batch.activate", digest({ version: 1, siteId: input.siteId, batchRef }));
+    const command = commandIdentity(input, actor.subjectId, "commerce.code-batch.activate", commerceAdministrationDigest({ version: 1, siteId: input.siteId, batchRef }));
     const result = await this.dependencies.unitOfWork.execute({ context: input.context, operation: command.operation }, (transaction) =>
       this.dependencies.repository.activateBatch(transaction, { ...actor, command, batchRef }));
     return Object.freeze({ kind: result.kind, command: result.command, recordedAt: result.recordedAt,
@@ -221,7 +201,7 @@ export class CommerceAdministrationService {
     const actor = adminActor(input.context, input.siteId, operation);
     const batchRef = uuid(input.batchRef);
     const reason = boundedReason(input.reason);
-    const reasonDigest = digest({ version: 1, siteId: input.siteId, batchRef, reason });
+    const reasonDigest = commerceAdministrationDigest({ version: 1, siteId: input.siteId, batchRef, reason });
     const command = commandIdentity(input, actor.subjectId, operation, reasonDigest);
     const result = await this.dependencies.unitOfWork.execute(
       { context: input.context, operation },
@@ -230,6 +210,126 @@ export class CommerceAdministrationService {
     return Object.freeze({ kind: result.kind, command: result.command, recordedAt: result.recordedAt,
       ...result.result });
   }
+}
+
+export function canonicalCommerceCreditProgramPayload(input: Readonly<{
+  siteId: string;
+  creditProgramRevisionRef: string;
+  programRef: string;
+  revision: string;
+  uxBucketClass: "daily" | "period" | "permanent";
+  unit: string;
+  amount: string;
+  burnPriority: number;
+  scopePolicy: Readonly<{
+    surfaceRefs: readonly string[];
+    capabilityKeys: readonly string[];
+    agentRefs: readonly string[];
+    allowUnattributedAgent: boolean;
+  }>;
+  liabilityMerchantAccountRef: string;
+  rolloverPolicy: "none";
+  calendarZone: string | null;
+  windowAnchor: string | null;
+  expiresAfterSeconds: string | null;
+}>) {
+  const window = creditWindow(input.uxBucketClass, input.rolloverPolicy,
+    input.calendarZone, input.windowAnchor, input.expiresAfterSeconds);
+  return Object.freeze({
+    siteId: boundedSite(input.siteId),
+    creditProgramRevisionRef: bounded(input.creditProgramRevisionRef),
+    programRef: bounded(input.programRef),
+    revision: positiveInteger(input.revision),
+    uxBucketClass: input.uxBucketClass,
+    unit: boundedUnit(input.unit),
+    amount: positiveDecimal(input.amount),
+    burnPriority: signedInteger(input.burnPriority),
+    scopePolicy: canonicalCommerceCreditScopePolicy(input.scopePolicy),
+    liabilityMerchantAccountRef: bounded(input.liabilityMerchantAccountRef),
+    ...window,
+  });
+}
+
+export function canonicalCommerceOfferPayload(input: Readonly<{
+  siteId: string;
+  productRef: string;
+  productKind: "free" | "credit_pack" | "subscription" | "bundle";
+  productVersionRef: string;
+  productRevision: string;
+  safeLabel: string;
+  planVersion: Readonly<{
+    planRef: string;
+    planVersionRef: string;
+    revision: string;
+    safeLabel: string;
+    termAction: "none" | "new_subscription" | "extend_from_max" | "reject_if_active";
+    termSeconds: string | null;
+    stackingScope: string;
+  }> | null;
+  fulfillmentProgramRevisionRef: string;
+  fulfillmentProgramRef: string;
+  fulfillmentProgramRevision: string;
+  outputs: readonly Readonly<{
+    outputLineId: string;
+    ordinal: number;
+    cardinality: number;
+    outputKind: "subscription_term" | "entitlement_grant" | "credit_grant" |
+      "credit_program_enrollment";
+    targetRevisionRef: string;
+  }>[];
+  legalTermRefs: readonly string[];
+}>) {
+  const outputs = validateOutputs(input.outputs);
+  const legalTermRefs = uniqueBounded(input.legalTermRefs, 16);
+  const planVersion = validatePlanVersion(input.planVersion);
+  validateProductShape(input.productKind, planVersion, outputs);
+  return Object.freeze({
+    siteId: bounded(input.siteId),
+    productRef: bounded(input.productRef),
+    productKind: input.productKind,
+    productVersionRef: bounded(input.productVersionRef),
+    productRevision: positiveInteger(input.productRevision),
+    safeLabel: boundedLabel(input.safeLabel),
+    planVersion,
+    fulfillmentProgramRevisionRef: bounded(input.fulfillmentProgramRevisionRef),
+    fulfillmentProgramRef: bounded(input.fulfillmentProgramRef),
+    fulfillmentProgramRevision: positiveInteger(input.fulfillmentProgramRevision),
+    outputs,
+    legalTermRefs,
+  });
+}
+
+export function canonicalCommerceRedemptionProgramPayload(input: Readonly<{
+  siteId: string;
+  redemptionProgramRevisionRef: string;
+  programRef: string;
+  revision: string;
+  productVersionRef: string;
+  fulfillmentProgramRevisionRef: string;
+  maxRedemptionsPerAccount: number;
+}>) {
+  return Object.freeze({
+    siteId: boundedSite(input.siteId),
+    redemptionProgramRevisionRef: bounded(input.redemptionProgramRevisionRef),
+    programRef: bounded(input.programRef),
+    revision: positiveInteger(input.revision),
+    productVersionRef: bounded(input.productVersionRef),
+    fulfillmentProgramRevisionRef: bounded(input.fulfillmentProgramRevisionRef),
+    maxRedemptionsPerAccount: boundedCount(input.maxRedemptionsPerAccount, 10_000),
+  });
+}
+
+export function commerceCodeBatchApprovalDigest(input: Readonly<{
+  siteId: string;
+  batchRef: string;
+  checker: string;
+}>): string {
+  return commerceAdministrationDigest({
+    version: 1,
+    siteId: boundedSite(input.siteId),
+    batchRef: uuid(input.batchRef),
+    checker: bounded(input.checker),
+  });
 }
 
 function adminActor(context: VerifiedRequestSecurityContext, siteId: string, operation: string) {
@@ -244,7 +344,11 @@ function commandIdentity(input: CommandInput, subjectId: string, operation: stri
     callerIdentity: `${input.context.trustedCaller.workloadIdentityId}:${subjectId}`, operation,
     idempotencyKey: bounded(input.idempotencyKey), requestDigest: authoritativeDigest });
 }
-function digest(value: Parameters<typeof commerceCanonicalJson>[0]): string { return createHash("sha256").update(commerceCanonicalJson(value)).digest("hex"); }
+export function commerceAdministrationDigest(
+  value: Parameters<typeof commerceCanonicalJson>[0],
+): string {
+  return createHash("sha256").update(commerceCanonicalJson(value)).digest("hex");
+}
 function bounded(value: string): string { if (value.length < 1 || value.length > 256) throw new Error("COMMERCE_ADMIN_INPUT_INVALID"); return value; }
 function boundedLabel(value: string): string {
   const codePoints = [...value].length;
@@ -285,7 +389,7 @@ function signedInteger(value: number): number {
   }
   return value;
 }
-function creditScopePolicy(value: Readonly<{ surfaceRefs: readonly string[]; capabilityKeys: readonly string[];
+export function canonicalCommerceCreditScopePolicy(value: Readonly<{ surfaceRefs: readonly string[]; capabilityKeys: readonly string[];
   agentRefs: readonly string[]; allowUnattributedAgent: boolean }>) {
   return Object.freeze({ version: 1 as const,
     surfaceRefs: policyRefs(value.surfaceRefs, true, /^[a-z0-9][a-z0-9._:-]{0,255}$/u),

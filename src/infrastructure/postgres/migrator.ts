@@ -2294,6 +2294,12 @@ async function grantFoundationPrivileges(
     await client.query(
       `REVOKE ALL ON FUNCTION ${COMMERCE_PUBLIC_LOCK_ROUTINES_SQL} FROM ${identifier}`,
     );
+    await client.query(
+      `REVOKE ALL ON FUNCTION ` +
+        `platform.core_single_site_bootstrap_identity_ready(text,uuid,text,text,text,text,text,text), ` +
+        `platform.core_single_site_bootstrap_model_catalog_ready(text,text,text) ` +
+        `FROM ${identifier}`,
+    );
     if (role === apiRole) {
       await client.query(
         `GRANT SELECT ON TABLE ${KERNEL_TABLES}, ${AUTHORIZATION_TABLES}, ${IDENTITY_TABLES}, ${COMMERCE_TABLES}, ${ASSET_API_TABLES}, platform.site, platform.site_release TO ${identifier}`,
@@ -2504,6 +2510,12 @@ async function grantFoundationPrivileges(
       );
       await client.query(
         `GRANT EXECUTE ON FUNCTION platform.valid_credit_scope_policy(JSONB), platform.commerce_safe_label_is_valid(TEXT), platform.commerce_iana_zone_is_valid(TEXT) TO ${identifier}`,
+      );
+      await client.query(
+        `GRANT EXECUTE ON FUNCTION ` +
+          `platform.core_single_site_bootstrap_identity_ready(text,uuid,text,text,text,text,text,text), ` +
+          `platform.core_single_site_bootstrap_model_catalog_ready(text,text,text) ` +
+          `TO ${identifier}`,
       );
     }
   }
@@ -2865,6 +2877,7 @@ async function assertPostMigrationAuthority(
         row.admissionModelGatewayAuthorityExact !== (row.roleName === admissionRole) ||
         row.hasRequiredAdmissionExecutionRootFunctions !== (row.roleName === admissionRole) ||
         row.hasRequiredModelOptionFunctions !== true ||
+        row.hasRequiredCoreBootstrapReadbackFunctions !== true ||
         row.hasRequiredProductCatalogPrivileges !== true ||
         row.hasRequiredSitePublicationPrivileges !== true ||
         row.canSelectModelCatalogTable !== (row.roleName === adminRole) ||
@@ -3353,6 +3366,37 @@ const POST_MIGRATION_AUTHORITY_SQL = `
             AND has_function_privilege(runtime_role.rolname,'platform.materialize_model_options(uuid,text,text,text,text,jsonb,text)','EXECUTE')
             AND has_function_privilege(runtime_role.rolname,'platform.publish_site_release_model_catalog(uuid,jsonb,text)','EXECUTE')
           ELSE TRUE END AS "hasRequiredModelOptionFunctions"
+         ,((SELECT count(*)=2 AND bool_and(
+               routine.proowner=platform_schema.nspowner
+               AND routine.prosecdef
+               AND routine.provolatile='s'::"char"
+               AND COALESCE(cardinality(routine.proconfig),0)=1
+               AND EXISTS (
+                 SELECT 1
+                 FROM unnest(COALESCE(routine.proconfig,ARRAY[]::text[])) setting(value)
+                 WHERE replace(setting.value,' ','')='search_path=pg_catalog,platform'
+               )
+             )
+             FROM pg_proc routine
+             WHERE routine.oid=ANY(ARRAY[
+               to_regprocedure('platform.core_single_site_bootstrap_identity_ready(text,uuid,text,text,text,text,text,text)'),
+               to_regprocedure('platform.core_single_site_bootstrap_model_catalog_ready(text,text,text)')
+             ]))
+           AND CASE WHEN runtime_role.rolname=$4 THEN
+             has_function_privilege(runtime_role.rolname,
+               'platform.core_single_site_bootstrap_identity_ready(text,uuid,text,text,text,text,text,text)',
+               'EXECUTE')
+             AND has_function_privilege(runtime_role.rolname,
+               'platform.core_single_site_bootstrap_model_catalog_ready(text,text,text)',
+               'EXECUTE')
+           ELSE
+             NOT has_function_privilege(runtime_role.rolname,
+               'platform.core_single_site_bootstrap_identity_ready(text,uuid,text,text,text,text,text,text)',
+               'EXECUTE')
+             AND NOT has_function_privilege(runtime_role.rolname,
+               'platform.core_single_site_bootstrap_model_catalog_ready(text,text,text)',
+               'EXECUTE')
+           END) AS "hasRequiredCoreBootstrapReadbackFunctions"
          ,CASE WHEN runtime_role.rolname=$4 THEN
            has_column_privilege(runtime_role.rolname,'platform.model_inventory_import','import_id','SELECT')
            AND has_column_privilege(runtime_role.rolname,'platform.model_inventory_import','source_digest','SELECT')
@@ -3905,7 +3949,9 @@ const POST_MIGRATION_AUTHORITY_SQL = `
                  to_regprocedure('platform.commerce_safe_label_is_valid(text)'),
                  to_regprocedure('platform.commerce_iana_zone_is_valid(text)'),
                  to_regprocedure('platform.site_evidence_resolver_role_is_current()'),
-                 to_regprocedure('platform.site_evidence_owner_role_is_current()')
+                 to_regprocedure('platform.site_evidence_owner_role_is_current()'),
+                 to_regprocedure('platform.core_single_site_bootstrap_identity_ready(text,uuid,text,text,text,text,text,text)'),
+                 to_regprocedure('platform.core_single_site_bootstrap_model_catalog_ready(text,text,text)')
                ]))
                OR (runtime_role.rolname = $1 AND candidate_function.oid = ANY(ARRAY[
                  to_regprocedure('platform.resolve_model_candidates(text,text,text)'),

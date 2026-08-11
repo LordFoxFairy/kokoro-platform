@@ -28,7 +28,7 @@ export interface RedemptionSecretPort {
 }
 
 export interface RedemptionCodeIssuancePort {
-  issueCode(siteId: string, batchRef: string): Readonly<{
+  issueCode(siteId: string, batchRef: string, keyRevision?: string): Readonly<{
     code: string;
     keyRevision: string;
     batchSelector: string;

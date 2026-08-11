@@ -41,10 +41,16 @@ export function createRedemptionSecretCodec(
 
   return Object.freeze({
     currentCodeLookupKeyRevision: config.currentCodeLookupKeyRevision,
-    issueCode(siteId: string, batchRef: string) {
+    issueCode(
+      siteId: string,
+      batchRef: string,
+      keyRevision: string = config.currentCodeLookupKeyRevision,
+    ) {
       bounded(siteId, 256, "REDEMPTION_SITE_INVALID");
       if (!UUID.test(batchRef)) throw new Error("REDEMPTION_BATCH_REF_INVALID");
-      const keyRevision = config.currentCodeLookupKeyRevision;
+      if (!KEY_REVISION.test(keyRevision) || !codeKeys.has(keyRevision)) {
+        throw new Error("REDEMPTION_CODE_KEY_RETIRED");
+      }
       const keySelector = selector(keyRevision, 8);
       const batchSelector = selector(batchRef, 10);
       const entropy = Uint8Array.from(entropySource());
@@ -55,7 +61,8 @@ export function createRedemptionSecretCodec(
       const normalized = normalizeCode(code);
       return Object.freeze({
         code, keyRevision, batchSelector,
-        lookupDigest: hmac(codeKeys.get(keyRevision)!, "kokoro.commerce.code-lookup.v1", `${siteId}\0${normalized}`),
+        lookupDigest: hmac(codeKeys.get(keyRevision)!, "kokoro.commerce.code-lookup.v1",
+          `${siteId}\0${normalized}`),
         safeFingerprint: `CODE-${hmac(auditKey, "kokoro.commerce.safe-code-fingerprint.v1", `${siteId}\0${normalized}`).slice(0, 16).toUpperCase()}`,
       });
     },

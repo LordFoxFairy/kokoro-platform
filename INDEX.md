@@ -17,6 +17,13 @@ process-specific grants enforce the internal boundaries. Split workers additiona
 migrator-maintained PostgreSQL role OID and use only operation-fenced security-definer routines for authority row locks; no worker
 receives broad authority-table UPDATE. This PostgreSQL implementation is the sole business authority.
 
+The compiled `platform-core-single-site-bootstrap` selector is a one-shot production orchestrator,
+not another authority. It composes the existing Admin, API, Site worker and Identity worker owners
+with four distinct credential URLs, publishes the empty Hub capability catalog through the mTLS
+Hub Connect boundary, and emits only a safe result plus a private deterministic redemption code.
+An adjacent private pair descriptor binds both output digests and the persisted code identity so a
+crash or concurrent retry cannot publish a code beside a conflicting completion result.
+
 Admission uses a run-scoped `kt_pg_*` login rather than a fixed database role. The migrator owns its
 lease transition through the bounded `admission-role-lease.ts` authority. One PostgreSQL identity row
 moves `active(current, epoch)` → `draining(current, pending, retiring name/OID pairs)` →
@@ -93,6 +100,14 @@ Commerce, Site, Asset, Admin and Identity workers consume only their owner-filte
 health and drain lifecycles. Authorization retention is a one-shot scheduled maintenance process guarded by a PostgreSQL
 advisory lock. Identity verification delivery uses signed, idempotent HTTPS and Identity namespace allocation commits as a
 local projection; none of these paths self-call Platform RPC.
+
+Core bootstrap recovery first reads the stable configuration command receipt and every materialized
+owner fact in one admin-only read-only transaction. A completed matching deployment can reconstruct
+and republish its code/result without reading expired maker/checker attestations; pending or missing
+effects require fresh signed authority before any new write. Bootstrap Identity processing installs a
+fail-if-called verification-delivery port and accepts only the local namespace projection. A code that
+has already been claimed or voided is verify-only: recovery succeeds only when the existing result,
+code and pair descriptor are exact and never recreates an exported secret.
 
 ## Extension rules and forbidden dependencies
 

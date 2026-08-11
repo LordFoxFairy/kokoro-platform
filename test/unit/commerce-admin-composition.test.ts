@@ -84,6 +84,24 @@ describe("production Commerce administration composition", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("exposes the injected deterministic issuance codec to one-shot administration", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kokoro-admin-commerce-entropy-"));
+    try {
+      const path = join(root, "commerce-redemption-keys.json");
+      await writeKeyRing(path, 0o400);
+      const production = await createCommerceAdministrationComposition({
+        database: {} as never,
+        environment: { PLATFORM_COMMERCE_REDEMPTION_KEY_RING_FILE: path },
+        entropySource: () => new Uint8Array(20).fill(7),
+      });
+      const first = production.codes.issueCode("site:core", "00000000-0000-4000-8000-000000000001");
+      const replay = production.codes.issueCode("site:core", "00000000-0000-4000-8000-000000000001");
+      expect(replay).toEqual(first);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 function compose(path: string) {

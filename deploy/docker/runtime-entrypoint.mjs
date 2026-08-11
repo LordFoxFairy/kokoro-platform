@@ -49,6 +49,10 @@ const serviceEntries = Object.freeze({
     module: "../../dist/src/process/authorization-maintenance.js",
     start: "runPlatformAuthorizationMaintenanceMain",
   },
+  "platform-core-single-site-bootstrap": {
+    module: "../../dist/src/process/core-single-site-bootstrap.js",
+    start: "runCoreSingleSiteBootstrapMain",
+  },
   "platform-migrator": {
     module: "../../dist/src/infrastructure/postgres/migrator.js",
     start: "runPlatformMigrations",
