@@ -3,7 +3,7 @@ import { createRedemptionSecretCodec } from "../../src/modules/commerce/infrastr
 import { RedemptionInputError } from "../../src/modules/commerce/domain/redemption-input-error.js";
 
 describe("Commerce redemption secret codec", () => {
-  const codec = createRedemptionSecretCodec({
+  const config = {
     currentCodeLookupKeyRevision: "code-2026-07",
     codeLookupKeys: [
       { keyRevision: "code-2026-06", key: Buffer.alloc(32, 4) },
@@ -15,6 +15,26 @@ describe("Commerce redemption secret codec", () => {
       { keyRevision: "preview-2026-07", key: Buffer.alloc(32, 2) },
     ],
     requestAuditKey: Buffer.alloc(32, 3),
+  } as const;
+  const codec = createRedemptionSecretCodec(config);
+
+  it("keeps production issuance random while allowing one injected 20-byte recovery source", () => {
+    const firstDefault = createRedemptionSecretCodec(config)
+      .issueCode("site-1", "00000000-0000-7000-8000-000000000111");
+    const secondDefault = createRedemptionSecretCodec(config)
+      .issueCode("site-1", "00000000-0000-7000-8000-000000000111");
+    expect(firstDefault.code).not.toBe(secondDefault.code);
+
+    const entropy = () => Buffer.alloc(20, 7);
+    const first = createRedemptionSecretCodec(config, { entropySource: entropy })
+      .issueCode("site-1", "00000000-0000-7000-8000-000000000111");
+    const recreated = createRedemptionSecretCodec(config, { entropySource: entropy })
+      .issueCode("site-1", "00000000-0000-7000-8000-000000000111");
+    expect(recreated).toEqual(first);
+    expect(first.code).toMatch(/^KC1-[0-9A-HJKMNP-TV-Z]{8}-[0-9A-HJKMNP-TV-Z]{10}-[0-9A-HJKMNP-TV-Z]{32}-[0-9A-HJKMNP-TV-Z]{8}$/u);
+    expect(() => createRedemptionSecretCodec(config, { entropySource: () => Buffer.alloc(19) })
+      .issueCode("site-1", "00000000-0000-7000-8000-000000000111"))
+      .toThrow("REDEMPTION_ENTROPY_INVALID");
   });
 
   it("issues a high-entropy selector/checksum/batch-bound code and resolves exactly one key", () => {

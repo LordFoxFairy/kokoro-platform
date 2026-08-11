@@ -17,10 +17,16 @@ export type RedemptionSecretCodecConfig = Readonly<{
   requestAuditKey: Uint8Array;
 }>;
 
-export function createRedemptionSecretCodec(config: RedemptionSecretCodecConfig): RedemptionSecretPort & RedemptionCodeIssuancePort {
+export type RedemptionEntropySource = () => Uint8Array;
+
+export function createRedemptionSecretCodec(
+  config: RedemptionSecretCodecConfig,
+  dependencies: Readonly<{ entropySource?: RedemptionEntropySource }> = {},
+): RedemptionSecretPort & RedemptionCodeIssuancePort {
   const codeKeys = keyMap(config.codeLookupKeys, config.currentCodeLookupKeyRevision);
   const previewKeys = keyMap(config.previewCredentialKeys, config.currentPreviewCredentialKeyRevision);
   const auditKey = ownedKey(config.requestAuditKey);
+  const entropySource = dependencies.entropySource ?? (() => randomBytes(20));
   const codeSelectors = new Map([...codeKeys].map(([revision, key]) => [selector(revision, 8), [revision, key] as const]));
   if (codeSelectors.size !== codeKeys.size) throw new Error("REDEMPTION_KEY_SELECTOR_COLLISION");
 
@@ -41,7 +47,9 @@ export function createRedemptionSecretCodec(config: RedemptionSecretCodecConfig)
       const keyRevision = config.currentCodeLookupKeyRevision;
       const keySelector = selector(keyRevision, 8);
       const batchSelector = selector(batchRef, 10);
-      const payload = base32(randomBytes(20));
+      const entropy = Uint8Array.from(entropySource());
+      if (entropy.byteLength !== 20) throw new Error("REDEMPTION_ENTROPY_INVALID");
+      const payload = base32(entropy);
       const prefix = `KC1-${keySelector}-${batchSelector}-${payload}`;
       const code = `${prefix}-${selector(prefix, 8)}`;
       const normalized = normalizeCode(code);
