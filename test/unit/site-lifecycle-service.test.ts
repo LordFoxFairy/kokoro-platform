@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { SiteLifecycleService } from "../../src/modules/site/application/services/site-lifecycle-service.js";
+import { siteActivationEffectDigest } from
+  "../../src/modules/site/application/contracts/site-effect-approval.js";
 import type {
   SiteAuthorityJournal,
   SiteAuthorityRepository,
@@ -28,6 +30,7 @@ describe("SiteLifecycleService", () => {
   it("persists an exact activation intent with its receipt and outbox in one owner transaction", async () => {
     const calls: string[] = [];
     let saved: ActivationAttempt | null = null;
+    let consumedEffectDigest: string | undefined;
     const repository: SiteAuthorityRepository = {
       loadActiveProjectBindingForUpdate: async () => ({ bindingRef: "binding_01", bindingEpoch: 1n }),
       reserveRuntimeBindingEpoch: async () => 4n,
@@ -49,7 +52,10 @@ describe("SiteLifecycleService", () => {
     };
     const service = new SiteLifecycleService(unitOfWork(), repository, journal, {
       now: () => "2026-07-28T12:00:00.000Z",
-      approvalAuthority: { consume: async (transaction) => { calls.push(`approval:${token(transaction)}`); } },
+      approvalAuthority: { consume: async (transaction, input) => {
+        calls.push(`approval:${token(transaction)}`);
+        consumedEffectDigest = input.effectDigest;
+      } },
       preconditions: { assertCapabilityCatalogSnapshot: async (transaction) => {
         calls.push(`capability:${token(transaction)}`);
       } },
@@ -73,6 +79,15 @@ describe("SiteLifecycleService", () => {
       recordedAt: "2026-07-28T12:00:00.000Z" });
     expect(saved).toMatchObject({ candidateReleaseRef: "release_02", expectedActiveReleaseRef: "release_01" });
     expect(saved).toMatchObject({ runtimeBindingEpoch: 4n });
+    expect(consumedEffectDigest).toBe(siteActivationEffectDigest({
+      siteRef: "site_01",
+      candidateReleaseRef: "release_02",
+      expectedActiveReleaseRef: "release_01",
+      activationFactsDigest: `sha256:${"f".repeat(64)}`,
+      audience: "site-product",
+      sessionContractRevision: "browser-v3",
+      reason: "launch approved",
+    }));
     expect(new Set(calls.map((value) => value.split(":")[1]))).toEqual(new Set(["one"]));
     expect(calls.map((value) => value.split(":")[0])).toEqual([
       "begin", "approval", "site", "release", "capability", "insert", "succeed",

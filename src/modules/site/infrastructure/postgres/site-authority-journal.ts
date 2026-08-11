@@ -36,25 +36,26 @@ export class PostgresSiteAuthorityJournal implements SiteAuthorityJournal {
     receipt: SiteAuthorityReceipt,
     context: Parameters<SiteAuthorityJournal["succeed"]>[3],
   ): Promise<void> {
-    const payload = jsonValue({ ...receipt, replayed: undefined });
-    const payloadDigest = digest(payload);
+    const receiptPayload = jsonValue({ ...receipt, replayed: undefined });
+    const receiptDigest = digest(receiptPayload);
     const eventType = siteEffectEventType(command.operation);
     if (!receipt.replayed && eventType !== null) {
+      const eventPayload = jsonValue({ attemptRef: receipt.attemptRef, state: receipt.state });
       await this.effectQueue.enqueue(transaction, {
         eventId: eventId(command.commandId),
         owner: "site",
         eventType,
         aggregateId: command.siteRef,
-        payload,
-        payloadDigest,
+        payload: eventPayload,
+        payloadDigest: digest(eventPayload),
         correlationId: context.correlationId,
         causationId: context.requestId,
       });
     }
     await this.receipts.recordOutcome(transaction, identity(command), {
       state: "succeeded",
-      result: payload,
-      resultDigest: payloadDigest,
+      result: receiptPayload,
+      resultDigest: receiptDigest,
     });
   }
 }

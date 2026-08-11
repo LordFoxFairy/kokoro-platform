@@ -59,13 +59,25 @@ export function siteActivationEffectDigest(input: Readonly<{
   siteRef: string; candidateReleaseRef: string; expectedActiveReleaseRef: string | null;
   activationFactsDigest: string; audience: string; sessionContractRevision: string; reason: string;
 }>): string {
-  return effectDigest("site.activation.begin", input);
+  return effectDigest("site.activation.begin", {
+    siteRef: input.siteRef,
+    candidateReleaseRef: input.candidateReleaseRef,
+    expectedActiveReleaseRef: input.expectedActiveReleaseRef,
+    activationFactsDigest: input.activationFactsDigest,
+    audience: input.audience,
+    sessionContractRevision: input.sessionContractRevision,
+    reason: input.reason,
+  });
 }
 
 export function siteTrafficStopEffectDigest(input: Readonly<{
   siteRef: string; action: "suspend" | "decommission"; reason: string;
 }>): string {
-  return effectDigest(`site.traffic-stop.${input.action}`, input);
+  return effectDigest(`site.traffic-stop.${input.action}`, {
+    siteRef: input.siteRef,
+    action: input.action,
+    reason: input.reason,
+  });
 }
 
 function effectDigest(operation: string, input: object): string {

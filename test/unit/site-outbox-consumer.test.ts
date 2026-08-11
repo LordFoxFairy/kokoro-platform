@@ -9,8 +9,64 @@ import {
   SiteOutboxConsumer,
   type SiteRuntimeEventQueue,
 } from "../../src/modules/site/infrastructure/postgres/site-outbox-consumer.js";
+import { PostgresSiteAuthorityJournal } from
+  "../../src/modules/site/infrastructure/postgres/site-authority-journal.js";
+import { issuePlatformTransaction, revokePlatformTransaction } from
+  "../../src/shared/unit-of-work/platform-transaction.js";
 
 describe("SiteOutboxConsumer", () => {
+  it("dispatches the exact provider-effect projection emitted from a recorded Site receipt", async () => {
+    let emitted: ClaimedOutboxEvent | undefined;
+    const lease = issuePlatformTransaction({ query: async () => [], execute: async () => 1 });
+    try {
+      const journal = new PostgresSiteAuthorityJournal({
+        begin: async (_transaction, identity) => ({
+          ...identity,
+          state: "pending",
+          result: null,
+          resultDigest: null,
+        }),
+        recordOutcome: async (_transaction, _identity, outcome) => outcome as never,
+      }, {
+        enqueue: async (_transaction, event) => {
+          emitted = { ...event, leaseToken: "lease_01", attempt: 1 };
+        },
+      });
+      await journal.succeed(lease.transaction, {
+        commandId: "01983f57-8cf1-7000-8000-000000000001",
+        idempotencyKey: "activation-command-01",
+        operation: "site.activation.begin",
+        siteRef: "site_01",
+        callerIdentity: "admin-01",
+        environment: "production",
+        region: "us-east-1",
+        requestDigest: "d".repeat(64),
+      }, {
+        attemptRef: "activation_01",
+        state: "preparing",
+        replayed: false,
+        recordedAt: "2026-07-30T10:00:00.000Z",
+      }, {
+        requestId: "request_01",
+        correlationId: "correlation_01",
+      } as never);
+      if (emitted === undefined) throw new Error("SITE_EFFECT_EVENT_NOT_EMITTED");
+      const calls: string[] = [];
+      const consumer = new SiteOutboxConsumer(fakeQueue(emitted, calls), {
+        runActivation: async (attemptRef) => { calls.push(`activation:${attemptRef}`); },
+        runTrafficStop: async () => { throw new Error("unexpected"); },
+      });
+
+      await consumer.runOneCycle({ signal: new AbortController().signal });
+
+      expect(emitted.payload).toEqual({ attemptRef: "activation_01", state: "preparing" });
+      expect(calls).toContain("activation:activation_01");
+      expect(calls).toContain(`ack:${emitted.eventId}:lease_01`);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
   it("acks an activation only after the runtime dispatcher closes the saga", async () => {
     const calls: string[] = [];
     const event = outbox("site.activation.begin.v1", { attemptRef: "activation_01", state: "preparing" });

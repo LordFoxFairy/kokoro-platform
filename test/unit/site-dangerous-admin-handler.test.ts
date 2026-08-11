@@ -9,6 +9,98 @@ import { issuePlatformTransaction, revokePlatformTransaction } from "../../src/s
 import { PlatformUnitOfWork } from "../../src/shared/unit-of-work/unit-of-work.js";
 
 describe("Site dangerous-effect administration", () => {
+  it("binds request and approval transport commands to one activation effect digest", async () => {
+    const effectDigests: string[] = [];
+    const handler = new SiteDangerousAdminHandler({
+      request: async (input) => {
+        effectDigests.push(input.effectDigest);
+        return { approvalRef: input.approvalRef, state: "pending" };
+      },
+      approve: async (input) => {
+        effectDigests.push(input.effectDigest);
+        return { approvalRef: input.approvalRef, state: "approved" };
+      },
+    }, {
+      beginActivation: async (input) => ({
+        attemptRef: input.attemptRef,
+        state: "preparing",
+        replayed: false,
+      }),
+    }, {
+      requestTrafficStop: async () => { throw new Error("unexpected"); },
+    });
+    const activation = {
+      approvalRef: "10000000-0000-4000-8000-000000000001",
+      siteRef: "site_01",
+      candidateReleaseRef: "release_02",
+      expectedActiveReleaseRef: null,
+      activationFactsDigest: `sha256:${"f".repeat(64)}`,
+      audience: "site-product",
+      sessionContractRevision: "browser-v3",
+      reason: "launch approved",
+    } as const;
+
+    await handler.requestActivationApproval({
+      ...activation,
+      commandId: "request-command-01",
+      idempotencyKey: "request-idempotency-01",
+      requestDigest: "a".repeat(64),
+    }, {} as VerifiedRequestSecurityContext);
+    await handler.approveAndActivate({
+      ...activation,
+      commandId: "approval-command-02",
+      idempotencyKey: "approval-idempotency-02",
+      attemptRef: "activation-attempt-01",
+    }, {} as VerifiedRequestSecurityContext);
+
+    expect(effectDigests).toHaveLength(2);
+    expect(effectDigests[1]).toBe(effectDigests[0]);
+  });
+
+  it("binds request and approval transport commands to one traffic-stop effect digest", async () => {
+    const effectDigests: string[] = [];
+    const handler = new SiteDangerousAdminHandler({
+      request: async (input) => {
+        effectDigests.push(input.effectDigest);
+        return { approvalRef: input.approvalRef, state: "pending" };
+      },
+      approve: async (input) => {
+        effectDigests.push(input.effectDigest);
+        return { approvalRef: input.approvalRef, state: "approved" };
+      },
+    }, {
+      beginActivation: async () => { throw new Error("unexpected"); },
+    }, {
+      requestTrafficStop: async (input) => ({
+        attemptRef: input.attemptRef,
+        state: "requested",
+        replayed: false,
+      }),
+    });
+    const trafficStop = {
+      approvalRef: "10000000-0000-4000-8000-000000000002",
+      siteRef: "site_01",
+      action: "suspend" as const,
+      reason: "suspend traffic",
+    };
+
+    await handler.requestTrafficStopApproval({
+      ...trafficStop,
+      commandId: "request-command-01",
+      idempotencyKey: "request-idempotency-01",
+      requestDigest: "a".repeat(64),
+    }, {} as VerifiedRequestSecurityContext);
+    await handler.approveAndStopTraffic({
+      ...trafficStop,
+      commandId: "approval-command-02",
+      idempotencyKey: "approval-idempotency-02",
+      attemptRef: "traffic-stop-attempt-01",
+    }, {} as VerifiedRequestSecurityContext);
+
+    expect(effectDigests).toHaveLength(2);
+    expect(effectDigests[1]).toBe(effectDigests[0]);
+  });
+
   it("approves the exact activation effect before invoking the local owner service", async () => {
     const calls: Array<{ name: string; value: unknown }> = [];
     const handler = new SiteDangerousAdminHandler({
@@ -46,7 +138,15 @@ describe("Site dangerous-effect administration", () => {
       approvalRef: "10000000-0000-4000-8000-000000000001",
       siteRef: "site_01",
       operation: "site.activation.begin",
-      effectDigest: siteActivationEffectDigest(input),
+      effectDigest: siteActivationEffectDigest({
+        siteRef: input.siteRef,
+        candidateReleaseRef: input.candidateReleaseRef,
+        expectedActiveReleaseRef: input.expectedActiveReleaseRef,
+        activationFactsDigest: input.activationFactsDigest,
+        audience: input.audience,
+        sessionContractRevision: input.sessionContractRevision,
+        reason: input.reason,
+      }),
     });
   });
 
