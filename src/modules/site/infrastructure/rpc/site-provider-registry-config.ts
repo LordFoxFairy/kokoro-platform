@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { SiteDeploymentProviderRegistry } from "../../application/contracts/site-deployment-provider.js";
+import { FixedSiteHttpDeploymentProvider } from "../http/fixed-site-http-deployment-provider.js";
 import { SiteProviderRpcAdapter } from "./site-provider-rpc.js";
 
 export async function loadSiteProviderRegistry(path: string): Promise<SiteDeploymentProviderRegistry> {
@@ -12,6 +13,14 @@ export async function loadSiteProviderRegistry(path: string): Promise<SiteDeploy
       root.providers.length > 32) throw new Error("SITE_PROVIDER_REGISTRY_INVALID");
   const providers = await Promise.all(root.providers.map(async (item) => {
     const value = record(item, "SITE_PROVIDER_REGISTRY_INVALID");
+    if (value.kind === "fixed_http") {
+      exact(value, ["kind", "namespace", "metadataEndpoint", "timeoutMs"], "SITE_PROVIDER_REGISTRY_INVALID");
+      if (typeof value.namespace !== "string" || typeof value.metadataEndpoint !== "string" ||
+          typeof value.timeoutMs !== "number") throw new Error("SITE_PROVIDER_REGISTRY_INVALID");
+      return new FixedSiteHttpDeploymentProvider({ namespace: value.namespace,
+        metadataEndpoint: value.metadataEndpoint, timeoutMs: value.timeoutMs });
+    }
+    if (value.kind !== undefined) throw new Error("SITE_PROVIDER_REGISTRY_INVALID");
     exact(value, ["namespace", "endpoint", "tokenFile", "timeoutMs"], "SITE_PROVIDER_REGISTRY_INVALID");
     if (typeof value.namespace !== "string" || typeof value.endpoint !== "string" ||
         typeof value.tokenFile !== "string" || !isAbsolute(value.tokenFile) ||

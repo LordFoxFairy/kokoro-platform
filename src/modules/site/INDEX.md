@@ -41,6 +41,11 @@ environment and region plus a canonical command digest. The RPC adapter verifies
 before the state store may persist an observation; state-store code never manufactures Release evidence from the
 local attempt.
 
+`FixedSiteHttpDeploymentProvider` is the bounded core single-Site adapter. It reads one configured metadata/readiness
+URL and maps the exact Site/Release/artifact binding into the existing provider observation; it has no create, delete
+or list operation. Registry entries tagged `kind: "fixed_http"` select it, while untagged entries retain the existing
+RPC provider shape.
+
 Fresh Site creation remains on the typed `SiteProvisioningService`; publication is a separate owner boundary.
 The operator publication owner is mounted on Admin and implements the one-way Root chain through immutable Candidate
 and publication revisions. Product Catalog/Profile are locked from their owner tables,
