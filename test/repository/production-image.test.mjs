@@ -31,6 +31,7 @@ const required = Object.freeze([
   "dist/src/process/model-gateway.js",
   "dist/src/process/model-image-worker.js",
   "dist/src/process/model-image-worker-composition.js",
+  "dist/src/process/core-single-site-prepare.js",
   "dist/src/process/worker.js",
   "dist/src/process/identity-worker.js",
   "dist/src/process/media-worker.js",
@@ -131,6 +132,14 @@ test("production image verifier rejects a missing Platform API composition contr
   context.after(() => rm(imageRoot, { recursive: true, force: true }));
   await writeImageLayout(imageRoot);
   await rm(resolve(imageRoot, "dist/src/process/platform-api-runtime-contract.js"));
+  await assert.rejects(() => verifyProductionImage(imageRoot), /missing compiled entrypoint/u);
+});
+
+test("production image verifier rejects a missing core single-Site prepare selector", async (context) => {
+  const imageRoot = await mkdtemp(resolve(tmpdir(), "kokoro-platform-image-core-prepare-"));
+  context.after(() => rm(imageRoot, { recursive: true, force: true }));
+  await writeImageLayout(imageRoot);
+  await rm(resolve(imageRoot, "dist/src/process/core-single-site-prepare.js"));
   await assert.rejects(() => verifyProductionImage(imageRoot), /missing compiled entrypoint/u);
 });
 

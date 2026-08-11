@@ -23,6 +23,14 @@ with four distinct credential URLs, publishes the empty Hub capability catalog t
 Hub Connect boundary, and emits only a safe result plus a private deterministic redemption code.
 An adjacent private pair descriptor binds both output digests and the persisted code identity so a
 crash or concurrent retry cannot publish a code beside a conflicting completion result.
+The adjacent compiled `platform-core-single-site-prepare` selector is a Root-invoked verified-image
+preflight, not a deployable or business owner. From a minimal operator file plus verified Web and
+deployment facts it creates one immutable Platform-owned installation, revalidates it with the real
+runtime parsers on every release, and emits only a safe release receipt/path environment. Platform
+image or public-origin changes reuse the same private artifacts; persistent Site/Web/operator drift
+fails closed instead of rotating bootstrap authority.
+Its Authorization event signing ring and separately mounted public verification set are generated
+from one keypair and revalidated for exact revision, window and public-key parity.
 
 Admission uses a run-scoped `kt_pg_*` login rather than a fixed database role. The migrator owns its
 lease transition through the bounded `admission-role-lease.ts` authority. One PostgreSQL identity row

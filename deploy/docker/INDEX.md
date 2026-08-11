@@ -27,6 +27,10 @@ The multi-stage build installs full dependencies only in the build stage, compil
 The closed selector set also includes the one-shot `platform-core-single-site-bootstrap` entry. It
 has no listener and is invoked with seven absolute file paths; Root supplies distinct Admin/API/Site
 worker/Identity worker database credentials and read-only secret mounts for its bounded run.
+The image also exposes `platform-core-single-site-prepare` for Root's verified-image provisioning
+preflight. It accepts exactly four absolute paths and atomically creates a mode-`0700` state tree;
+it has no listener and is deliberately not declared in `deployables.yaml` or the release one-shot
+job inventory.
 Compose never defaults Admission to a fixed PostgreSQL principal: both the migrator and Admission
 process require the same externally leased `PLATFORM_DATABASE_ADMISSION_ROLE`, and Admission's URL
 must authenticate as that exact `kt_pg_*` login.

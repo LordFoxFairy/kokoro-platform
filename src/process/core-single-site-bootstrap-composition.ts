@@ -133,7 +133,7 @@ const EMPTY_CAPABILITY_SNAPSHOT = Object.freeze({
   mcpOptions: Object.freeze([]),
   subagents: Object.freeze([]),
 });
-const EMPTY_CAPABILITY_CATALOG_REF =
+export const CORE_SINGLE_SITE_BOOTSTRAP_EMPTY_AGENT_CATALOG_REF =
   `agent-catalog:sha256:${capabilityCatalogSnapshotDigest(EMPTY_CAPABILITY_SNAPSHOT)}`;
 
 export const CORE_SINGLE_SITE_BOOTSTRAP_IDENTITY_DELIVERY:
@@ -943,19 +943,18 @@ export async function createCoreSingleSiteBootstrapProductionOwners(input: Reado
   });
 }
 
-export function createCoreSingleSiteBootstrapRecipe(
-  document: CoreSingleSiteBootstrapDocument,
-): CoreSingleSiteBootstrapRecipe {
-  const publishedAt = canonicalInstant(document.site.releaseCertification.issuedAt);
-  if (document.model.provider !== "direct" || document.model.providerKey !== "direct") {
-    throw new Error("CORE_SINGLE_SITE_BOOTSTRAP_DIRECT_PROVIDER_REQUIRED");
-  }
-  if (document.externalEmptyAgentCatalogRef !== EMPTY_CAPABILITY_CATALOG_REF) {
-    throw new Error("CORE_SINGLE_SITE_BOOTSTRAP_EMPTY_AGENT_CATALOG_INVALID");
-  }
+export function deriveCoreSingleSiteBootstrapModelArtifacts(input: Readonly<{
+  siteId: string;
+  siteReleaseRef: string;
+  publishedAt: string;
+  inventoryRef: string;
+  modelKey: string;
+  modelOptionKey: string;
+}>) {
+  const publishedAt = canonicalInstant(input.publishedAt);
   const inventory = canonicalizeModelInventory({
     schemaVersion: 1,
-    source: { kind: "platform-native", reference: document.model.inventoryRef },
+    source: { kind: "platform-native", reference: input.inventoryRef },
     providers: [{
       key: DIRECT_MODEL_PROVIDER_IDENTITY.providerKey,
       provider: DIRECT_MODEL_PROVIDER_IDENTITY.provider,
@@ -965,7 +964,7 @@ export function createCoreSingleSiteBootstrapRecipe(
       priority: 0,
     }],
     models: [{
-      key: document.model.modelKey,
+      key: input.modelKey,
       displayName: "Chat",
       inputModalities: ["text"],
       outputModalities: ["text"],
@@ -974,29 +973,29 @@ export function createCoreSingleSiteBootstrapRecipe(
       enabled: true,
     }],
     bindings: [{
-      key: `binding:${document.model.modelKey}`,
-      modelKey: document.model.modelKey,
+      key: `binding:${input.modelKey}`,
+      modelKey: input.modelKey,
       providerKey: DIRECT_MODEL_PROVIDER_IDENTITY.providerKey,
-      upstreamModel: document.model.modelKey,
-      gatewayModelName: document.model.modelKey,
+      upstreamModel: input.modelKey,
+      gatewayModelName: input.modelKey,
       priority: 0,
       enabled: true,
     }],
     productRoutes: [{
       product: "chat",
       role: "main",
-      modelKey: document.model.modelKey,
+      modelKey: input.modelKey,
       position: 0,
       requiredCapabilities: ["chat"],
     }],
   });
   const selection = Object.freeze({
-    primaryModelKey: document.model.modelKey,
+    primaryModelKey: input.modelKey,
     fallbackModelKeys: Object.freeze([] as string[]),
   });
   const modelOption = Object.freeze({
     schemaVersion: 1 as const,
-    optionKey: document.model.modelOptionKey,
+    optionKey: input.modelOptionKey,
     surface: "chat" as const,
     label: "Chat",
     description: null,
@@ -1009,13 +1008,12 @@ export function createCoreSingleSiteBootstrapRecipe(
     draftSet: { schemaVersion: 1, inventoryDigest: inventory.digest, options: [modelOption] },
   });
   const modelOptionRevisionRef = materialized.optionRevisions[0]?.modelOptionRevisionRef;
-  if (modelOptionRevisionRef === undefined ||
-      modelOptionRevisionRef !== document.model.optionRevisionRef) {
-    throw new Error("CORE_SINGLE_SITE_BOOTSTRAP_MODEL_OPTION_REF_MISMATCH");
+  if (modelOptionRevisionRef === undefined) {
+    throw new Error("CORE_SINGLE_SITE_BOOTSTRAP_MODEL_OPTION_REF_INVALID");
   }
   const catalog = createSiteReleaseModelCatalogRevision({
-    siteId: document.site.siteId,
-    siteReleaseRef: document.site.siteReleaseRef,
+    siteId: input.siteId,
+    siteReleaseRef: input.siteReleaseRef,
     inventoryDigest: inventory.digest,
     publishedAt,
     surfaces: [{
@@ -1025,9 +1023,40 @@ export function createCoreSingleSiteBootstrapRecipe(
     }],
     optionRevisions: materialized.optionRevisions,
   });
-  if (catalog.modelOptionCatalogRef !== document.model.catalogRef) {
+  return deepFreeze({
+    inventory,
+    modelOption,
+    modelOptionRevisionRef,
+    modelOptionCatalogRef: catalog.modelOptionCatalogRef,
+  });
+}
+
+export function createCoreSingleSiteBootstrapRecipe(
+  document: CoreSingleSiteBootstrapDocument,
+): CoreSingleSiteBootstrapRecipe {
+  const publishedAt = canonicalInstant(document.site.releaseCertification.issuedAt);
+  if (document.model.provider !== "direct" || document.model.providerKey !== "direct") {
+    throw new Error("CORE_SINGLE_SITE_BOOTSTRAP_DIRECT_PROVIDER_REQUIRED");
+  }
+  if (document.externalEmptyAgentCatalogRef !==
+      CORE_SINGLE_SITE_BOOTSTRAP_EMPTY_AGENT_CATALOG_REF) {
+    throw new Error("CORE_SINGLE_SITE_BOOTSTRAP_EMPTY_AGENT_CATALOG_INVALID");
+  }
+  const model = deriveCoreSingleSiteBootstrapModelArtifacts({
+    siteId: document.site.siteId,
+    siteReleaseRef: document.site.siteReleaseRef,
+    publishedAt,
+    inventoryRef: document.model.inventoryRef,
+    modelKey: document.model.modelKey,
+    modelOptionKey: document.model.modelOptionKey,
+  });
+  if (model.modelOptionRevisionRef !== document.model.optionRevisionRef) {
+    throw new Error("CORE_SINGLE_SITE_BOOTSTRAP_MODEL_OPTION_REF_MISMATCH");
+  }
+  if (model.modelOptionCatalogRef !== document.model.catalogRef) {
     throw new Error("CORE_SINGLE_SITE_BOOTSTRAP_MODEL_CATALOG_REF_MISMATCH");
   }
+  const { inventory, modelOption, modelOptionRevisionRef, modelOptionCatalogRef } = model;
   const launchProfileInput: AdmissionLaunchProfileSnapshot = {
     schemaVersion: 1 as const,
     siteId: document.site.siteId,
@@ -1067,7 +1096,7 @@ export function createCoreSingleSiteBootstrapRecipe(
     siteConfigRevisionRef: "site-config:core-single-site-v1",
     legalRevisionRef: "legal:core-single-site-v1",
     featurePolicyRevision: "feature-policy:core-single-site-v1",
-    modelOptionCatalogRef: catalog.modelOptionCatalogRef,
+    modelOptionCatalogRef,
     agentCatalogRef: document.externalEmptyAgentCatalogRef,
     identityIssuerLabel: "Kokoro",
     identityAuthStrengthPolicyRevision: "password-v1",
@@ -1104,7 +1133,7 @@ export function createCoreSingleSiteBootstrapRecipe(
     inventory,
     modelOption,
     modelOptionRevisionRef,
-    modelOptionCatalogRef: catalog.modelOptionCatalogRef,
+    modelOptionCatalogRef,
     launchProfile,
     launchProfileRef,
     siteRelease,
@@ -2075,9 +2104,8 @@ async function verifyBundle<Operation extends string>(input: Readonly<{
   const entries = await Promise.all(input.operations.map(async (operation) => {
     const item = byOperation.get(operation);
     if (item === undefined) throw new Error("CORE_SINGLE_SITE_BOOTSTRAP_ATTESTATION_SET_INVALID");
-    const target = attestationTarget(operation, input.document);
-    const allowedOperations = operation === "site.activation.begin"
-      ? ["site.approval.approve", "site.activation.begin"] : [operation];
+    const target = coreSingleSiteBootstrapAttestationTarget(operation, input.document);
+    const allowedOperations = coreSingleSiteBootstrapAttestationAllowedOperations(operation);
     let verified: VerifiedRequestSecurityContext;
     try {
       verified = await verifyCoreBootstrapAdminAttestation({
@@ -2102,7 +2130,14 @@ async function verifyBundle<Operation extends string>(input: Readonly<{
   >;
 }
 
-function attestationTarget(
+export function coreSingleSiteBootstrapAttestationAllowedOperations(
+  operation: string,
+): readonly string[] {
+  return Object.freeze(operation === "site.activation.begin"
+    ? ["site.approval.approve", "site.activation.begin"] : [operation]);
+}
+
+export function coreSingleSiteBootstrapAttestationTarget(
   operation: string,
   document: CoreSingleSiteBootstrapDocument,
 ): Readonly<{ siteId: string | null; purpose: string; scopes: readonly string[] }> {

@@ -125,16 +125,24 @@ export async function loadCoreSingleSiteBootstrapDocument(
   } catch {
     throw new Error("CORE_SINGLE_SITE_BOOTSTRAP_DOCUMENT_INVALID");
   }
+  const document = parseCoreSingleSiteBootstrapDocument(raw, environment);
+  await Promise.all([
+    readPrivateFile(document.identity.passwordFile, 4096, "secret"),
+    readPrivateFile(document.redemption.entropyKeyFile, 4096, "secret"),
+  ]);
+  return document;
+}
+
+export function parseCoreSingleSiteBootstrapDocument(
+  raw: unknown,
+  environment: Readonly<Record<string, string | undefined>>,
+): CoreSingleSiteBootstrapDocument {
   const result = documentSchema.safeParse(raw);
   if (!result.success) throw new Error("CORE_SINGLE_SITE_BOOTSTRAP_DOCUMENT_INVALID");
   const expected = environment.KOKORO_ENVIRONMENT;
   if (expected !== undefined && expected !== result.data.environment) {
     throw new Error("CORE_SINGLE_SITE_BOOTSTRAP_ENVIRONMENT_MISMATCH");
   }
-  await Promise.all([
-    readPrivateFile(result.data.identity.passwordFile, 4096, "secret"),
-    readPrivateFile(result.data.redemption.entropyKeyFile, 4096, "secret"),
-  ]);
   return deepFreeze(result.data);
 }
 

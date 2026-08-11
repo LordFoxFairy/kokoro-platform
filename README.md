@@ -25,6 +25,7 @@ The production artifact has one closed runtime set:
 - `@kokoro/hub`
 - `platform-hub-connect`
 - `platform-core-single-site-bootstrap` (one-shot owner composition; no listener)
+- `platform-core-single-site-prepare` (verified-image preflight selector; not a release deployable)
 
 `kokoro-platform-kit` is the only shared runtime library workspace. Hub reuses the same artifact but
 has two independent processes: `@kokoro/hub` is the package-owned HTTP management surface and
@@ -48,6 +49,23 @@ completed receipt is recovered by strict readback before attestation files are o
 require fresh maker/checker signatures and the public Site release certification key ring. The result
 path also owns a mode-`0600` `.pair` descriptor that binds the result and redemption-code digests;
 claimed or void codes are verified in place and are never exported again.
+
+Before a fresh core install, Root runs the same verified Platform image with the preflight selector:
+
+```bash
+node --conditions=kokoro-runtime dist/src/process/core-single-site-prepare.js \
+  --operator-config ABS --web-report ABS --deployment-facts ABS --state-directory ABS
+```
+
+The strict operator file contains only the initial owner email and Direct endpoint/model key. The
+selector cross-checks the verified Web OCI report against Root deployment facts, creates one
+non-rotating Platform-owned installation beneath the mode-`0700` state directory, and publishes a
+release-specific safe receipt plus `runtime-paths.env`. All generated documents, authorization,
+certification, passwords, entropy and Platform key-ring files remain mode `0600`; stdout contains
+only the receipt path and digest. This preflight selector is invoked directly from the verified image
+before provisioning and is intentionally absent from `deployables.yaml` and release job inventory.
+The installation also carries a public-only Authorization event verification set whose revision,
+window and public key are checked against the private Platform API signing ring on every prepare.
 
 Root contracts, protobuf modules and JSON-schema validators are checked in exactly once under
 `src/generated/{contracts,proto,schema}` with `src/generated/provenance.json`. Prisma output alone is
