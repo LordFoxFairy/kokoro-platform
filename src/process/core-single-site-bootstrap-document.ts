@@ -36,6 +36,16 @@ const documentSchema = z.object({
     webArtifactDigest: digest,
     releaseManifestDigest: digest,
     certificationDigest: digest,
+    releaseCertification: z.object({
+      signingKeyRef: stableRef,
+      issuedAt: z.string().datetime({ offset: false }),
+      expiresAt: z.string().datetime({ offset: false }),
+      signature: z.string().regex(/^[A-Za-z0-9_-]{86}$/u),
+    }).strict().superRefine((value, context) => {
+      if (Date.parse(value.expiresAt) <= Date.parse(value.issuedAt)) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "certification_expiry" });
+      }
+    }),
     signedContractFloor: z.object({ ref: stableRef, revision: z.string().regex(POSITIVE_INTEGER), digest }).strict(),
     audience: stableRef,
     sessionContractRevision: stableRef,

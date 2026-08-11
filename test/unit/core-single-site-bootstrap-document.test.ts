@@ -39,6 +39,9 @@ async function fixture() {
       webArtifactDigest: sha("a"),
       releaseManifestDigest: sha("b"),
       certificationDigest: sha("c"),
+      releaseCertification: { signingKeyRef: "site-release-key:core",
+        issuedAt: "2026-08-11T00:00:00.000Z", expiresAt: "2026-08-12T00:00:00.000Z",
+        signature: "A".repeat(86) },
       signedContractFloor: { ref: "contract-floor:core", revision: "1", digest: sha("d") },
       audience: "site-product",
       sessionContractRevision: "session-browser-v3",
@@ -99,6 +102,7 @@ describe("core single-Site bootstrap document", () => {
     ["feature-off nested key", (value) => { Object.assign(value.site, { memory: true }); }],
     ["unsafe model endpoint", (value) => { value.model.endpoint = "http://127.0.0.1:4000"; }],
     ["malformed batch ref", (value) => { value.redemption.batchRef = "batch:one"; }],
+    ["invalid release certification", (value) => { value.site.releaseCertification.signature = "short"; }],
   ])("rejects %s", async (_name, mutate) => {
     const item = await fixture();
     mutate(item.document);
