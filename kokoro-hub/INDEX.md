@@ -29,6 +29,8 @@ Agent never reads Hub Mongo or package storage directly.
 
 ## Runtime and security
 Uploads require validation, content addressing, bounded size/path rules, trusted operator context, and secret-free metadata.
+Hub Connect requires both S3 credentials only when the Hub storage declaration selects `type: s3`;
+`type: local` constructs only the local package store and does not require S3 credentials.
 `createHubServer` receives the parsed env-ref allowlist and URL resolver policy explicitly; the real HTTP assembly derives them from validated env. Missing admission configuration fails closed rather than letting fake/test assembly bypass the same contract.
 The HTTP server exposes only self-service and admin routes. `KOKORO_SERVICE_PACKAGE=platform-hub-connect`
 starts a separate production process for the private ConnectRPC listener; it is never co-hosted with

@@ -45,8 +45,6 @@ export const HUB_CONNECT_PRODUCTION_REQUIRED_ENVIRONMENT = Object.freeze([
   "KOKORO_HUB_MONGO_URL",
   "KOKORO_HUB_MONGO_DB",
   "KOKORO_WORKSPACE_CONFIG",
-  "KOKORO_WORKSPACE_S3_ACCESS_KEY",
-  "KOKORO_WORKSPACE_S3_SECRET_KEY",
   "KOKORO_HUB_SECRET_MASTER_KEY",
   "KOKORO_HUB_CONNECT_TRUST_ROOT",
   "KOKORO_HUB_CONNECT_TLS_KEY_FILE",
@@ -134,11 +132,10 @@ export async function runHubConnectMain(
   if (hubStoreLocation === null) throw new Error("HUB_CONNECT_PACKAGE_STORE_REQUIRED");
   const packages = makePackageStore(
     hubStoreLocation,
-    hubEnv.KOKORO_WORKSPACE_S3_ACCESS_KEY !== undefined &&
-      hubEnv.KOKORO_WORKSPACE_S3_SECRET_KEY !== undefined
+    hubStoreLocation.type === "s3"
       ? {
-          accessKeyId: hubEnv.KOKORO_WORKSPACE_S3_ACCESS_KEY,
-          secretAccessKey: hubEnv.KOKORO_WORKSPACE_S3_SECRET_KEY,
+          accessKeyId: required(environment, "KOKORO_WORKSPACE_S3_ACCESS_KEY"),
+          secretAccessKey: required(environment, "KOKORO_WORKSPACE_S3_SECRET_KEY"),
         }
       : null,
   );
