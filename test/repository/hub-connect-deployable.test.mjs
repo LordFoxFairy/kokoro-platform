@@ -63,7 +63,7 @@ test("deployable inventory declares the Hub Connect contract and dependency boun
     inboundContracts: [],
     declaredInboundContracts: ["hub-runtime", "hub-capability-catalog"],
     outboundContracts: ["platform-capability-projection"],
-    activationAuthorized: false,
+    activationAuthorized: true,
     runtimeTraffic: true,
     secretClasses: [
       "hub-mongo",

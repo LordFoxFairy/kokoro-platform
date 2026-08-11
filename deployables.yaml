@@ -15,8 +15,8 @@ deployables:
       credentialClass: platform-api
       permissions: bounded-transactional-api
       ddl: forbidden
-    activationAuthorized: false
-    runtimeTraffic: false
+    activationAuthorized: true
+    runtimeTraffic: true
     inboundContracts: []
     declaredInboundContracts: [platform-public-http]
     outboundContracts: []
@@ -91,8 +91,8 @@ deployables:
       identityLifecycle: run-scoped-leased-role
       permissions: admission-owner-transaction-only
       ddl: forbidden
-    activationAuthorized: false
-    runtimeTraffic: false
+    activationAuthorized: true
+    runtimeTraffic: true
     inboundContracts: []
     declaredInboundContracts: [platform-admission-connect, platform-asset-eligibility-connect]
     outboundContracts:
@@ -354,8 +354,8 @@ deployables:
       credentialClass: platform-model-gateway
       permissions: opaque-authorization-attempt-producer-only
       ddl: forbidden
-    activationAuthorized: false
-    runtimeTraffic: false
+    activationAuthorized: true
+    runtimeTraffic: true
     inboundContracts: []
     declaredInboundContracts: [platform-model-gateway-connect-v1]
     outboundContracts:
@@ -418,8 +418,8 @@ deployables:
       credentialClass: platform-authorization
       permissions: authorization-feed-read-snapshot
       ddl: forbidden
-    activationAuthorized: false
-    runtimeTraffic: false
+    activationAuthorized: true
+    runtimeTraffic: true
     inboundContracts: []
     declaredInboundContracts: [platform-session-authorization-connect]
     outboundContracts: []
@@ -560,7 +560,7 @@ deployables:
     inboundContracts: []
     declaredInboundContracts: [hub-runtime, hub-capability-catalog]
     outboundContracts: [platform-capability-projection]
-    activationAuthorized: false
+    activationAuthorized: true
     runtimeTraffic: true
     secretClasses:
       [

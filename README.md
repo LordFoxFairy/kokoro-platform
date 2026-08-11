@@ -121,5 +121,13 @@ image, and `deploy/docker/runtime-entrypoint.mjs` selects only the closed runtim
 verifier rejects source trees, dev tooling, unexpected workspaces, incomplete
 migrations, and missing compiled entrypoints.
 
+For the fixed single-Site core profile, the inventory authorizes runtime traffic only for
+`platform-api`, `platform-admission`, `platform-authorization`, `platform-model-gateway`, and
+`platform-hub-connect`. The previously certified Artifact Data Plane keeps its existing independent
+authorization but is not selected by the core profile. Admin, Asset, Media, Memory-related processes,
+split workers, maintenance, migrator and bootstrap jobs keep their existing activation state; one-shot
+jobs are selected by the Root release sequence rather than by runtime traffic flags. This is not a
+multi-Site, autoscaled, Kubernetes, or whole-platform readiness claim.
+
 See [deployment topology](docs/platform/deployment-topology.md) and
 [Docker image boundary](deploy/docker/INDEX.md).

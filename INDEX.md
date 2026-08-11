@@ -35,6 +35,13 @@ Commerce registries after removing feature-off registration and dormant product 
 Its Authorization event signing ring and separately mounted public verification set are generated
 from one keypair and revalidated for exact revision, window and public-key parity.
 
+The child inventory authorizes `platform-api`, `platform-admission`, `platform-authorization`,
+`platform-model-gateway`, and `platform-hub-connect` for the fixed single-Site core profile. The
+previously certified Artifact Data Plane retains its independent state but is not selected by that
+profile. Every other deployable retains its prior activation state. This narrow authorization does
+not extend to dormant products, split workers, bootstrap jobs, multi-Site, autoscaling, Kubernetes or
+whole-platform readiness.
+
 Admission uses a run-scoped `kt_pg_*` login rather than a fixed database role. The migrator owns its
 lease transition through the bounded `admission-role-lease.ts` authority. One PostgreSQL identity row
 moves `active(current, epoch)` → `draining(current, pending, retiring name/OID pairs)` →
