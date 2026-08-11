@@ -1,4 +1,5 @@
 import { access, readFile, readdir, stat } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -41,6 +42,7 @@ const requiredEntries = Object.freeze([
   "dist/src/process/model-gateway.js",
   "dist/src/process/model-image-worker.js",
   "dist/src/process/model-image-worker-composition.js",
+  "dist/src/process/core-single-site-bootstrap.js",
   "dist/src/process/core-single-site-prepare.js",
   "dist/src/process/worker.js",
   "dist/src/process/identity-worker.js",
@@ -84,6 +86,18 @@ async function assertRuntimeTree(directory, label) {
   }
 }
 
+async function assertNoNestedTypeScriptExecutable(directory, label) {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const relative = `${label}/${entry.name}`;
+    if (entry.name === "tsc" && label.endsWith("/.bin")) {
+      throw new Error(`Production image contains development executable: ${relative}`);
+    }
+    if (entry.isDirectory()) {
+      await assertNoNestedTypeScriptExecutable(resolve(directory, entry.name), relative);
+    }
+  }
+}
+
 async function assertMigrations(root) {
   const directory = resolve(root, "prisma/migrations");
   const entries = await readdir(directory, { withFileTypes: true });
@@ -120,6 +134,28 @@ async function assertManifest(root) {
   }
 }
 
+async function assertArgon2Runtime(root) {
+  try {
+    const require = createRequire(resolve(root, "package.json"));
+    const argon2 = require("@node-rs/argon2");
+    if (typeof argon2.hash !== "function" || typeof argon2.verify !== "function") {
+      throw new TypeError("Argon2 runtime exports are incomplete");
+    }
+    const probe = "kokoro-production-image-verifier";
+    const encoded = await argon2.hash(probe, {
+      memoryCost: 4096,
+      timeCost: 1,
+      outputLen: 16,
+      parallelism: 1,
+    });
+    if (!(await argon2.verify(encoded, probe))) {
+      throw new Error("Argon2 runtime verification failed");
+    }
+  } catch {
+    throw new Error("Production image cannot load @node-rs/argon2 native runtime");
+  }
+}
+
 export async function verifyProductionImage(root) {
   await assertAllowedChildren(root, topLevelLayout, ".");
   for (const retired of retiredPackages) {
@@ -140,6 +176,7 @@ export async function verifyProductionImage(root) {
   await assertRuntimeTree(resolve(root, "dist/src"), "platform-runtime");
   await assertMigrations(root);
   await assertManifest(root);
+  await assertArgon2Runtime(root);
 
   const installed = await readdir(resolve(root, "node_modules/.pnpm"));
   const leaked = installed.filter((entry) => forbiddenProductionPackages.some((name) =>
@@ -154,6 +191,7 @@ export async function verifyProductionImage(root) {
   if (leakedExecutables.length > 0) {
     throw new Error(`Production image contains development executable: ${leakedExecutables.sort().join(", ")}`);
   }
+  await assertNoNestedTypeScriptExecutable(resolve(root, "node_modules"), "node_modules");
   for (const entry of requiredEntries) {
     if (!(await exists(resolve(root, entry)))) {
       throw new Error(`Production image is missing compiled entrypoint: ${entry}`);

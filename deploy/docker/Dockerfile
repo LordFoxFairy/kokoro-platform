@@ -28,7 +28,11 @@ RUN corepack enable && corepack prepare pnpm@11.2.2 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY kokoro-platform-kit/package.json ./kokoro-platform-kit/package.json
 COPY kokoro-hub/package.json ./kokoro-hub/package.json
-RUN pnpm install --prod --no-optional --config.auto-install-peers=false --frozen-lockfile --ignore-scripts
+RUN pnpm install --prod --config.auto-install-peers=false --frozen-lockfile --ignore-scripts
+RUN rm -rf node_modules/typescript node_modules/.pnpm/typescript@* \
+  && rm -f node_modules/.bin/tsc \
+  && find node_modules -path '*/.bin/tsc' -delete \
+  && find node_modules -type l \( -name typescript -o -name tsc \) -delete
 
 FROM node:24-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS runtime
 

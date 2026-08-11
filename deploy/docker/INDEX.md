@@ -24,6 +24,14 @@ The image owns no data; runtime modules own schemas/migrations and external stor
 
 ## Runtime and security
 The multi-stage build installs full dependencies only in the build stage, compiles each runnable package, installs production dependencies in an isolated stage, and assembles a non-root runtime image without source or test trees. A build-time verifier rejects development toolchains such as TypeScript, tsx, Vitest, Vite, and ESLint from the final image. The fixed runtime entrypoint maps `KOKORO_SERVICE_PACKAGE` only to known compiled service entries; it does not evaluate arbitrary module paths. `@kokoro/hub` selects the Hub package HTTP main, while `platform-hub-connect` selects the Platform-root Connect main that consumes the one canonical generated contract tree; both are distinct processes in the same artifact.
+Production dependency installation retains platform-selected optional packages because
+`@node-rs/argon2` ships its Linux native runtime through `optionalDependencies`. The image verifier
+loads the package from the assembled `/app` dependency tree, so a missing or incompatible native
+binding fails the build rather than the Identity path at startup. Prisma's optional peer may resolve
+the repository's TypeScript version during installation; that development package and executable are
+removed before the production tree is copied, including every nested `.bin/tsc` and dangling peer
+link. The verifier recursively rejects any remaining nested TypeScript executable while the
+target-platform Argon2 binding remains.
 The closed selector set also includes the one-shot `platform-core-single-site-bootstrap` entry. It
 has no listener and is invoked with seven absolute file paths; Root supplies distinct Admin/API/Site
 worker/Identity worker database credentials and read-only secret mounts for its bounded run.
@@ -34,7 +42,7 @@ job inventory.
 Compose never defaults Admission to a fixed PostgreSQL principal: both the migrator and Admission
 process require the same externally leased `PLATFORM_DATABASE_ADMISSION_ROLE`, and Admission's URL
 must authenticate as that exact `kt_pg_*` login.
-The verifier also requires the compiled Platform API runtime contract, production composition and
+The verifier also requires both compiled core single-Site selectors, the Platform API runtime contract, production composition and
 stable secret-file reader, so the API cannot be released with only its process entrypoint present. Before TypeScript emission,
 the compiler-graph gate proves that every module `infrastructure/dev` source is excluded and fails if production code imports one.
 
