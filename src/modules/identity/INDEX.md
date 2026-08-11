@@ -11,6 +11,11 @@ Identity owns public account, authentication, verification, security-management 
 PostgreSQL authority. It coordinates sibling Platform contexts through application ports and the shared `PlatformUnitOfWork`; it
 does not call the Platform deployment over HTTP or RPC.
 
+`BootstrapVerifiedPersonalAccountService` is the narrow fresh-install operator path for the fixed core Site. It requires a
+verified Admin workload, writes the existing account/personal workspace/project/billing graph atomically through the normal
+Identity repository and authorization mutation, and emits exactly the existing namespace-allocation owner event. It does not
+invoke public registration or emit verification-delivery effects; command receipts fence replay and configuration drift.
+
 ## Durable effects
 
 - Identity emits only sealed `identity.verification.delivery.requested` and typed
