@@ -95,6 +95,18 @@ describe("core single-Site bootstrap document", () => {
     expect(Object.hasOwn(loaded, "surfaces")).toBe(false);
   });
 
+  it("accepts Compose-internal HTTP metadata but rejects external plaintext HTTP", async () => {
+    const item = await fixture();
+    item.document.site.metadataEndpoint = "http://kokoro-site-release.internal:3000/api/release/metadata";
+    await writeFile(item.path, JSON.stringify(item.document), { mode: 0o600 });
+    await expect(loadCoreSingleSiteBootstrapDocument(item.path, { KOKORO_ENVIRONMENT: "production" }))
+      .resolves.toMatchObject({ site: { metadataEndpoint: item.document.site.metadataEndpoint } });
+    item.document.site.metadataEndpoint = "http://example.com/api/release/metadata";
+    await writeFile(item.path, JSON.stringify(item.document), { mode: 0o600 });
+    await expect(loadCoreSingleSiteBootstrapDocument(item.path, { KOKORO_ENVIRONMENT: "production" }))
+      .rejects.toThrow("CORE_SINGLE_SITE_BOOTSTRAP_DOCUMENT_INVALID");
+  });
+
   it.each<readonly [string, (value: Awaited<ReturnType<typeof fixture>>["document"]) => void]>([
     ["unknown top-level key", (value) => { Object.assign(value, { payment: {} }); }],
     ["same maker and checker", (value) => { value.checkerSubjectRef = value.makerSubjectRef; }],

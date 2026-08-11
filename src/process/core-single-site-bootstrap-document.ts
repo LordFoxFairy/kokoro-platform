@@ -32,7 +32,7 @@ const documentSchema = z.object({
     workloadBindingEpoch: z.string().regex(POSITIVE_INTEGER),
     providerNamespace: z.string().regex(/^[a-z][a-z0-9.-]{1,63}$/u),
     providerProjectRef: stableRef,
-    metadataEndpoint: z.string().superRefine((value, context) => safeInternalHttps(value, context)),
+    metadataEndpoint: z.string().superRefine((value, context) => safeInternalEndpoint(value, context, true)),
     webArtifactDigest: digest,
     releaseManifestDigest: digest,
     certificationDigest: digest,
@@ -55,7 +55,7 @@ const documentSchema = z.object({
     providerKey: stableRef,
     modelKey: stableRef,
     modelOptionKey: stableRef,
-    endpoint: z.string().superRefine((value, context) => safeInternalHttps(value, context)),
+    endpoint: z.string().superRefine((value, context) => safeInternalEndpoint(value, context, false)),
     inventoryRef: stableRef,
     inventoryRevision: z.string().regex(POSITIVE_INTEGER),
     optionRevisionRef: stableRef,
@@ -194,14 +194,15 @@ async function readPrivateFile(path: string, maximum: number, kind: "document" |
   }
 }
 
-function safeInternalHttps(value: string, context: z.RefinementCtx): void {
+function safeInternalEndpoint(value: string, context: z.RefinementCtx, allowInternalHttp: boolean): void {
   let url: URL;
   try { url = new URL(value); } catch {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "endpoint" });
     return;
   }
   if (
-    url.protocol !== "https:" || url.username !== "" || url.password !== "" ||
+    (url.protocol !== "https:" && !(allowInternalHttp && url.protocol === "http:" && url.hostname.endsWith(".internal"))) ||
+    url.username !== "" || url.password !== "" ||
     url.search !== "" || url.hash !== "" || isIP(url.hostname) !== 0 ||
     url.hostname === "localhost" || !url.hostname.includes(".") || url.pathname.includes("..")
   ) context.addIssue({ code: z.ZodIssueCode.custom, message: "endpoint" });
