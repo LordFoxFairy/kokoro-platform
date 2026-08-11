@@ -92,13 +92,13 @@ describe("core single-Site bootstrap document", () => {
     expect(Object.hasOwn(loaded, "surfaces")).toBe(false);
   });
 
-  it.each([
-    ["unknown top-level key", (value: any) => { value.payment = {}; }],
-    ["same maker and checker", (value: any) => { value.checkerSubjectRef = value.makerSubjectRef; }],
-    ["non-Direct provider", (value: any) => { value.model.provider = "litellm"; }],
-    ["feature-off nested key", (value: any) => { value.site.memory = true; }],
-    ["unsafe model endpoint", (value: any) => { value.model.endpoint = "http://127.0.0.1:4000"; }],
-    ["malformed batch ref", (value: any) => { value.redemption.batchRef = "batch:one"; }],
+  it.each<readonly [string, (value: Awaited<ReturnType<typeof fixture>>["document"]) => void]>([
+    ["unknown top-level key", (value) => { Object.assign(value, { payment: {} }); }],
+    ["same maker and checker", (value) => { value.checkerSubjectRef = value.makerSubjectRef; }],
+    ["non-Direct provider", (value) => { value.model.provider = "litellm"; }],
+    ["feature-off nested key", (value) => { Object.assign(value.site, { memory: true }); }],
+    ["unsafe model endpoint", (value) => { value.model.endpoint = "http://127.0.0.1:4000"; }],
+    ["malformed batch ref", (value) => { value.redemption.batchRef = "batch:one"; }],
   ])("rejects %s", async (_name, mutate) => {
     const item = await fixture();
     mutate(item.document);

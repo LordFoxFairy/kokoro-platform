@@ -172,9 +172,10 @@ function validateInput(input: BootstrapVerifiedPersonalAccountInput): void {
     !UUID.test(input.accountRef) || !UUID.test(input.verificationTransactionRef) ||
     !UUID.test(input.namespaceIntentRef) || !UUID.test(input.namespaceEventId) ||
     stable.some((value) => !REFERENCE.test(value)) ||
-    input.displayName.length < 1 || input.displayName.length > 128 || /[\u0000-\u001f\u007f]/u.test(input.displayName) ||
+    !printable(input.displayName, 128) ||
     !/^[A-Za-z0-9:._/-]{8,512}$/u.test(input.idempotencyKey) ||
-    input.password.length < 15 || input.password.length > 1024 || /[\u0000\r\n]/u.test(input.password)
+    input.password.length < 15 || input.password.length > 1024 ||
+    [...input.password].some((character) => [0, 10, 13].includes(character.codePointAt(0) ?? 0))
   ) throw new Error("IDENTITY_BOOTSTRAP_INPUT_INVALID");
 }
 
@@ -201,4 +202,11 @@ function resultFromJson(value: JsonValue | null): BootstrapVerifiedPersonalAccou
 
 function ownerJson(value: Readonly<Record<string, string>>): JsonValue {
   return Object.freeze({ ...value });
+}
+
+function printable(value: string, maximum: number): boolean {
+  return value.length >= 1 && value.length <= maximum && [...value].every((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code >= 32 && code !== 127;
+  });
 }
