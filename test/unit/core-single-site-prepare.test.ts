@@ -32,10 +32,42 @@ import {
 } from "../../src/process/platform-public-composition.js";
 import { createSessionAuthorizationEventSigner } from
   "../../src/modules/authorization/infrastructure/jose/session-authorization-event-signer.js";
+import { AUTHORIZATION_PUBLIC_OPERATION_IDS } from
+  "../../src/modules/authorization/interfaces/http/authorization-public-operations.js";
+import { IDENTITY_LAUNCH_OPERATION_IDS } from
+  "../../src/modules/identity/interfaces/http/identity-public-operations.js";
+import { COMMERCE_PUBLIC_OPERATION_IDS } from
+  "../../src/modules/commerce/interfaces/http/commerce-public-operations.js";
+import { ASSET_PUBLIC_OPERATION_IDS } from
+  "../../src/modules/asset/interfaces/http/asset-public-operations.js";
+import { ARTIFACT_PUBLIC_OPERATION_IDS } from
+  "../../src/modules/artifact/interfaces/http/artifact-public-operations.js";
+import { MEDIA_PUBLIC_OPERATION_IDS } from
+  "../../src/modules/media/interfaces/http/media-public-operations.js";
 import { loadAuthorizationVerificationKeys } from
   "../../src/process/session-authorization-composition.js";
 import type { CoreSingleSiteBootstrapDocument } from
   "../../src/process/core-single-site-bootstrap-document.js";
+
+const FEATURE_OFF_IDENTITY_OPERATION_IDS = Object.freeze([
+  "beginRegistration",
+  "resendEmailVerification",
+  "completeEmailVerification",
+] as const);
+const FEATURE_OFF_IDENTITY_OPERATION_ID_SET: ReadonlySet<string> =
+  new Set(FEATURE_OFF_IDENTITY_OPERATION_IDS);
+const CORE_SAFE_FACT_ENVIRONMENT_NAMES = Object.freeze([
+  "KOKORO_SITE_ID",
+  "KOKORO_SITE_KEY",
+  "KOKORO_SITE_PROJECT_BINDING_REF",
+  "KOKORO_SITE_WORKLOAD_IDENTITY_ID",
+  "KOKORO_PRODUCT_AUDIENCE",
+  "KOKORO_SESSION_CONTRACT_REVISION",
+  "KOKORO_SITE_BINDING_EPOCH",
+  "KOKORO_SITE_SECURITY_EPOCH",
+  "KOKORO_SITE_POLICY_EPOCH",
+  "KOKORO_PLATFORM_PUBLIC_OPERATION_IDS_JSON",
+] as const);
 
 describe("core single-Site prepare", () => {
   const temporaryDirectories: string[] = [];
@@ -401,6 +433,64 @@ describe("core single-Site prepare", () => {
       expect(runtimePaths).toContain(
         `PLATFORM_MODEL_GATEWAY_DIRECT_ENDPOINT='${inputs.operatorConfig.model.endpoint}'`,
       );
+      const runtimeEnvironment = parseRuntimeEnvironment(runtimePaths);
+      const expectedOperationIds = expectedCorePublicOperationIds();
+      expect(runtimeEnvironment).toEqual({
+        KOKORO_CORE_STATE_DIR: installationDirectory,
+        KOKORO_ENVIRONMENT: inputs.deploymentFacts.environment,
+        KOKORO_PLATFORM_IMAGE: inputs.deploymentFacts.platformImage,
+        KOKORO_SITE_IMAGE: inputs.deploymentFacts.siteImage,
+        KOKORO_SITE_DEPLOYMENT_REF: inputs.deploymentFacts.deploymentRef,
+        KOKORO_SITE_RELEASE_REF: inputs.webReport.releaseId,
+        KOKORO_WEB_ARTIFACT_DIGEST: inputs.webReport.webArtifactDigest,
+        KOKORO_SITE_PUBLIC_ORIGIN: inputs.deploymentFacts.publicOrigin,
+        PLATFORM_MODEL_GATEWAY_DIRECT_ENDPOINT: inputs.operatorConfig.model.endpoint,
+        KOKORO_SITE_ID: document.site.siteId,
+        KOKORO_SITE_KEY: document.site.siteKey,
+        KOKORO_SITE_PROJECT_BINDING_REF: document.site.siteProjectBindingRef,
+        KOKORO_SITE_WORKLOAD_IDENTITY_ID: document.site.workloadIdentityId,
+        KOKORO_PRODUCT_AUDIENCE: document.site.audience,
+        KOKORO_SESSION_CONTRACT_REVISION: document.site.sessionContractRevision,
+        KOKORO_SITE_BINDING_EPOCH: "2",
+        KOKORO_SITE_SECURITY_EPOCH: "1",
+        KOKORO_SITE_POLICY_EPOCH: "2",
+        KOKORO_PLATFORM_PUBLIC_OPERATION_IDS_JSON: JSON.stringify(expectedOperationIds),
+      });
+      expect(Object.keys(runtimeEnvironment)).toHaveLength(19);
+      expect(receipt.runtimePathsDigest).toBe(sha(runtimePaths));
+
+      const operationIds = JSON.parse(
+        runtimeEnvironment.KOKORO_PLATFORM_PUBLIC_OPERATION_IDS_JSON!,
+      ) as string[];
+      expect(operationIds).toHaveLength(22);
+      expect(operationIds).toEqual(expectedOperationIds);
+      expect(operationIds).toEqual([...operationIds].sort((left, right) =>
+        left.localeCompare(right, "en")));
+      expect(new Set(operationIds).size).toBe(operationIds.length);
+      expect(operationIds).toEqual(expect.arrayContaining([
+        ...AUTHORIZATION_PUBLIC_OPERATION_IDS,
+        "createIdentitySession",
+        "completeSessionMfa",
+        "reauthenticateIdentitySession",
+        "beginTotpEnrollment",
+        "confirmTotpEnrollment",
+        "disableTotp",
+        "regenerateRecoveryCodes",
+        "refreshIdentitySession",
+        "listIdentitySessions",
+        "revokeIdentitySessions",
+        "getPublicCommandReceipt",
+        ...COMMERCE_PUBLIC_OPERATION_IDS,
+      ]));
+      for (const featureOffOperationId of [
+        ...FEATURE_OFF_IDENTITY_OPERATION_IDS,
+        ...ASSET_PUBLIC_OPERATION_IDS,
+        ...ARTIFACT_PUBLIC_OPERATION_IDS,
+        ...MEDIA_PUBLIC_OPERATION_IDS,
+      ]) {
+        expect(operationIds).not.toContain(featureOffOperationId);
+      }
+      expect(operationIds.some((operationId) => /memory/iu.test(operationId))).toBe(false);
     }, 30_000);
 
   it("reuses one installation without rotating any private artifact", async () => {
@@ -511,13 +601,20 @@ describe("core single-Site prepare", () => {
     const fixture = await inputFixture();
     const originalInputs = await loadCoreSingleSitePrepareInputs(fixture.paths);
     const stateDirectory = join(fixture.directory, "state");
-    await prepareCoreSingleSiteState({ inputs: originalInputs, stateDirectory });
+    const original = await prepareCoreSingleSiteState({
+      inputs: originalInputs,
+      stateDirectory,
+    });
     const installationDirectory = join(
       stateDirectory,
       "installations",
       originalInputs.digests.installation,
     );
     const originalManifest = await readFile(join(installationDirectory, "private-artifacts.json"));
+    const originalRuntimeEnvironment = parseRuntimeEnvironment(await readFile(
+      join(dirname(original.receiptPath), "runtime-paths.env"),
+      "utf8",
+    ));
     const changedFacts = {
       ...fixture.deploymentFacts,
       deploymentManifestDigest: "8".repeat(64),
@@ -541,8 +638,18 @@ describe("core single-Site prepare", () => {
       platformImage: changedFacts.platformImage,
       siteImage: changedFacts.siteImage,
     });
-    expect(await readFile(join(dirname(changed.receiptPath), "runtime-paths.env"), "utf8"))
-      .toContain(`KOKORO_SITE_PUBLIC_ORIGIN='${changedFacts.publicOrigin}'`);
+    const changedRuntimeText = await readFile(
+      join(dirname(changed.receiptPath), "runtime-paths.env"),
+      "utf8",
+    );
+    expect(changedRuntimeText).toContain(
+      `KOKORO_SITE_PUBLIC_ORIGIN='${changedFacts.publicOrigin}'`,
+    );
+    const changedRuntimeEnvironment = parseRuntimeEnvironment(changedRuntimeText);
+    expect(Object.keys(changedRuntimeEnvironment)).toHaveLength(19);
+    for (const name of CORE_SAFE_FACT_ENVIRONMENT_NAMES) {
+      expect(changedRuntimeEnvironment[name]).toBe(originalRuntimeEnvironment[name]);
+    }
   }, 30_000);
 
   it("fails closed instead of rotating an installation after persistent configuration drift",
@@ -775,6 +882,36 @@ async function writePrivate(path: string, value: unknown): Promise<string> {
 
 function sha(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function expectedCorePublicOperationIds(): string[] {
+  return [...new Set<string>([
+    ...AUTHORIZATION_PUBLIC_OPERATION_IDS,
+    ...IDENTITY_LAUNCH_OPERATION_IDS.filter((operationId) =>
+      !FEATURE_OFF_IDENTITY_OPERATION_ID_SET.has(operationId)),
+    ...COMMERCE_PUBLIC_OPERATION_IDS,
+  ])].sort((left, right) => left.localeCompare(right, "en"));
+}
+
+function parseRuntimeEnvironment(source: string): Record<string, string> {
+  if (!source.endsWith("\n")) throw new Error("runtime environment must end with newline");
+  const environment: Record<string, string> = {};
+  for (const line of source.slice(0, -1).split("\n")) {
+    const separator = line.indexOf("=");
+    const name = line.slice(0, separator);
+    const encoded = line.slice(separator + 1);
+    if (separator <= 0 || !/^[A-Z][A-Z0-9_]*$/u.test(name) ||
+        !encoded.startsWith("'") || !encoded.endsWith("'") ||
+        Object.hasOwn(environment, name)) {
+      throw new Error("invalid runtime environment fixture");
+    }
+    const value = encoded.slice(1, -1).replaceAll(`'"'"'`, "'");
+    if (`'${value.replaceAll("'", `'"'"'`)}'` !== encoded) {
+      throw new Error("invalid runtime environment fixture");
+    }
+    environment[name] = value;
+  }
+  return environment;
 }
 
 async function rewritePrivateManifest(

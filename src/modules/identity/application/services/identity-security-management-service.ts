@@ -34,6 +34,8 @@ import type {
   OpaqueCredentialPort,
 } from "../contracts/identity-security-ports.js";
 import { digestIdentityRecoveryCode } from "./identity-recovery-code-digest.js";
+import { digestIdentityReceiptRecoveryCapability } from
+  "./identity-receipt-recovery-digest.js";
 
 export class IdentitySecurityManagementService {
   constructor(
@@ -534,8 +536,8 @@ export class IdentitySecurityManagementService {
         await this.bindRecovery(
           transaction,
           input,
-          "confirmTotpEnrollment",
-          input.transactionRef,
+          "regenerateRecoveryCodes",
+          setRef,
           now,
         );
         await this.securityEvent(transaction, input, {
@@ -816,15 +818,12 @@ export class IdentitySecurityManagementService {
       "siteRef" | "siteReleaseRef" | "siteProjectBindingRef" | "workloadIdentityId" | "bindingEpoch">,
   ): string {
     assertRecoveryCapability(capability);
-    return this.dependencies.auditDigest({
+    return digestIdentityReceiptRecoveryCapability(
+      this.dependencies.auditDigest,
       purpose,
       capability,
-      siteRef: authority.siteRef,
-      siteReleaseRef: authority.siteReleaseRef,
-      siteProjectBindingRef: authority.siteProjectBindingRef,
-      workloadIdentityId: authority.workloadIdentityId,
-      bindingEpoch: authority.bindingEpoch,
-    });
+      authority,
+    );
   }
 
   private async bindRecovery(

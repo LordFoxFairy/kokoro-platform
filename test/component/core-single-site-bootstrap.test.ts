@@ -9,8 +9,13 @@ import {
   publishCoreSingleSiteBootstrapOutputs,
   runCoreSingleSiteBootstrapMain,
 } from "../../src/process/core-single-site-bootstrap.js";
-import { resolvePlatformTransaction } from
-  "../../src/shared/unit-of-work/platform-transaction.js";
+import {
+  issuePlatformTransaction,
+  resolvePlatformTransaction,
+  revokePlatformTransaction,
+} from "../../src/shared/unit-of-work/platform-transaction.js";
+import { PostgresPublicCommandReceiptRepository } from
+  "../../src/modules/identity/infrastructure/postgres/public-command-receipt-repository.js";
 import {
   createCoreSingleSiteBootstrapPostgresFixture,
   type CoreSingleSiteBootstrapPostgresFixture,
@@ -132,6 +137,37 @@ describe.sequential("core single-Site bootstrap PostgreSQL component", () => {
       activeCodeBatches: 1,
       availableCodes: 1,
     }]);
+  }, 30_000);
+
+  it("executes the public receipt reader SQL with the production API role", async () => {
+    const current = requiredFixture(fixture);
+    const api = await connectedRoleClient(current, "DATABASE_URL_PLATFORM_API");
+    const lease = issuePlatformTransaction({
+      async query(statement, values = []) {
+        return (await api.query(statement, [...values])).rows as never;
+      },
+      async execute() {
+        throw new Error("public receipt lookup must remain read-only");
+      },
+    });
+    try {
+      await expect(new PostgresPublicCommandReceiptRepository().find(
+        lease.transaction,
+        {
+          commandId: "f".repeat(32),
+          environment: current.document.environment,
+          region: current.document.region,
+          siteRef: current.document.site.siteId,
+          siteReleaseRef: current.document.site.siteReleaseRef,
+          siteProjectBindingRef: current.document.site.siteProjectBindingRef,
+          workloadIdentityId: current.document.site.workloadIdentityId,
+          bindingEpoch: current.document.site.workloadBindingEpoch,
+        },
+      )).resolves.toBeNull();
+    } finally {
+      revokePlatformTransaction(lease);
+      await api.end();
+    }
   }, 30_000);
 
   it("replays the completed receipt without attestations or effect-database connections", async () => {

@@ -24,6 +24,12 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { normalizeIdentityEmail } from "../modules/identity/domain/identity-email.js";
+import { IDENTITY_LAUNCH_OPERATION_IDS } from
+  "../modules/identity/interfaces/http/identity-public-operations.js";
+import { AUTHORIZATION_PUBLIC_OPERATION_IDS } from
+  "../modules/authorization/interfaces/http/authorization-public-operations.js";
+import { COMMERCE_PUBLIC_OPERATION_IDS } from
+  "../modules/commerce/interfaces/http/commerce-public-operations.js";
 import {
   canonicalCertificationPayload,
   Ed25519SiteReleaseCertificationAuthority,
@@ -82,6 +88,19 @@ const CONTAINER_OWNER_PASSWORD = "/run/secrets/kokoro/owner-password";
 const CONTAINER_REDEMPTION_ENTROPY = "/run/secrets/kokoro/redemption-entropy";
 const ADMIN_AUDIENCE = "platform-admin";
 const IMMUTABLE_AUTHORIZATION_KEY_NOT_AFTER = "9999-12-31T23:59:59.999Z";
+const FEATURE_OFF_IDENTITY_OPERATION_IDS: ReadonlySet<string> = new Set([
+  "beginRegistration",
+  "resendEmailVerification",
+  "completeEmailVerification",
+]);
+const CORE_SINGLE_SITE_PUBLIC_OPERATION_IDS = Object.freeze([
+  ...new Set<string>([
+    ...AUTHORIZATION_PUBLIC_OPERATION_IDS,
+    ...IDENTITY_LAUNCH_OPERATION_IDS.filter((operationId) =>
+      !FEATURE_OFF_IDENTITY_OPERATION_IDS.has(operationId)),
+    ...COMMERCE_PUBLIC_OPERATION_IDS,
+  ]),
+].sort((left, right) => left.localeCompare(right, "en")));
 const PRIVATE_PATHS = Object.freeze({
   bootstrapDocument: "bootstrap/core-single-site.json",
   makerAttestation: "bootstrap/authorization/maker-attestation.json",
@@ -385,6 +404,7 @@ export async function prepareCoreSingleSiteState(input: Readonly<{
 
   const runtimePathsText = runtimePathsEnvironment({
     inputs: input.inputs,
+    document: installation.document,
     stateDirectory,
     installationDirectory,
   });
@@ -1051,6 +1071,7 @@ const privateArtifactsManifestSchema = z.object({
 
 function runtimePathsEnvironment(input: Readonly<{
   inputs: CoreSingleSitePrepareInputs;
+  document: CoreSingleSiteBootstrapDocument;
   stateDirectory: string;
   installationDirectory: string;
 }>): string {
@@ -1064,6 +1085,18 @@ function runtimePathsEnvironment(input: Readonly<{
     KOKORO_WEB_ARTIFACT_DIGEST: input.inputs.webReport.webArtifactDigest,
     KOKORO_SITE_PUBLIC_ORIGIN: input.inputs.deploymentFacts.publicOrigin,
     PLATFORM_MODEL_GATEWAY_DIRECT_ENDPOINT: input.inputs.operatorConfig.model.endpoint,
+    KOKORO_SITE_ID: input.document.site.siteId,
+    KOKORO_SITE_KEY: input.document.site.siteKey,
+    KOKORO_SITE_PROJECT_BINDING_REF: input.document.site.siteProjectBindingRef,
+    KOKORO_SITE_WORKLOAD_IDENTITY_ID: input.document.site.workloadIdentityId,
+    KOKORO_PRODUCT_AUDIENCE: input.document.site.audience,
+    KOKORO_SESSION_CONTRACT_REVISION: input.document.site.sessionContractRevision,
+    KOKORO_SITE_BINDING_EPOCH: "2",
+    KOKORO_SITE_SECURITY_EPOCH: "1",
+    KOKORO_SITE_POLICY_EPOCH: "2",
+    KOKORO_PLATFORM_PUBLIC_OPERATION_IDS_JSON: JSON.stringify(
+      CORE_SINGLE_SITE_PUBLIC_OPERATION_IDS,
+    ),
   });
   assertContained(input.stateDirectory, input.installationDirectory);
   return `${Object.entries(values).map(([name, value]) => `${name}=${shellQuote(value)}`).join("\n")}\n`;

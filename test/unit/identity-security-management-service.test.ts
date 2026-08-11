@@ -5,6 +5,8 @@ import type { IdentitySecurityManagementRepository } from "../../src/modules/ide
 import { IdentitySecurityAtomicRejection } from "../../src/modules/identity/application/contracts/identity-security-management-repository.js";
 import type { IdentityRepository } from "../../src/modules/identity/application/contracts/identity-repository.js";
 import { IdentitySecurityManagementService } from "../../src/modules/identity/application/services/identity-security-management-service.js";
+import { digestIdentityReceiptRecoveryCapability } from
+  "../../src/modules/identity/application/services/identity-receipt-recovery-digest.js";
 import { createIdentityAuditDigester } from "../../src/modules/identity/infrastructure/crypto/identity-audit-digester.js";
 import type { ProductWorkloadIdentity } from "../../src/modules/authorization/domain/session-access-grant.js";
 
@@ -291,6 +293,9 @@ describe("Identity security management application service", () => {
       | Parameters<IdentitySecurityManagementRepository["confirmTotpEnrollment"]>[1]
       | undefined;
     let receiptResult: JsonValue | null = null;
+    let recoveryBinding:
+      | Parameters<IdentityRepository["bindReceiptRecoveryCapability"]>[1]
+      | undefined;
     const codes = Array.from({ length: 10 }, (_, index) => `recovery-code-${index}`);
     const repository = {
       async loadTotpEnrollmentMaterial() {
@@ -331,6 +336,11 @@ describe("Identity security management application service", () => {
           return { valid: true as const, timeStep: 123 };
         },
       },
+      receiptRecovery: {
+        async bindReceiptRecoveryCapability(_transaction, input) {
+          recoveryBinding = input;
+        },
+      },
     });
 
     const result = await service.confirmTotpEnrollment({
@@ -355,6 +365,19 @@ describe("Identity security management application service", () => {
     expect(new Set(confirmation?.recoveryCodeDigests.map((item) => item.codeDigest)).size).toBe(10);
     expect(JSON.stringify(receiptResult)).not.toContain("recovery-code-");
     expect(receiptResult).toMatchObject({ kind: "recovery_code_set", setRef: "recovery-set-1" });
+    expect(recoveryBinding).toMatchObject({
+      commandId,
+      purpose: "regenerateRecoveryCodes",
+      transactionRef: "recovery-set-1",
+    });
+    expect(recoveryBinding?.capabilityDigest).toBe(
+      digestIdentityReceiptRecoveryCapability(
+        auditDigest,
+        "regenerateRecoveryCodes",
+        "r".repeat(43),
+        workload,
+      ),
+    );
   });
 
   it("passes an invalid confirmation as a failed ceremony without activating the factor", async () => {

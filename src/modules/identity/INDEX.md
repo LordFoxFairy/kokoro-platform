@@ -16,6 +16,16 @@ verified Admin workload, writes the existing account/personal workspace/project/
 Identity repository and authorization mutation, and emits exactly the existing namespace-allocation owner event. It does not
 invoke public registration or emit verification-delivery effects; command receipts fence replay and configuration drift.
 
+## Public receipt recovery
+
+`getPublicCommandReceipt` is the read-only Identity owner for generated state-read recovery operations. It accepts an
+authenticated user session, the original receipt-recovery capability, or both; when both are present each path must independently
+resolve to the same command owner. The PostgreSQL reader selects the original command, recovery binding and one-time delivery
+claim by command id, then the application service verifies the exact Site release, workload binding, request digest,
+subject/session generations and capability HMAC before returning only the generated safe receipt union. Stored results and
+one-time credentials are never replayed. Operations whose generated boundary is same-identity retry or HTTP receipt-body, such as
+`disableTotp` and `revokeIdentitySessions`, do not enter this state-read owner.
+
 ## Durable effects
 
 - Identity emits only sealed `identity.verification.delivery.requested` and typed

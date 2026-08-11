@@ -64,8 +64,13 @@ release-specific safe receipt plus `runtime-paths.env`. All generated documents,
 certification, passwords, entropy and Platform key-ring files remain mode `0600`; stdout contains
 only the receipt path and digest. This preflight selector is invoked directly from the verified image
 before provisioning and is intentionally absent from `deployables.yaml` and release job inventory.
+The exact environment file also exposes the verified, non-secret Site/workload registration facts,
+bootstrap epochs and a stable Authorization/Identity/Commerce public-operation list; registration
+and dormant product operations are excluded.
 The installation also carries a public-only Authorization event verification set whose revision,
 window and public key are checked against the private Platform API signing ring on every prepare.
+Public command state-read exposes only an exact release-bound recovery row; `NOT_FOUND` requires the
+Site BFF to repeat the original command and idempotency key rather than broadening session authority.
 
 Root contracts, protobuf modules and JSON-schema validators are checked in exactly once under
 `src/generated/{contracts,proto,schema}` with `src/generated/provenance.json`. Prisma output alone is

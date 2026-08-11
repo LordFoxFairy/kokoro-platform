@@ -45,6 +45,10 @@ import { createIdentityTotpVerifier } from "../modules/identity/infrastructure/c
 import { createIdentityTotpSecretProtector } from "../modules/identity/infrastructure/crypto/identity-totp-secret-protector.js";
 import { IdentitySecurityManagementService } from "../modules/identity/application/services/identity-security-management-service.js";
 import { PostgresIdentitySecurityManagementRepository } from "../modules/identity/infrastructure/postgres/identity-security-management-repository.js";
+import { PublicCommandReceiptService } from
+  "../modules/identity/application/services/public-command-receipt-service.js";
+import { PostgresPublicCommandReceiptRepository } from
+  "../modules/identity/infrastructure/postgres/public-command-receipt-repository.js";
 import {
   createIdentityRecoveryCodeIssuer,
   createIdentityTotpEnrollmentIssuer,
@@ -308,7 +312,15 @@ export async function createPlatformPublicProductionComposition(
       scopedPublisher,
     ),
   });
-  const identityOperations = createIdentityPublicOperations(identity, identitySecurityManagement);
+  const identityOperations = createIdentityPublicOperations(
+    identity,
+    identitySecurityManagement,
+    new PublicCommandReceiptService({
+      unitOfWork,
+      repository: new PostgresPublicCommandReceiptRepository(),
+      auditDigest,
+    }),
+  );
   const commerceOperations = createCommercePublicOperations(
     createCommercePublicApplicationComposition({ database: input.database, secrets: redemptionSecrets }),
   );

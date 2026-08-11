@@ -97,14 +97,44 @@ export function createPlatformPublicHttpHandler(input: Readonly<{
         if (matched.definition.mutation && csrfEvidence === null) {
           throw new SessionAuthorizationError("WORKLOAD_NOT_AUTHORIZED");
         }
-        const sessionRequired = matched.definition.securityAlternatives.every((alternative) =>
-          alternative.includes("UserSession"));
-        const session = sessionRequired
-          ? await authenticateSession(input.sessions, request, workload, now, sessionCredentialDigest)
-          : null;
-        const receiptRecoveryCapability = matched.definition.receiptRecovery === "required"
-          ? recoveryCapability(request)
-          : null;
+        let session: AuthenticatedUserSession | null = null;
+        let receiptRecoveryCapability: string | null = null;
+        if (matched.definition.receiptRecovery === "alternative") {
+          const hasSessionCredential = request.headers.authorization !== undefined;
+          const hasRecoveryCapability =
+            request.headers["x-kokoro-receipt-recovery-capability"] !== undefined;
+          if (!hasSessionCredential && !hasRecoveryCapability) {
+            throw new SessionAuthorizationError("USER_SESSION_REQUIRED");
+          }
+          try {
+            session = hasSessionCredential
+              ? await authenticateSession(
+                  input.sessions,
+                  request,
+                  workload,
+                  now,
+                  sessionCredentialDigest,
+                )
+              : null;
+            receiptRecoveryCapability = hasRecoveryCapability
+              ? recoveryCapability(request)
+              : null;
+          } catch (error) {
+            if (error instanceof SessionAuthorizationError) {
+              throw new Error("PUBLIC_COMMAND_RECEIPT_NOT_FOUND");
+            }
+            throw error;
+          }
+        } else {
+          const sessionRequired = matched.definition.securityAlternatives.every((alternative) =>
+            alternative.includes("UserSession"));
+          session = sessionRequired
+            ? await authenticateSession(input.sessions, request, workload, now, sessionCredentialDigest)
+            : null;
+          receiptRecoveryCapability = matched.definition.receiptRecovery === "required"
+            ? recoveryCapability(request)
+            : null;
+        }
         const projectRef = targetProjectRef(matched.descriptor, body, pathParameters);
         const context = await buildPlatformPublicRequestSecurityContext({
           workload, session, operation: matched.descriptor.operationId,
@@ -433,6 +463,9 @@ export function platformPublicSafeProblem(error: unknown, requestId: string, cor
   } else if (artifactCode?.startsWith("ARTIFACT_") === true) {
     status = 503; code = "ARTIFACT_TEMPORARILY_UNAVAILABLE"; retryClass = "after_delay";
     safeMessage = "Artifact processing is temporarily unavailable.";
+  } else if (artifactCode === "PUBLIC_COMMAND_RECEIPT_NOT_FOUND") {
+    status = 404; code = "NOT_FOUND"; retryClass = "never";
+    safeMessage = "The requested resource was not found.";
   } else if (authorizationCode === "USER_SESSION_REQUIRED" || (error instanceof IdentityApplicationError && error.code === "AUTHENTICATION_FAILED")) {
     status = 401; code = authorizationCode === "USER_SESSION_REQUIRED" ? "AUTHENTICATION_REQUIRED" : "AUTHENTICATION_FAILED";
     retryClass = "after_user_action"; safeMessage = "Authentication failed.";

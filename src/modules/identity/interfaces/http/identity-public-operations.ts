@@ -3,6 +3,8 @@ import { definePlatformPublicOperation } from "../../../../interfaces/http/platf
 import type { IdentityApplicationService } from "../../application/services/identity-application-service.js";
 import { IdentityApplicationError } from "../../application/services/identity-application-service.js";
 import type { IdentitySecurityManagementService } from "../../application/services/identity-security-management-service.js";
+import type { PublicCommandReceiptService } from
+  "../../application/services/public-command-receipt-service.js";
 
 export const IDENTITY_LAUNCH_OPERATION_IDS = Object.freeze([
   "beginRegistration",
@@ -18,11 +20,13 @@ export const IDENTITY_LAUNCH_OPERATION_IDS = Object.freeze([
   "refreshIdentitySession",
   "listIdentitySessions",
   "revokeIdentitySessions",
+  "getPublicCommandReceipt",
 ] as const);
 
 export function createIdentityPublicOperations(
   service: IdentityApplicationService,
   securityManagement: IdentitySecurityManagementService,
+  publicCommandReceipts: PublicCommandReceiptService,
 ): readonly RegisteredPlatformPublicOperation[] {
   return Object.freeze([
     definePlatformPublicOperation({
@@ -259,6 +263,18 @@ export function createIdentityPublicOperations(
           idempotencyKey: input.headers["Idempotency-Key"],
           target: input.body.target,
           ...(input.body.sessionRef === undefined ? {} : { sessionRef: input.body.sessionRef }),
+        });
+      },
+    }),
+    definePlatformPublicOperation({
+      operationId: "getPublicCommandReceipt",
+      execute(input) {
+        return publicCommandReceipts.execute({
+          workload: input.workload,
+          context: input.context,
+          session: input.session,
+          receiptRecoveryCapability: input.receiptRecoveryCapability,
+          commandId: input.path.id,
         });
       },
     }),

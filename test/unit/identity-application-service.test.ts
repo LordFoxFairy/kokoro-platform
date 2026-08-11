@@ -13,12 +13,17 @@ import type {
   IdentityAuditDigesterPort,
   IdentityTotpVerifierPort,
 } from "../../src/modules/identity/application/contracts/identity-security-ports.js";
+import { createIdentityAuditDigester } from
+  "../../src/modules/identity/infrastructure/crypto/identity-audit-digester.js";
+import { digestIdentityReceiptRecoveryCapability } from
+  "../../src/modules/identity/application/services/identity-receipt-recovery-digest.js";
 
 const transaction = issuePlatformTransaction({
   async query() { return []; }, async execute() { return 0; },
 }).transaction;
 const workload = {
   siteRef: "site-1", siteReleaseRef: "release-1", workloadIdentityId: "workload-1",
+  siteProjectBindingRef: "binding-1", bindingEpoch: "2",
   environment: "production", region: "us-east-1",
 } as const;
 const context = { correlationId: "correlation-1" } as never;
@@ -109,9 +114,14 @@ describe("Identity launch application service", () => {
 
   it("delivers a credential pair once and never replays it on an exact retry", async () => {
     const receipts = pendingReceipts();
-    let recoveryBound = 0;
+    let recoveryBinding:
+      | Parameters<IdentityRepository["bindReceiptRecoveryCapability"]>[1]
+      | undefined;
+    let recoveryBindings = 0;
     const repository = {
-      async bindReceiptRecoveryCapability() { recoveryBound += 1; },
+      async bindReceiptRecoveryCapability(_transaction: unknown, input: NonNullable<
+        typeof recoveryBinding
+      >) { recoveryBinding = input; recoveryBindings += 1; },
       async findAccountPassword() {
         return {
           accountRef: "account-1", subjectRef: "subject-1", passwordHash: "$argon2id$stored",
@@ -127,10 +137,12 @@ describe("Identity launch application service", () => {
         };
       },
     } as unknown as IdentityRepository;
+    const recoveryDigest = createIdentityAuditDigester(new Uint8Array(32).fill(9));
     const service = createService({
       repository,
       receipts,
       references: ["auth-1", "session-1", "family-1"],
+      auditDigest: recoveryDigest,
     });
     const input = {
       workload: workload as never, context, commandId, idempotencyKey: "i".repeat(16),
@@ -147,10 +159,19 @@ describe("Identity launch application service", () => {
     });
     expect(retry).toEqual({
       kind: "delivery_unavailable", commandId, receiptRef: `command:${commandId}`,
-      requestDigest: "a".repeat(64),
+      requestDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
     });
-    expect(recoveryBound).toBe(1);
+    expect(recoveryBindings).toBe(1);
+    expect(recoveryBinding?.capabilityDigest).toBe(
+      digestIdentityReceiptRecoveryCapability(
+        recoveryDigest,
+        "createIdentitySession",
+        input.receiptRecoveryCapability,
+        workload,
+      ),
+    );
   });
+
 
   it("returns a replayable pre-auth receipt without creating a session when MFA is active", async () => {
     const receipts = pendingReceipts();

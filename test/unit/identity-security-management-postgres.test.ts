@@ -528,6 +528,108 @@ describe("Postgres Identity security-management SiteRelease authority", () => {
     }
   });
 
+  it("supersedes recovery codes first delivered by TOTP confirmation", async () => {
+    const mutations: string[] = [];
+    const lease = issuePlatformTransaction({
+      async query(statement) {
+        if (statement.includes("pg_advisory_xact_lock")) return [];
+        if (statement.includes("FROM platform.identity_account account")) {
+          return [ownerRow("Acme AI")] as never;
+        }
+        if (statement.includes("FROM platform.identity_recovery_code_delivery_claim claim")) {
+          return [{
+            ...deliveryClaimAuthorityRow(),
+            setRef: "old-set", setState: "active", claimState: "first_claim_consumed",
+            claimRequestDigest: "a".repeat(64), receiptRequestDigest: "a".repeat(64),
+            operation: "confirmTotpEnrollment", receiptState: "succeeded",
+            callerIdentity: "workload-1", recoverySiteRef: "site-1",
+            recoverySiteReleaseRef: "release-1", recoverySiteProjectBindingRef: "binding-1",
+            recoveryWorkloadIdentityId: "workload-1", recoveryBindingEpoch: 1n,
+            recoveryPurpose: "regenerateRecoveryCodes", recoveryTransactionRef: "old-set",
+            capabilityDigest: "b".repeat(64), recoveryState: "active",
+            recoveryExpiresAt: "2026-07-30T00:00:00.000Z",
+          }] as never;
+        }
+        if (statement.includes("UPDATE platform.identity_account")) {
+          return [{ securityEpoch: 8n }] as never;
+        }
+        return [];
+      },
+      async execute(statement) {
+        mutations.push(statement);
+        return 1;
+      },
+    });
+    try {
+      await expect(new PostgresIdentitySecurityManagementRepository().supersedeRecoveryCodes(
+        lease.transaction,
+        {
+          binding: binding(), accountRef: "account-1", priorCommandId: "1".repeat(32),
+          newCommandId: "2".repeat(32), expectedAuthStrengthPolicyRevision: "default-v1",
+          requestDigest: "c".repeat(64), workloadIdentityId: "workload-1",
+          capabilityDigest: "b".repeat(64), setRef: "new-set",
+          recoveryCodeDigests: Array.from({ length: 10 }, (_, index) => ({
+            codeDigest: index.toString(16).repeat(64),
+          })),
+          now: "2026-07-29T00:00:00.000Z",
+        },
+      )).resolves.toEqual({ accountRef: "account-1", accountSecurityEpoch: "8" });
+      expect(mutations.some((statement) =>
+        statement.includes("identity_recovery_code_delivery_claim") &&
+        statement.includes("state='superseded'"))).toBe(true);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("rejects a recovery-code supersede issued by an unrelated original operation", async () => {
+    let mutations = 0;
+    const lease = issuePlatformTransaction({
+      async query(statement) {
+        if (statement.includes("pg_advisory_xact_lock")) return [];
+        if (statement.includes("FROM platform.identity_account account")) {
+          return [ownerRow("Acme AI")] as never;
+        }
+        if (statement.includes("FROM platform.identity_recovery_code_delivery_claim claim")) {
+          return [{
+            ...deliveryClaimAuthorityRow(),
+            setRef: "old-set", setState: "active", claimState: "first_claim_consumed",
+            claimRequestDigest: "a".repeat(64), receiptRequestDigest: "a".repeat(64),
+            operation: "disableTotp", receiptState: "succeeded", callerIdentity: "workload-1",
+            recoverySiteRef: "site-1", recoverySiteReleaseRef: "release-1",
+            recoverySiteProjectBindingRef: "binding-1", recoveryWorkloadIdentityId: "workload-1",
+            recoveryBindingEpoch: 1n, recoveryPurpose: "regenerateRecoveryCodes",
+            recoveryTransactionRef: "old-set", capabilityDigest: "b".repeat(64),
+            recoveryState: "active", recoveryExpiresAt: "2026-07-30T00:00:00.000Z",
+          }] as never;
+        }
+        return [];
+      },
+      async execute() {
+        mutations += 1;
+        return 1;
+      },
+    });
+    try {
+      await expect(new PostgresIdentitySecurityManagementRepository().supersedeRecoveryCodes(
+        lease.transaction,
+        {
+          binding: binding(), accountRef: "account-1", priorCommandId: "1".repeat(32),
+          newCommandId: "2".repeat(32), expectedAuthStrengthPolicyRevision: "default-v1",
+          requestDigest: "c".repeat(64), workloadIdentityId: "workload-1",
+          capabilityDigest: "b".repeat(64), setRef: "new-set",
+          recoveryCodeDigests: Array.from({ length: 10 }, (_, index) => ({
+            codeDigest: index.toString(16).repeat(64),
+          })),
+          now: "2026-07-29T00:00:00.000Z",
+        },
+      )).resolves.toBeNull();
+      expect(mutations).toBe(0);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
   it("consumes a proof only for its exact SiteRelease, workload, target, owner and frozen epochs", async () => {
     let statement = "";
     let values: readonly unknown[] = [];
@@ -886,6 +988,59 @@ describe("Postgres Identity security-management SiteRelease authority", () => {
         },
       )).resolves.toBeNull();
       expect(mutations).toBe(0);
+    } finally {
+      revokePlatformTransaction(lease);
+    }
+  });
+
+  it("records a confirmed enrollment delivery as a regeneratable recovery-code ceremony", async () => {
+    let deliveryClaimValues: readonly unknown[] = [];
+    const lease = issuePlatformTransaction({
+      async query(statement) {
+        if (statement.includes("SELECT account_ref AS \"accountRef\"") &&
+            statement.includes("identity_totp_enrollment_transaction")) {
+          return [{ accountRef: "account-1" }] as never;
+        }
+        if (statement.includes("pg_advisory_xact_lock")) return [];
+        if (statement.includes("FROM platform.identity_account account")) {
+          return [ownerRow("Acme AI")] as never;
+        }
+        if (statement.includes("FROM platform.identity_totp_enrollment_transaction enrollment")) {
+          return [{
+            accountRef: "account-1", authenticatorRef: "authenticator-1", state: "pending",
+            attemptCount: 0, maxAttempts: 5, expiresAt: "2026-07-29T00:10:00.000Z",
+            accountSecurityEpoch: 7n, subjectGeneration: 3n, sessionEpoch: 4n,
+            credentialEpoch: 5n, lastAcceptedTimeStep: null,
+            siteReleaseRef: "release-1", siteProjectBindingRef: "binding-1",
+            workloadIdentityId: "workload-1", bindingEpoch: 1n,
+            authStrengthPolicyRevision: "default-v1",
+          }] as never;
+        }
+        if (statement.includes("UPDATE platform.identity_account")) {
+          return [{ securityEpoch: 8n }] as never;
+        }
+        return [];
+      },
+      async execute(statement, values = []) {
+        if (statement.includes("INSERT INTO platform.identity_recovery_code_delivery_claim")) {
+          deliveryClaimValues = values;
+        }
+        return 1;
+      },
+    });
+    try {
+      await expect(new PostgresIdentitySecurityManagementRepository().confirmTotpEnrollment(
+        lease.transaction,
+        {
+          binding: binding(), transactionRef: "enrollment-1", timeStep: 101,
+          commandId: "2".repeat(32), requestDigest: "a".repeat(64), setRef: "set-1",
+          recoveryCodeDigests: Array.from({ length: 10 }, (_, index) => ({
+            codeDigest: index.toString(16).repeat(64),
+          })),
+          now: "2026-07-29T00:00:00.000Z",
+        },
+      )).resolves.toMatchObject({ accountRef: "account-1", accountSecurityEpoch: "8" });
+      expect(deliveryClaimValues[6]).toBe("regenerateRecoveryCodes");
     } finally {
       revokePlatformTransaction(lease);
     }

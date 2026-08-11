@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createIdentityPublicOperations } from "../../src/modules/identity/interfaces/http/identity-public-operations.js";
+import {
+  createIdentityPublicOperations,
+  IDENTITY_LAUNCH_OPERATION_IDS,
+} from "../../src/modules/identity/interfaces/http/identity-public-operations.js";
 
 describe("Identity public operation adapters", () => {
   it("keeps disableTotp reachable when the generated contract declares no receipt recovery", async () => {
@@ -9,7 +12,7 @@ describe("Identity public operation adapters", () => {
         received = input;
         return { receipt: { state: "committed" } };
       },
-    } as never);
+    } as never, {} as never);
     const operation = operations.find((candidate) => candidate.operationId === "disableTotp");
     if (operation === undefined) throw new Error("disableTotp operation missing");
 
@@ -32,5 +35,35 @@ describe("Identity public operation adapters", () => {
       reauthenticationProof: "proof",
     });
     expect(received).not.toHaveProperty("receiptRecoveryCapability");
+  });
+
+  it("forwards both generated receipt authentication alternatives to the real owner", async () => {
+    let received: unknown;
+    const operations = createIdentityPublicOperations({} as never, {} as never, {
+      async execute(input: unknown) {
+        received = input;
+        return { receipt: { state: "committed" } };
+      },
+    } as never);
+    const operation = operations.find((candidate) =>
+      candidate.operationId === "getPublicCommandReceipt");
+    if (operation === undefined) throw new Error("getPublicCommandReceipt operation missing");
+
+    await operation.execute({
+      workload: { workloadIdentityId: "workload-1" },
+      context: { requestId: "request-1" },
+      session: { identitySessionRef: "session-1" },
+      path: { id: "1".repeat(32) },
+      receiptRecoveryCapability: "r".repeat(43),
+    } as never);
+
+    expect(IDENTITY_LAUNCH_OPERATION_IDS).toContain("getPublicCommandReceipt");
+    expect(received).toMatchObject({
+      commandId: "1".repeat(32),
+      workload: { workloadIdentityId: "workload-1" },
+      context: { requestId: "request-1" },
+      session: { identitySessionRef: "session-1" },
+      receiptRecoveryCapability: "r".repeat(43),
+    });
   });
 });

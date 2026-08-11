@@ -734,7 +734,7 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
       accountSecurityEpoch: epoch,
       authStrengthPolicyRevision: owner.authStrengthPolicyRevision,
       setRef: input.setRef,
-      purpose: "confirmTotpEnrollment",
+      purpose: "regenerateRecoveryCodes",
       requestDigest: input.requestDigest,
       now: input.now,
     });
@@ -854,7 +854,9 @@ export class PostgresIdentitySecurityManagementRepository implements IdentitySec
     );
     const prior = rows[0];
     if (prior === undefined || prior.claimState !== "first_claim_consumed" || prior.setState !== "active" ||
-        prior.receiptState !== "succeeded" || prior.operation !== "regenerateRecoveryCodes" ||
+        prior.receiptState !== "succeeded" ||
+        (prior.operation !== "confirmTotpEnrollment" &&
+          prior.operation !== "regenerateRecoveryCodes") ||
         prior.callerIdentity !== input.workloadIdentityId || prior.claimRequestDigest !== prior.receiptRequestDigest ||
         !deliveryClaimAuthorityMatches(prior, input.binding, owner) ||
         !recoveryAuthorityMatches(prior, input.binding, input.workloadIdentityId) ||

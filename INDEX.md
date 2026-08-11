@@ -29,6 +29,9 @@ deployment facts it creates one immutable Platform-owned installation, revalidat
 runtime parsers on every release, and emits only a safe release receipt/path environment. Platform
 image or public-origin changes reuse the same private artifacts; persistent Site/Web/operator drift
 fails closed instead of rotating bootstrap authority.
+The exact path environment includes the verified non-secret Product workload identity/binding facts,
+post-bootstrap epochs, and a stable public-operation set derived from the Authorization, Identity and
+Commerce registries after removing feature-off registration and dormant product operations.
 Its Authorization event signing ring and separately mounted public verification set are generated
 from one keypair and revalidated for exact revision, window and public-key parity.
 

@@ -18,6 +18,8 @@ import { normalizeIdentityEmail } from "../../domain/identity-email.js";
 import { IdentitySessionAuthorizationMutation } from "./identity-session-authorization-mutation.js";
 import { PersonalBootstrapAuthorizationMutation } from "./personal-bootstrap-authorization-mutation.js";
 import { digestIdentityRecoveryCode } from "./identity-recovery-code-digest.js";
+import { digestIdentityReceiptRecoveryCapability } from
+  "./identity-receipt-recovery-digest.js";
 
 export interface IdentityUnitOfWorkPort {
   execute<Result>(
@@ -861,15 +863,12 @@ export class IdentityApplicationService {
     authority: Pick<ProductWorkloadIdentity,
       "siteRef" | "siteReleaseRef" | "siteProjectBindingRef" | "workloadIdentityId" | "bindingEpoch">,
   ): string {
-    return this.dependencies.auditDigest({
+    return digestIdentityReceiptRecoveryCapability(
+      this.dependencies.auditDigest,
       purpose,
       capability,
-      siteRef: authority.siteRef,
-      siteReleaseRef: authority.siteReleaseRef,
-      siteProjectBindingRef: authority.siteProjectBindingRef,
-      workloadIdentityId: authority.workloadIdentityId,
-      bindingEpoch: authority.bindingEpoch,
-    });
+      authority,
+    );
   }
 
   private safeVerificationDigest(secret: string): string {
