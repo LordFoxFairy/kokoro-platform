@@ -204,7 +204,7 @@ describe("core single-Site bootstrap document", () => {
     });
   });
 
-  it("rejects relative, symlink, non-0600 and oversized documents", async () => {
+  it("rejects relative, symlink, non-private modes and oversized documents", async () => {
     const item = await fixture();
     await expect(loadCoreSingleSiteBootstrapDocument("relative.json", {}))
       .rejects.toThrow("CORE_SINGLE_SITE_BOOTSTRAP_FILE_INVALID");
@@ -213,6 +213,9 @@ describe("core single-Site bootstrap document", () => {
     await expect(loadCoreSingleSiteBootstrapDocument(link, {}))
       .rejects.toThrow("CORE_SINGLE_SITE_BOOTSTRAP_FILE_INVALID");
     await chmod(item.path, 0o640);
+    await expect(loadCoreSingleSiteBootstrapDocument(item.path, {}))
+      .rejects.toThrow("CORE_SINGLE_SITE_BOOTSTRAP_FILE_PERMISSIONS_INVALID");
+    await chmod(item.path, 0o500);
     await expect(loadCoreSingleSiteBootstrapDocument(item.path, {}))
       .rejects.toThrow("CORE_SINGLE_SITE_BOOTSTRAP_FILE_PERMISSIONS_INVALID");
     await chmod(item.path, 0o600);
@@ -255,6 +258,22 @@ describe("core single-Site bootstrap document", () => {
       password: createHash("sha256").update(material.password).digest("hex"),
       redemptionEntropy: createHash("sha256")
         .update(material.redemptionEntropySecret).digest("hex"),
+    });
+  });
+
+  it("accepts read-only runtime mount documents and secrets with mode 0400", async () => {
+    const item = await fixture();
+    await Promise.all([
+      chmod(item.path, 0o400),
+      chmod(item.passwordFile, 0o400),
+      chmod(item.entropyKeyFile, 0o400),
+    ]);
+
+    const document = await loadCoreSingleSiteBootstrapDocument(item.path, {
+      KOKORO_ENVIRONMENT: "production",
+    });
+    await expect(loadCoreSingleSiteBootstrapSecretMaterial(document)).resolves.toMatchObject({
+      password: "correct horse battery staple",
     });
   });
 

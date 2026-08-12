@@ -213,7 +213,8 @@ async function readPrivateFile(path: string, maximum: number, kind: "document" |
     handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     const stat = await handle.stat();
     if (!stat.isFile() || stat.size < 1 || stat.size > maximum) throw new Error(invalid);
-    if ((stat.mode & 0o0777) !== 0o600) throw new Error(permissions);
+    const privateMode = stat.mode & 0o0777;
+    if (privateMode !== 0o400 && privateMode !== 0o600) throw new Error(permissions);
     const bytes = Buffer.alloc(stat.size);
     const result = await handle.read(bytes, 0, stat.size, 0);
     if (result.bytesRead !== stat.size) throw new Error(invalid);
